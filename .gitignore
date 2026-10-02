@@ -1,4 +1,5 @@
 # Local environment and secrets — never commit
+MeshCore_Home_Messaging_Project_Plan.md
 .env
 .env.*
 !.env.example
