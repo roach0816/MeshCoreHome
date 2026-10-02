@@ -1,7 +1,8 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMatch, useNavigate } from "react-router";
-import { CheckCheck, Copy, Eraser, Info, MessageSquare, Star, StarOff, Trash2 } from "lucide-react";
+import { Bell, BellOff, CheckCheck, Copy, Eraser, Info, MessageSquare, Star, StarOff, Trash2 } from "lucide-react";
+import { soundDefaultFor, soundEnabledFor, type SoundSetting } from "../lib/sound";
 import { api, type Conversation, type ConversationInfo } from "../lib/api";
 import { formatDateTime } from "../lib/util";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -37,6 +38,13 @@ export function useConversationActions() {
     onSuccess: refresh,
   });
 
+  const sound = useMutation({
+    mutationFn: ({ c, value }: { c: Conversation; value: "on" | "off" | "default" }) =>
+      api(`/api/conversations/${c.id}`, { method: "PATCH", json: { sound: value } }),
+    onSuccess: refresh,
+  });
+  const globalSound = qc.getQueryData<{ sound: SoundSetting }>(["notification-settings"])?.sound ?? "dms";
+
   const openMenu = useCallback((conv: Conversation, x: number, y: number) => setMenu({ conv, x, y }), []);
 
   const items = (c: Conversation): MenuItem[] => [
@@ -53,6 +61,17 @@ export function useConversationActions() {
       icon: c.favorite ? <StarOff className="size-4" /> : <Star className="size-4" />,
       onSelect: () => favorite.mutate(c),
     },
+    (() => {
+      const on = soundEnabledFor(globalSound, c, c.kind);
+      // Toggling back to what the global setting would do clears the override instead of pinning it.
+      const target = !on;
+      const value = target === soundDefaultFor(globalSound, c.kind) ? "default" : target ? "on" : "off";
+      return {
+        label: on ? "Mute notifications" : "Unmute notifications",
+        icon: on ? <BellOff className="size-4" /> : <Bell className="size-4" />,
+        onSelect: () => sound.mutate({ c, value }),
+      } satisfies MenuItem;
+    })(),
     ...(c.contact_public_key
       ? [
           {

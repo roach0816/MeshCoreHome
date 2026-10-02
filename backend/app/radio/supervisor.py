@@ -307,6 +307,9 @@ class RadioSupervisor:
         # Reads every channel slot, so allow longer than a single command.
         return await self._cmd(adapter.read_config, timeout=60)
 
+    def path_hash_size(self) -> int:
+        return self._adapter.path_hash_size() if self._adapter else 1
+
     async def current_channel_secret(self, slot: int) -> bytes | None:
         """Used only to rename a channel while keeping its key; never leaves the server."""
         adapter = self._adapter
@@ -322,6 +325,8 @@ class RadioSupervisor:
         if adapter is None or not self.connected:
             raise RadioError("radio is not connected")
         result = await self._cmd(adapter.configure, op, params, timeout=30)
+        if op in ("contact_favorite", "contact_reset_path", "contact_set_path", "contact_remove"):
+            await self.refresh_contacts()
         if op in ("identity", "radio", "channel", "channel_clear"):
             # Refresh what the archive knows: device name/location/RF and channel generations.
             snap = await self._cmd(adapter.get_device_snapshot)
@@ -373,7 +378,12 @@ class RadioSupervisor:
                 if created:
                     self.status.received += 1
                     hub.publish(
-                        "message-created", conversation_id=str(m.conversation_id), message_id=str(m.id)
+                        "message-created",
+                        conversation_id=str(m.conversation_id),
+                        message_id=str(m.id),
+                        direction="in",
+                        kind=msg.kind,
+                        suppressed=m.suppressed,
                     )
                 return
             except asyncio.CancelledError:

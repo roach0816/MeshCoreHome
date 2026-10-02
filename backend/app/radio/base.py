@@ -71,6 +71,10 @@ class RadioContact:
     meta: dict[str, Any] = field(default_factory=dict)
     lat: float | None = None  # position from the node's advert, if it shares one
     lon: float | None = None
+    flags: int = 0  # firmware contact flags; bit 0 = favourite
+    # Routing: path_len -1 = flood (no known path), 0 = direct, n = n repeater hops given in path_hex.
+    path_len: int = -1
+    path_hex: str = ""
 
 
 @dataclass
@@ -147,11 +151,25 @@ class RadioAdapter(ABC):
     # read_config returns a plain dict (see app.api.radio_config.NodeConfig for the shape).
     # configure applies one named operation; unknown or unsupported ops raise NotSupported.
 
+    def path_hash_size(self) -> int:
+        """Bytes per hop in routing paths (firmware path_hash_mode + 1)."""
+        return 1
+
     async def read_config(self) -> dict[str, Any]:
         raise NotSupported("this radio does not support remote configuration")
 
     async def configure(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
         raise NotSupported("this radio does not support remote configuration")
+
+
+MAX_PATH_BYTES = 64  # firmware out_path buffer
+
+
+def hops_from_path(path_hex: str, path_len: int, hash_size: int) -> list[str]:
+    if path_len <= 0 or not path_hex:
+        return []
+    step = hash_size * 2
+    return [path_hex[i : i + step] for i in range(0, path_len * step, step)]
 
 
 def advert_position(lat: Any, lon: Any) -> tuple[float | None, float | None]:

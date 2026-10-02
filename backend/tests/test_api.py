@@ -100,7 +100,7 @@ async def test_simulated_receive_send_ack_and_idempotency(client):
 
     # DM to a known contact gets an ACK from the simulator (force it).
     supervisor.adapter.ack_probability = 1.0
-    contacts = (await client.get("/api/contacts")).json()
+    contacts = (await client.get("/api/contacts")).json()["items"]
     tracker = next(c for c in contacts if c["name"] == "Tracker (sim)")
     conv_id = (await client.post(f"/api/contacts/{tracker['id']}/conversation", headers=csrf(client))).json()[
         "conversation_id"
@@ -238,7 +238,7 @@ async def test_conversation_info_and_delete_semantics(client):
     assert any(c["id"] == public["id"] for c in (await client.get("/api/conversations")).json())
 
     # DM: info includes the contact's full key; deleting removes the conversation entirely.
-    contacts = (await client.get("/api/contacts")).json()
+    contacts = (await client.get("/api/contacts")).json()["items"]
     tracker = next(c for c in contacts if c["name"] == "Tracker (sim)")
     conv_id = (await client.post(f"/api/contacts/{tracker['id']}/conversation", headers=csrf(client))).json()[
         "conversation_id"
@@ -251,7 +251,7 @@ async def test_conversation_info_and_delete_semantics(client):
     assert r.json()["action"] == "deleted"
     assert (await client.get(f"/api/conversations/{conv_id}")).status_code == 404
     # The contact itself is untouched and a DM can be reopened.
-    assert any(c["id"] == tracker["id"] for c in (await client.get("/api/contacts")).json())
+    assert any(c["id"] == tracker["id"] for c in (await client.get("/api/contacts")).json()["items"])
 
 
 async def test_map_nodes_and_settings(client):
@@ -390,3 +390,102 @@ async def test_node_configuration_requires_connection(client):
     await do_setup(client, mode="none")
     r = await client.get("/api/radio/config")
     assert r.status_code == 409
+
+
+async def test_contacts_search_filter_paginate(client):
+    from app.radio import simulated
+
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+    page = (await client.get("/api/contacts?page_size=10")).json()
+    assert page["total"] == len(simulated.SIM_CONTACTS) and len(page["items"]) == page["total"]
+    # Sorted by last heard (most recent first).
+    heard = [c["last_advert_at"] for c in page["items"]]
+    assert heard == sorted(heard, reverse=True)
+    assert (await client.get("/api/contacts?q=repeat")).json()["total"] == 2
+    assert (await client.get("/api/contacts?kind=2")).json()["total"] == 2
+    assert (await client.get("/api/contacts?page_size=10&page=2")).json()["items"] == []
+    assert (await client.get("/api/contacts?page_size=7")).status_code == 422
+
+
+async def test_contact_actions_and_block(client):
+    from app.radio import simulated
+
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+    items = (await client.get("/api/contacts")).json()["items"]
+    tracker = next(c for c in items if c["name"] == "Tracker (sim)")
+    rpt = next(c for c in items if c["kind"] == 2)
+    cid = tracker["id"]
+
+    # Favourite is the radio's flag; it round-trips through a contact refresh.
+    r = await client.post(f"/api/contacts/{cid}/favorite", headers=csrf(client), json={"favorite": True})
+    assert r.json()["favorite"] is True
+    assert (await client.get("/api/contacts?show=favorites")).json()["total"] == 1
+
+    # Path: via one repeater (shortened to the hash size), then reset to flood.
+    r = await client.put(
+        f"/api/contacts/{cid}/path", headers=csrf(client), json={"hops": [rpt["public_key"]]}
+    )
+    assert r.status_code == 204
+    d = (await client.get(f"/api/contacts/{cid}")).json()
+    assert d["path_len"] == 1 and d["path_hops"] == [rpt["public_key"][: 2 * d["path_hash_size"]]]
+    assert (await client.post(f"/api/contacts/{cid}/reset-path", headers=csrf(client))).status_code == 204
+    assert (await client.get(f"/api/contacts/{cid}")).json()["path_len"] == -1
+    bad = await client.put(f"/api/contacts/{cid}/path", headers=csrf(client), json={"hops": ["zz"]})
+    assert bad.status_code == 422
+
+    # Share and export.
+    assert (await client.post(f"/api/contacts/{cid}/share", headers=csrf(client))).status_code == 200
+    assert (await client.get(f"/api/contacts/{cid}/export")).json()["uri"].startswith("meshcore://")
+
+    # Block: a DM from the contact is archived but hidden, not unread; unblock restores it.
+    conv_id = (await client.post(f"/api/contacts/{cid}/conversation", headers=csrf(client))).json()[
+        "conversation_id"
+    ]
+    await client.patch(f"/api/contacts/{cid}", headers=csrf(client), json={"blocked": True})
+    from app.radio.base import IncomingMessage
+
+    supervisor.adapter.inject(
+        IncomingMessage(
+            kind="dm", text="spam spam", pubkey_prefix=tracker["public_key"][:12], sender_timestamp=1
+        )
+    )
+
+    async def archived():
+        async with db.session_factory()() as s:
+            return (await s.execute(select(Message).where(Message.body == "spam spam"))).scalar_one_or_none()
+
+    m = await wait_for(archived)
+    assert m.suppressed is True
+    assert (await client.get(f"/api/conversations/{conv_id}/messages")).json()["messages"] == []
+    assert not any(c["id"] == conv_id for c in (await client.get("/api/conversations")).json())
+    assert (await client.get("/api/search?q=spam")).json() == []
+    assert (await client.get("/api/contacts?show=blocked")).json()["total"] == 1
+    await client.patch(f"/api/contacts/{cid}", headers=csrf(client), json={"blocked": False})
+    msgs = (await client.get(f"/api/conversations/{conv_id}/messages")).json()["messages"]
+    assert [x["body"] for x in msgs] == ["spam spam"]
+
+    # Remove from radio: kept in the archive under "removed".
+    assert (await client.delete(f"/api/contacts/{cid}", headers=csrf(client))).status_code == 204
+    assert (await client.get("/api/contacts?show=removed")).json()["items"][0]["id"] == cid
+    assert (await client.post(f"/api/contacts/{cid}/share", headers=csrf(client))).status_code == 409
+    simulated._SIM_STATE = None
+
+
+async def test_notification_settings_and_sound_override(client):
+    await do_setup(client)
+    convs = await _connected_conversations(client)
+    assert (await client.get("/api/settings/notifications")).json() == {"sound": "dms"}
+    r = await client.put("/api/settings/notifications", headers=csrf(client), json={"sound": "all"})
+    assert r.json()["sound"] == "all"
+    assert (
+        await client.put("/api/settings/notifications", headers=csrf(client), json={"sound": "x"})
+    ).status_code == 422
+    cid = convs[0]["id"]
+    await client.patch(f"/api/conversations/{cid}", headers=csrf(client), json={"sound": "off"})
+    assert (await client.get(f"/api/conversations/{cid}")).json()["sound"] == "off"
+    await client.patch(f"/api/conversations/{cid}", headers=csrf(client), json={"sound": "default"})
+    assert (await client.get(f"/api/conversations/{cid}")).json()["sound"] is None

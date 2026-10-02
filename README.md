@@ -55,8 +55,22 @@ direct messages from any browser that can reach it.
   Values are checked against the firmware's own limits before anything is sent. Factory reset and
   private-key export/import are deliberately left out. Use official MeshCore tools for those.
 - **Account page** (click your name, bottom left): change your username and password, and sign out.
-- Right-click (or long-press) menu on conversations: info, mark as read, favorite, delete or clear
-  history.
+- Right-click (or long-press) menu on conversations: info, mark as read, favorite, mute or unmute,
+  and delete or clear history.
+- **Notification sounds:** a chime for new incoming messages while the app is open in a browser tab.
+  The global setting is *All messages*, *Direct messages only*, or *Off*, and you can override it per
+  conversation from the right-click menu.
+- **Contacts:** a compact, searchable list (name, device type, last heard) with type and status
+  filters, sorting, and pagination (10/25/50 per page). Right-click or long-press a contact for:
+  - **Details**
+  - **Share:** copy a `meshcore://` contact link, or re-broadcast the advert to nearby nodes.
+  - **Set path / Reset path:** choose the repeater route, or go back to flooding.
+  - **Favorite:** sets the radio's favourite flag, so the radio won't overwrite the contact when its
+    contact list is full.
+  - **Block:** an app-side block. MeshCore radios can't block traffic, so the blocked contact's DMs,
+    and channel messages under their name, are archived but hidden, never unread, and silent.
+    Unblocking restores them.
+  - **Remove contact:** removes it from the radio. The archive keeps the conversation.
 - Maintenance pause/resume, device information, contacts with full public keys and local aliases,
   and JSON export.
 - Light and dark themes. Layouts for phone, tablet, and desktop.

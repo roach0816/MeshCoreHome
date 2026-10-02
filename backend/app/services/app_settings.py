@@ -57,6 +57,13 @@ class MapConfig(BaseModel):
         return v
 
 
+class NotificationConfig(BaseModel):
+    # Sound for new incoming messages, played by open browser tabs. Per-conversation overrides
+    # (conversations.sound) take precedence.
+    sound: Literal["off", "all", "dms"] = "dms"
+
+
+NOTIFICATIONS_KEY = "notifications"
 RADIO_KEY = "radio"
 MAP_KEY = "map"
 INSTALLATION_KEY = "installation"
@@ -92,6 +99,15 @@ async def get_map_config(db: AsyncSession) -> MapConfig:
 
 async def put_map_config(db: AsyncSession, cfg: MapConfig) -> None:
     await _put(db, MAP_KEY, cfg.model_dump())
+
+
+async def get_notification_config(db: AsyncSession) -> NotificationConfig:
+    raw = await _get(db, NOTIFICATIONS_KEY)
+    return NotificationConfig.model_validate(raw) if raw else NotificationConfig()
+
+
+async def put_notification_config(db: AsyncSession, cfg: NotificationConfig) -> None:
+    await _put(db, NOTIFICATIONS_KEY, cfg.model_dump())
 
 
 async def get_installation(db: AsyncSession) -> InstallationConfig:

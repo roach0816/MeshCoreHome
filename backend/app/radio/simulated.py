@@ -83,6 +83,10 @@ def _initial_state() -> dict:
         "tuning": {"rx_delay": 0.0, "airtime_factor": 1.0},
         "channels": {c.slot: (c.name, c.secret) for c in SIM_CHANNELS},
         "custom_vars": {"gps": "0", "gps_interval": "900"},
+        # Per-contact radio state: flags (bit 0 favourite) and routing path.
+        "contact_flags": {},
+        "contact_paths": {},  # public_key -> (path_len, path_hex)
+        "removed_contacts": set(),
     }
 
 
@@ -146,10 +150,29 @@ class SimulatedRadio(RadioAdapter):
     async def get_contacts(self) -> list[RadioContact]:
         self._require()
         now = int(time.time())
-        return [
-            RadioContact(c.public_key, c.name, c.kind, now - 600 * (i + 1), lat=c.lat, lon=c.lon)
-            for i, c in enumerate(SIM_CONTACTS)
-        ]
+        st = sim_state()
+        out = []
+        for i, c in enumerate(SIM_CONTACTS):
+            if c.public_key in st["removed_contacts"]:
+                continue
+            path_len, path_hex = st["contact_paths"].get(c.public_key, (-1, ""))
+            out.append(
+                RadioContact(
+                    c.public_key,
+                    c.name,
+                    c.kind,
+                    now - 600 * (i + 1) - (86400 * 3 if i >= 5 else 0),  # some heard days ago
+                    lat=c.lat,
+                    lon=c.lon,
+                    flags=st["contact_flags"].get(c.public_key, 0),
+                    path_len=path_len,
+                    path_hex=path_hex,
+                )
+            )
+        return out
+
+    def path_hash_size(self) -> int:
+        return int(sim_state()["path_hash_mode"]) + 1
 
     async def get_channels(self) -> list[RadioChannel]:
         self._require()
@@ -260,6 +283,24 @@ class SimulatedRadio(RadioAdapter):
             st["custom_vars"][params["key"]] = params["value"]
         elif op in ("advert", "sync_clock"):
             pass
+        elif op.startswith("contact_"):
+            key = params["public_key"]
+            if key in st["removed_contacts"] or not any(c.public_key == key for c in SIM_CONTACTS):
+                raise RadioError("this contact is no longer on the radio")
+            if op == "contact_favorite":
+                flags = st["contact_flags"].get(key, 0)
+                st["contact_flags"][key] = (flags | 1) if params["favorite"] else (flags & ~1)
+            elif op == "contact_reset_path":
+                st["contact_paths"].pop(key, None)
+            elif op == "contact_set_path":
+                hex_ = params["path_hex"]
+                st["contact_paths"][key] = (len(hex_) // (2 * self.path_hash_size()), hex_)
+            elif op == "contact_remove":
+                st["removed_contacts"].add(key)
+            elif op == "contact_export":
+                return {"uri": "meshcore://" + hashlib.sha256(f"sim-card:{key}".encode()).hexdigest() * 3}
+            elif op != "contact_share":
+                raise NotSupported(f"unknown operation {op!r}")
         elif op == "reboot":
             # Behave like the real thing: the connection drops and the supervisor reconnects.
             self._spawn(self._simulate_reboot())

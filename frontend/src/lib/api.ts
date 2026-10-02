@@ -96,6 +96,8 @@ export interface Conversation {
   title: string;
   favorite: boolean;
   muted: boolean;
+  sound: "on" | "off" | null;
+  blocked: boolean;
   last_message_at: string | null;
   last_position: number;
   read_position: number;
@@ -129,8 +131,27 @@ export interface Contact {
   kind: number;
   last_advert_at: string | null;
   on_radio: boolean;
+  favorite: boolean;
+  blocked: boolean;
   is_simulated: boolean;
   conversation_id: string | null;
+}
+
+export interface ContactPage {
+  items: Contact[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ContactDetail extends Contact {
+  lat: number | null;
+  lon: number | null;
+  path_len: number; // -1 flood, 0 direct, n hops
+  path_hops: string[];
+  path_hash_size: number;
+  messages_received: number;
+  messages_sent: number;
 }
 
 export interface RadioStatus {

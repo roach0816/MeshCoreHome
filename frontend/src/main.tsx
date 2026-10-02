@@ -5,9 +5,11 @@ import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import { applyTheme, getThemePref } from "./lib/util";
 import { ApiError } from "./lib/api";
+import { installAudioUnlock } from "./lib/sound";
 import "./index.css";
 
 applyTheme(getThemePref());
+installAudioUnlock();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(getThemePref()));
 
 const queryClient = new QueryClient({

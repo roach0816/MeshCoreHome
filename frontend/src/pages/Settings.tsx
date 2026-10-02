@@ -1,7 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { ChevronLeft, Download, Pause, Play, PlugZap, SlidersHorizontal, Sparkles, Trash2, UserRound } from "lucide-react";
+import {
+  ChevronLeft,
+  Download,
+  Pause,
+  Play,
+  PlugZap,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  UserRound,
+  Volume2,
+} from "lucide-react";
+import { playChime, type SoundSetting } from "../lib/sound";
 import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { radioSummary } from "../components/StatusPill";
@@ -45,6 +57,7 @@ export function Settings({ me }: { me: Me }) {
           <RadioSection />
           <DeviceSection />
           <GapsSection />
+          <NotificationsSection />
           <MapSection />
           <AppearanceSection />
           <AccountSection me={me} />
@@ -373,6 +386,66 @@ function MapSection() {
         <Button onClick={() => save.mutate(OSM_DEFAULT)} disabled={save.isPending}>
           Reset to OpenStreetMap
         </Button>
+      </div>
+    </Section>
+  );
+}
+
+function NotificationsSection() {
+  const qc = useQueryClient();
+  const cfg = useQuery({
+    queryKey: ["notification-settings"],
+    queryFn: () => api<{ sound: SoundSetting }>("/api/settings/notifications"),
+  });
+  const save = useMutation({
+    mutationFn: (sound: SoundSetting) =>
+      api<{ sound: SoundSetting }>("/api/settings/notifications", { method: "PUT", json: { sound } }),
+    onSuccess: (v) => qc.setQueryData(["notification-settings"], v),
+  });
+  const current = cfg.data?.sound;
+  const options: [SoundSetting, string, string][] = [
+    ["all", "All messages", "Channels and direct messages."],
+    ["dms", "Direct messages only", "Channels stay quiet unless you unmute one."],
+    ["off", "Off", "No sounds, unless you turn sound on for a specific conversation."],
+  ];
+  return (
+    <Section
+      title="Notification sounds"
+      description="Plays a short chime for new incoming messages while MeshCore Home is open in a browser tab. Right-click a conversation to mute or unmute it individually."
+    >
+      <fieldset className="grid gap-2 sm:grid-cols-3">
+        <legend className="sr-only">Play a sound for</legend>
+        {options.map(([value, title, sub]) => (
+          <label
+            key={value}
+            className={cx(
+              "flex cursor-pointer items-start gap-2 rounded-lg border p-3",
+              current === value ? "border-accent bg-accent-soft/40" : "border-line hover:bg-surface-2",
+            )}
+          >
+            <input
+              type="radio"
+              name="sound"
+              checked={current === value}
+              disabled={save.isPending}
+              onChange={() => save.mutate(value)}
+              className="mt-1 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="block text-sm font-medium">{title}</span>
+              <span className="block text-xs text-muted">{sub}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <ErrorText error={save.error} />
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={playChime}>
+          <Volume2 className="size-4" aria-hidden /> Test sound
+        </Button>
+        <span className="text-xs text-muted">
+          Shared by all your browsers. Phones may silence web pages that are in the background.
+        </span>
       </div>
     </Section>
   );

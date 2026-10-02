@@ -83,8 +83,9 @@ async def sync_contacts(db: AsyncSession, radio: Radio, contacts: list[RadioCont
         row.kind = rc.kind
         row.last_advert_at = _epoch(rc.last_advert)
         row.lat, row.lon = rc.lat, rc.lon
+        row.favorite = bool(rc.flags & 0x01)
         row.on_radio = True
-        row.meta = rc.meta
+        row.meta = {**rc.meta, "flags": rc.flags, "path_len": rc.path_len, "path_hex": rc.path_hex}
     for key, row in existing.items():
         if key not in seen:
             row.on_radio = False  # archive keeps it; the radio no longer has it
@@ -208,6 +209,55 @@ def incoming_fingerprint(radio: Radio, conv: Conversation, msg: IncomingMessage)
 DEDUP_WINDOW = timedelta(hours=24)
 
 
+async def _sender_blocked(db: AsyncSession, radio: Radio, conv: Conversation, msg: IncomingMessage) -> bool:
+    if conv.kind == "dm":
+        if conv.contact_id is None:
+            return False
+        contact = await db.get(Contact, conv.contact_id)
+        return bool(contact and contact.blocked)
+    # Channel messages carry only the sender's self-chosen name, so blocking matches by name.
+    if not msg.sender_label:
+        return False
+    hit = await db.execute(
+        select(Contact.id).where(
+            Contact.radio_id == radio.id, Contact.blocked.is_(True), Contact.name == msg.sender_label
+        )
+    )
+    return hit.first() is not None
+
+
+async def set_contact_blocked(db: AsyncSession, contact: Contact, blocked: bool) -> int:
+    """Block/unblock and re-flag that sender's archived incoming messages. Returns rows changed."""
+    contact.blocked = blocked
+    changed = 0
+    conv = (
+        await db.execute(select(Conversation).where(Conversation.contact_id == contact.id))
+    ).scalar_one_or_none()
+    if conv is not None:
+        res = await db.execute(
+            update(Message)
+            .where(Message.conversation_id == conv.id, Message.direction == "in")
+            .values(suppressed=blocked)
+        )
+        changed += res.rowcount or 0
+    if contact.name:
+        channel_convs = select(Conversation.id).where(
+            Conversation.radio_id == contact.radio_id, Conversation.kind == "channel"
+        )
+        res = await db.execute(
+            update(Message)
+            .where(
+                Message.conversation_id.in_(channel_convs),
+                Message.direction == "in",
+                Message.sender_label == contact.name,
+            )
+            .values(suppressed=blocked)
+        )
+        changed += res.rowcount or 0
+    await db.flush()
+    return changed
+
+
 async def ingest_incoming(db: AsyncSession, radio: Radio, msg: IncomingMessage) -> tuple[Message, bool]:
     """Persist one received message. Returns (message, created). Caller commits."""
     if msg.kind == "channel":
@@ -229,6 +279,7 @@ async def ingest_incoming(db: AsyncSession, radio: Radio, msg: IncomingMessage) 
     else:
         conv = await resolve_dm_conversation(db, radio, msg.pubkey_prefix or "")
 
+    suppressed = await _sender_blocked(db, radio, conv, msg)
     fp = incoming_fingerprint(radio, conv, msg)
     # Conservative duplicate suppression: only an exact repeat (same sender metadata, protocol
     # timestamp, type and text) within a bounded window. The repeat is counted, not discarded silently.
@@ -259,10 +310,12 @@ async def ingest_incoming(db: AsyncSession, radio: Radio, msg: IncomingMessage) 
         state=States.RECEIVED,
         fingerprint=fp,
         is_simulated=radio.is_simulated,
+        suppressed=suppressed,
         meta=msg.meta,
     )
     db.add(m)
-    conv.last_message_at = now
+    if not suppressed:
+        conv.last_message_at = now
     conv.last_position = position
     await db.flush()
     return m, True

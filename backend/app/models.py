@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -92,6 +93,12 @@ class Contact(Base):
     lat: Mapped[float | None] = mapped_column(Float)
     lon: Mapped[float | None] = mapped_column(Float)
     on_radio: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Mirrors the firmware's favourite flag (contact flags bit 0): protected from being
+    # overwritten when the radio's contact table is full.
+    favorite: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # App-side block: the radio cannot block, so messages are still received and archived but
+    # suppressed (hidden, never unread, never notify). Reversible.
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -128,7 +135,9 @@ class Conversation(Base):
     peer_prefix: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(64))
     favorite: Mapped[bool] = mapped_column(Boolean, default=False)
-    muted: Mapped[bool] = mapped_column(Boolean, default=False)
+    muted: Mapped[bool] = mapped_column(Boolean, default=False)  # unused; superseded by `sound`
+    # Per-conversation sound override: None follows the global setting, "on"/"off" override it.
+    sound: Mapped[str | None] = mapped_column(String(8))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_message_at: Mapped[datetime | None]
     last_position: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -162,6 +171,8 @@ class Message(Base):
     expires_at: Mapped[datetime | None]
     error: Mapped[str | None] = mapped_column(Text)
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True while the sender is blocked; hidden from history, unread counts, search and sounds.
+    suppressed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

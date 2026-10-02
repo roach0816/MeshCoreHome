@@ -4,6 +4,7 @@ import { LogOut, Map as MapIcon, MessagesSquare, Settings as SettingsIcon, Users
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { api, type Me, type Status } from "../lib/api";
 import { useSetupStatus } from "../lib/queries";
+import type { SoundSetting } from "../lib/sound";
 import { useRealtime } from "../lib/realtime";
 import { cx } from "../lib/util";
 import { ConversationList } from "../components/ConversationList";
@@ -52,6 +53,11 @@ function EmptyPane() {
 
 export function Shell({ me }: { me: Me }) {
   const socket = useRealtime(true);
+  useQuery({
+    queryKey: ["notification-settings"],
+    queryFn: () => api<{ sound: SoundSetting }>("/api/settings/notifications"),
+    staleTime: Infinity,
+  });
   const status = useStatus();
   const { pathname } = useLocation();
   const atRoot = pathname === "/";

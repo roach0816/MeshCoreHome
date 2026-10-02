@@ -1,12 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatch } from "react-router";
-import { Hash, MoreHorizontal, Search, Star, UserRound, X } from "lucide-react";
+import { BellOff, Hash, MoreHorizontal, Search, Star, UserRound, X } from "lucide-react";
 import { api, type Conversation, type SearchHit } from "../lib/api";
 import { cx, formatListTime } from "../lib/util";
 import { useConversationActions } from "./ConversationActions";
-
-const LONG_PRESS_MS = 500;
+import { useContextTrigger } from "./useContextTrigger";
 
 type Filter = "all" | "unread" | "favorites";
 
@@ -43,36 +42,7 @@ export function ConversationList() {
   const match = useMatch("/c/:id");
   const activeId = match?.params.id;
   const actions = useConversationActions();
-  const press = useRef<{ timer: number; x: number; y: number; fired: boolean } | null>(null);
-
-  const cancelPress = () => {
-    if (press.current) window.clearTimeout(press.current.timer);
-  };
-  // Long-press opens the menu on touch screens (iOS Safari never fires contextmenu on links).
-  const touchHandlers = (c: Conversation) => ({
-    onTouchStart: (e: React.TouchEvent) => {
-      const t = e.touches[0];
-      cancelPress();
-      press.current = {
-        x: t.clientX,
-        y: t.clientY,
-        fired: false,
-        timer: window.setTimeout(() => {
-          if (press.current) press.current.fired = true;
-          navigator.vibrate?.(10);
-          actions.openMenu(c, t.clientX, t.clientY);
-        }, LONG_PRESS_MS),
-      };
-    },
-    onTouchMove: (e: React.TouchEvent) => {
-      const t = e.touches[0];
-      if (press.current && Math.hypot(t.clientX - press.current.x, t.clientY - press.current.y) > 10) cancelPress();
-    },
-    onTouchEnd: (e: React.TouchEvent) => {
-      cancelPress();
-      if (press.current?.fired) e.preventDefault(); // don't also follow the link
-    },
-  });
+  const trigger = useContextTrigger();
 
   const q = query.trim().toLowerCase();
   const list = useMemo(() => {
@@ -154,22 +124,7 @@ export function ConversationList() {
                 to={`/c/${c.id}`}
                 aria-current={activeId === c.id ? "page" : undefined}
                 aria-haspopup="menu"
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  // Some browsers still synthesize a keyboard contextmenu event with no pointer position.
-                  if (e.clientX === 0 && e.clientY === 0) {
-                    const r = e.currentTarget.getBoundingClientRect();
-                    actions.openMenu(c, r.left + 48, r.top + r.height / 2);
-                  } else actions.openMenu(c, e.clientX, e.clientY);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-                    e.preventDefault(); // handled here; stop the browser's own contextmenu event
-                    const r = e.currentTarget.getBoundingClientRect();
-                    actions.openMenu(c, r.left + 48, r.top + r.height / 2);
-                  }
-                }}
-                {...touchHandlers(c)}
+{...trigger((x, y) => actions.openMenu(c, x, y))}
                 className={cx(
                   "flex select-none items-center gap-3 px-3 py-2.5 transition-colors [-webkit-touch-callout:none]",
                   activeId === c.id ? "bg-accent-soft/60" : "hover:bg-surface-2",
@@ -180,6 +135,7 @@ export function ConversationList() {
                   <span className="flex items-baseline gap-2">
                     <span className={cx("truncate text-sm", c.unread ? "font-semibold" : "font-medium")}>{c.title}</span>
                     {c.favorite && <Star className="size-3 shrink-0 fill-current text-warn" aria-label="Favorite" />}
+                    {c.sound === "off" && <BellOff className="size-3 shrink-0 text-muted" aria-label="Muted" />}
                     <span className="ml-auto shrink-0 text-xs text-muted">{formatListTime(c.last_message_at)}</span>
                   </span>
                   <span className="mt-0.5 flex items-center gap-2">

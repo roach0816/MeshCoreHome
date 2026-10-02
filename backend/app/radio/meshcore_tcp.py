@@ -171,6 +171,9 @@ class MeshCoreTcpRadio(RadioAdapter):
                     meta={"out_path_len": c.get("out_path_len")},
                     lat=lat,
                     lon=lon,
+                    flags=int(c.get("flags") or 0),
+                    path_len=int(c.get("out_path_len") if c.get("out_path_len") is not None else -1),
+                    path_hex=str(c.get("out_path") or ""),
                 )
             )
         return out
@@ -428,8 +431,54 @@ class MeshCoreTcpRadio(RadioAdapter):
             await self._ok(c.set_time(int(params["epoch"])), "setting the clock")
         elif op == "reboot":
             await c.reboot()  # the firmware reboots without replying
+        elif op.startswith("contact_"):
+            return await self._contact_op(op, params)
         else:
             raise NotSupported(f"unknown operation {op!r}")
         if op in ("identity", "radio", "behavior", "telemetry"):
             await self._fresh_self_info()  # so the next device snapshot reflects the change
+        return {}
+
+    # ---- contact operations -----------------------------------------------------------
+
+    def path_hash_size(self) -> int:
+        return int(self._device_info.get("path_hash_mode") or 0) + 1
+
+    async def _radio_contact(self, public_key: str) -> dict[str, Any]:
+        """update_contact needs the library's full contact record; refresh the cache if missing."""
+        mc = self._require()
+        contact = (mc.contacts or {}).get(public_key)
+        if contact is None:
+            await self._ok(mc.commands.get_contacts(timeout=COMMAND_TIMEOUT), "reading contacts")
+            contact = (mc.contacts or {}).get(public_key)
+        if contact is None:
+            raise RadioError("this contact is no longer on the radio")
+        return contact
+
+    async def _contact_op(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
+        mc = self._require()
+        c = mc.commands
+        key = params["public_key"]
+        if op == "contact_favorite":
+            contact = await self._radio_contact(key)
+            flags = int(contact.get("flags") or 0)
+            flags = (flags | 0x01) if params["favorite"] else (flags & ~0x01)
+            await self._ok(c.change_contact_flags(contact, flags), "updating the favourite flag")
+        elif op == "contact_reset_path":
+            await self._ok(c.reset_path(key), "resetting the path")
+        elif op == "contact_set_path":
+            contact = await self._radio_contact(key)
+            mode = self.path_hash_size() - 1
+            await self._ok(
+                c.change_contact_path(contact, params["path_hex"], path_hash_mode=mode), "setting the path"
+            )
+        elif op == "contact_remove":
+            await self._ok(c.remove_contact(key), "removing the contact")
+        elif op == "contact_share":
+            await self._ok(c.share_contact(key), "sharing the contact")
+        elif op == "contact_export":
+            res = await self._ok(c.export_contact(key), "exporting the contact")
+            return {"uri": _payload(res).get("uri")}
+        else:
+            raise NotSupported(f"unknown operation {op!r}")
         return {}

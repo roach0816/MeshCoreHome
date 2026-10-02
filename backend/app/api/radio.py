@@ -173,3 +173,20 @@ async def delete_simulated_data(ctx: AuthContext = Depends(require_auth), db: As
     hub.publish("conversations-updated")
     hub.publish("contacts-updated")
     return {"deleted_radios": res.rowcount or 0}
+
+
+@router.get("/settings/notifications", response_model=app_settings.NotificationConfig)
+async def get_notifications(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    return await app_settings.get_notification_config(db)
+
+
+@router.put("/settings/notifications", response_model=app_settings.NotificationConfig)
+async def put_notifications(
+    body: app_settings.NotificationConfig,
+    ctx: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await app_settings.put_notification_config(db, body)
+    await db.commit()
+    hub.publish("settings-updated", key="notifications")
+    return body

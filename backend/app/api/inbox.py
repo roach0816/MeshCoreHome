@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -16,7 +16,7 @@ from app.api.deps import AuthContext, require_auth
 from app.config import get_settings
 from app.db import get_db
 from app.models import AuditEvent, Channel, Contact, Conversation, Message, Radio, ReadPosition, utcnow
-from app.radio.base import CHANNEL_MAX_BYTES, DM_MAX_BYTES, RadioError
+from app.radio.base import CHANNEL_MAX_BYTES, DM_MAX_BYTES
 from app.radio.supervisor import supervisor
 from app.realtime import hub
 from app.security import send_limiter
@@ -63,6 +63,8 @@ class ConversationOut(BaseModel):
     title: str
     favorite: bool
     muted: bool
+    sound: str | None = None  # per-conversation override: None = global setting, "on" / "off"
+    blocked: bool = False
     last_message_at: datetime | None
     last_position: int
     read_position: int
@@ -98,22 +100,8 @@ class ReadPositionRequest(BaseModel):
 class ConversationPatch(BaseModel):
     favorite: bool | None = None
     muted: bool | None = None
-
-
-class ContactOut(BaseModel):
-    id: uuid.UUID
-    public_key: str
-    name: str
-    alias: str | None
-    kind: int
-    last_advert_at: datetime | None
-    on_radio: bool
-    is_simulated: bool
-    conversation_id: uuid.UUID | None
-
-
-class ContactPatch(BaseModel):
-    alias: str | None = Field(default=None, max_length=64)
+    # "on"/"off" override the global sound setting; "default" clears the override.
+    sound: Literal["on", "off", "default"] | None = None
 
 
 class SearchHit(MessageOut):
@@ -163,6 +151,7 @@ async def _conversation_rows(db: AsyncSession, user_id: uuid.UUID, conv_id: uuid
             Message.conversation_id.in_(ids),
             Message.direction == "in",
             Message.position > func.coalesce(ReadPosition.position, 0),
+            Message.suppressed.is_(False),
         )
         .group_by(Message.conversation_id)
     )
@@ -173,7 +162,7 @@ async def _conversation_rows(db: AsyncSession, user_id: uuid.UUID, conv_id: uuid
             await db.execute(
                 select(Message)
                 .ext(distinct_on(Message.conversation_id))
-                .where(Message.conversation_id.in_(ids))
+                .where(Message.conversation_id.in_(ids), Message.suppressed.is_(False))
                 .order_by(Message.conversation_id, Message.position.desc())
             )
         ).scalars()
@@ -186,6 +175,8 @@ async def _conversation_rows(db: AsyncSession, user_id: uuid.UUID, conv_id: uuid
         )
         if conv.kind == "channel" and archived and conv.id not in previews:
             continue  # nothing to show for an empty, retired channel generation
+        if contact is not None and contact.blocked and conv_id is None:
+            continue  # blocked contacts' DMs are hidden from the list (still reachable directly)
         p = previews.get(conv.id)
         out.append(
             ConversationOut(
@@ -194,6 +185,8 @@ async def _conversation_rows(db: AsyncSession, user_id: uuid.UUID, conv_id: uuid
                 title=(contact.alias or contact.name) if contact else conv.title,
                 favorite=conv.favorite,
                 muted=conv.muted,
+                sound=conv.sound,
+                blocked=bool(contact and contact.blocked),
                 last_message_at=conv.last_message_at,
                 last_position=conv.last_position,
                 read_position=read_pos or 0,
@@ -255,6 +248,8 @@ async def patch_conversation(
         conv.favorite = body.favorite
     if body.muted is not None:
         conv.muted = body.muted
+    if body.sound is not None:
+        conv.sound = None if body.sound == "default" else body.sound
     await db.commit()
     hub.publish("conversations-updated")
 
@@ -317,7 +312,7 @@ async def conversation_info(
                 func.count().filter(Message.direction == "in"),
                 func.min(Message.created_at),
                 func.max(Message.created_at),
-            ).where(Message.conversation_id == conv_id)
+            ).where(Message.conversation_id == conv_id, Message.suppressed.is_(False))
         )
     ).one()
     # _conversation_rows hides empty retired channels; build the summary directly in that case.
@@ -391,7 +386,7 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ):
     await _conversation(db, conv_id)
-    q = select(Message).where(Message.conversation_id == conv_id)
+    q = select(Message).where(Message.conversation_id == conv_id, Message.suppressed.is_(False))
     if after is not None:
         rows = (
             (await db.execute(q.where(Message.position > after).order_by(Message.position).limit(limit + 1)))
@@ -523,70 +518,6 @@ async def put_read_position(
 # ---- contacts ---------------------------------------------------------------------------
 
 
-@router.get("/contacts", response_model=list[ContactOut])
-async def list_contacts(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
-    rows = (
-        await db.execute(
-            select(Contact, Radio.is_simulated, Conversation.id)
-            .join(Radio, Radio.id == Contact.radio_id)
-            .outerjoin(Conversation, Conversation.contact_id == Contact.id)
-            .order_by(Contact.on_radio.desc(), func.lower(func.coalesce(Contact.alias, Contact.name)))
-        )
-    ).all()
-    return [
-        ContactOut(
-            id=c.id,
-            public_key=c.public_key,
-            name=c.name,
-            alias=c.alias,
-            kind=c.kind,
-            last_advert_at=c.last_advert_at,
-            on_radio=c.on_radio,
-            is_simulated=sim,
-            conversation_id=conv_id,
-        )
-        for c, sim, conv_id in rows
-    ]
-
-
-@router.post("/contacts/refresh")
-async def refresh_contacts(ctx: AuthContext = Depends(require_auth)):
-    try:
-        n = await supervisor.refresh_contacts()
-    except (RadioError, TimeoutError) as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Could not refresh contacts: {exc}") from exc
-    return {"count": n}
-
-
-@router.patch("/contacts/{contact_id}", status_code=204)
-async def patch_contact(
-    contact_id: uuid.UUID,
-    body: ContactPatch,
-    ctx: AuthContext = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    contact = await db.get(Contact, contact_id)
-    if contact is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact not found")
-    contact.alias = (body.alias or "").strip() or None
-    await db.commit()
-    hub.publish("contacts-updated")
-    hub.publish("conversations-updated")
-
-
-@router.post("/contacts/{contact_id}/conversation")
-async def open_dm(
-    contact_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
-):
-    contact = await db.get(Contact, contact_id)
-    if contact is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Contact not found")
-    conv = await messaging.dm_conversation_for_contact(db, contact)
-    await db.commit()
-    hub.publish("conversations-updated")
-    return {"conversation_id": str(conv.id)}
-
-
 # ---- search / export --------------------------------------------------------------------
 
 
@@ -607,7 +538,7 @@ async def search(
         select(Message, Conversation, Contact)
         .join(Conversation, Conversation.id == Message.conversation_id)
         .outerjoin(Contact, Contact.id == Conversation.contact_id)
-        .where(Message.body.ilike(f"%{_like_escape(q)}%", escape="\\"))
+        .where(Message.body.ilike(f"%{_like_escape(q)}%", escape="\\"), Message.suppressed.is_(False))
     )
     if conversation_id:
         stmt = stmt.where(Message.conversation_id == conversation_id)
