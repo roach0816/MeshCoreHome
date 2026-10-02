@@ -215,3 +215,40 @@ async def test_device_endpoint_never_returns_channel_secrets(client):
     text = (await client.get("/api/device")).text
     assert "secret" not in text.lower()
     assert "sim-public-secret" not in text
+
+
+async def test_conversation_info_and_delete_semantics(client):
+    await do_setup(client)
+    convs = await _connected_conversations(client)
+    public = next(c for c in convs if c["title"] == "Public")
+
+    # Active channel: info reports "clear"; deleting clears history but keeps the conversation.
+    await client.post(
+        f"/api/conversations/{public['id']}/messages",
+        headers=csrf(client),
+        json={"client_message_id": "info0001", "body": "hello"},
+    )
+    info = (await client.get(f"/api/conversations/{public['id']}/info")).json()
+    assert info["delete_action"] == "clear"
+    assert info["channel"]["slot"] == 0 and info["stats"]["outgoing"] == 1
+    r = await client.delete(f"/api/conversations/{public['id']}", headers=csrf(client))
+    assert r.json() == {"action": "cleared", "messages_removed": 1}
+    page = (await client.get(f"/api/conversations/{public['id']}/messages")).json()
+    assert page["messages"] == []
+    assert any(c["id"] == public["id"] for c in (await client.get("/api/conversations")).json())
+
+    # DM: info includes the contact's full key; deleting removes the conversation entirely.
+    contacts = (await client.get("/api/contacts")).json()
+    tracker = next(c for c in contacts if c["name"] == "Tracker (sim)")
+    conv_id = (await client.post(f"/api/contacts/{tracker['id']}/conversation", headers=csrf(client))).json()[
+        "conversation_id"
+    ]
+    info = (await client.get(f"/api/conversations/{conv_id}/info")).json()
+    assert info["delete_action"] == "delete"
+    assert info["contact"]["public_key"] == tracker["public_key"]
+    assert (await client.delete(f"/api/conversations/{conv_id}", headers=HEADERS)).status_code == 403  # CSRF
+    r = await client.delete(f"/api/conversations/{conv_id}", headers=csrf(client))
+    assert r.json()["action"] == "deleted"
+    assert (await client.get(f"/api/conversations/{conv_id}")).status_code == 404
+    # The contact itself is untouched and a DM can be reopened.
+    assert any(c["id"] == tracker["id"] for c in (await client.get("/api/contacts")).json())

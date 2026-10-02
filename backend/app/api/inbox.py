@@ -8,13 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, select
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, require_auth
 from app.config import get_settings
 from app.db import get_db
-from app.models import Channel, Contact, Conversation, Message, Radio, ReadPosition, utcnow
+from app.models import AuditEvent, Channel, Contact, Conversation, Message, Radio, ReadPosition, utcnow
 from app.radio.base import CHANNEL_MAX_BYTES, DM_MAX_BYTES, RadioError
 from app.radio.supervisor import supervisor
 from app.realtime import hub
@@ -256,6 +257,128 @@ async def patch_conversation(
         conv.muted = body.muted
     await db.commit()
     hub.publish("conversations-updated")
+
+
+class ConversationContactInfo(BaseModel):
+    id: uuid.UUID
+    name: str
+    alias: str | None
+    public_key: str
+    kind: int
+    last_advert_at: datetime | None
+    on_radio: bool
+
+
+class ConversationChannelInfo(BaseModel):
+    slot: int
+    name: str
+    generation: int
+    active: bool
+
+
+class ConversationStats(BaseModel):
+    total: int
+    incoming: int
+    outgoing: int
+    first_message_at: datetime | None
+    last_message_at: datetime | None
+
+
+class ConversationInfo(BaseModel):
+    conversation: ConversationOut
+    created_at: datetime
+    radio_name: str
+    contact: ConversationContactInfo | None
+    channel: ConversationChannelInfo | None
+    stats: ConversationStats
+    # What DELETE /conversations/{id} will do: remove the conversation, or only clear its history.
+    delete_action: str
+
+
+def _delete_action(conv: Conversation, channel: Channel | None) -> str:
+    # An active channel is still configured on the radio, so its conversation must stay
+    # (new messages for that slot need somewhere to land); only its history can be cleared.
+    return "clear" if conv.kind == "channel" and channel is not None and channel.active else "delete"
+
+
+@router.get("/conversations/{conv_id}/info", response_model=ConversationInfo)
+async def conversation_info(
+    conv_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+):
+    rows = await _conversation_rows(db, ctx.user.id, conv_id)
+    conv = await _conversation(db, conv_id)
+    radio = await db.get(Radio, conv.radio_id)
+    channel = await db.get(Channel, conv.channel_id) if conv.channel_id else None
+    contact = await db.get(Contact, conv.contact_id) if conv.contact_id else None
+    total, incoming, first_at, last_at = (
+        await db.execute(
+            select(
+                func.count(),
+                func.count().filter(Message.direction == "in"),
+                func.min(Message.created_at),
+                func.max(Message.created_at),
+            ).where(Message.conversation_id == conv_id)
+        )
+    ).one()
+    # _conversation_rows hides empty retired channels; build the summary directly in that case.
+    summary = rows[0] if rows else None
+    if summary is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    return ConversationInfo(
+        conversation=summary,
+        created_at=conv.created_at,
+        radio_name=radio.name,
+        contact=ConversationContactInfo(
+            id=contact.id,
+            name=contact.name,
+            alias=contact.alias,
+            public_key=contact.public_key,
+            kind=contact.kind,
+            last_advert_at=contact.last_advert_at,
+            on_radio=contact.on_radio,
+        )
+        if contact
+        else None,
+        channel=ConversationChannelInfo(
+            slot=channel.slot, name=channel.name, generation=channel.generation, active=channel.active
+        )
+        if channel
+        else None,
+        stats=ConversationStats(
+            total=total,
+            incoming=incoming,
+            outgoing=total - incoming,
+            first_message_at=first_at,
+            last_message_at=last_at,
+        ),
+        delete_action=_delete_action(conv, channel),
+    )
+
+
+@router.delete("/conversations/{conv_id}")
+async def delete_conversation(
+    conv_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+):
+    """Delete from this archive only. Nothing is transmitted and the radio's configuration is unchanged."""
+    conv = await _conversation(db, conv_id)
+    channel = await db.get(Channel, conv.channel_id) if conv.channel_id else None
+    action = _delete_action(conv, channel)
+    removed = (await db.execute(sa_delete(Message).where(Message.conversation_id == conv.id))).rowcount or 0
+    if action == "clear":
+        conv.last_message_at = None  # last_position stays: positions are never reused
+    else:
+        # Read positions cascade with the conversation. A DM reappears if the contact writes again.
+        await db.execute(sa_delete(Conversation).where(Conversation.id == conv.id))
+    db.add(
+        AuditEvent(
+            kind="conversation.cleared" if action == "clear" else "conversation.deleted",
+            detail={"kind": conv.kind, "messages": removed},
+        )
+    )
+    await db.commit()
+    hub.publish("conversations-updated")
+    hub.publish("delivery-updated", conversation_id=str(conv_id))
+    return {"action": "cleared" if action == "clear" else "deleted", "messages_removed": removed}
 
 
 @router.get("/conversations/{conv_id}/messages", response_model=MessagePage)

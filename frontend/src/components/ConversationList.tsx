@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatch } from "react-router";
-import { Hash, Search, Star, UserRound, X } from "lucide-react";
+import { Hash, MoreHorizontal, Search, Star, UserRound, X } from "lucide-react";
 import { api, type Conversation, type SearchHit } from "../lib/api";
 import { cx, formatListTime } from "../lib/util";
+import { useConversationActions } from "./ConversationActions";
+
+const LONG_PRESS_MS = 500;
 
 type Filter = "all" | "unread" | "favorites";
 
@@ -39,6 +42,37 @@ export function ConversationList() {
   const [filter, setFilter] = useState<Filter>("all");
   const match = useMatch("/c/:id");
   const activeId = match?.params.id;
+  const actions = useConversationActions();
+  const press = useRef<{ timer: number; x: number; y: number; fired: boolean } | null>(null);
+
+  const cancelPress = () => {
+    if (press.current) window.clearTimeout(press.current.timer);
+  };
+  // Long-press opens the menu on touch screens (iOS Safari never fires contextmenu on links).
+  const touchHandlers = (c: Conversation) => ({
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      cancelPress();
+      press.current = {
+        x: t.clientX,
+        y: t.clientY,
+        fired: false,
+        timer: window.setTimeout(() => {
+          if (press.current) press.current.fired = true;
+          navigator.vibrate?.(10);
+          actions.openMenu(c, t.clientX, t.clientY);
+        }, LONG_PRESS_MS),
+      };
+    },
+    onTouchMove: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      if (press.current && Math.hypot(t.clientX - press.current.x, t.clientY - press.current.y) > 10) cancelPress();
+    },
+    onTouchEnd: (e: React.TouchEvent) => {
+      cancelPress();
+      if (press.current?.fired) e.preventDefault(); // don't also follow the link
+    },
+  });
 
   const q = query.trim().toLowerCase();
   const list = useMemo(() => {
@@ -97,6 +131,7 @@ export function ConversationList() {
         </div>
       </div>
 
+      {actions.element}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isPending && <p className="px-4 py-6 text-sm text-muted">Loading conversations…</p>}
         {error && <p className="px-4 py-6 text-sm text-danger">Could not load conversations.</p>}
@@ -114,12 +149,29 @@ export function ConversationList() {
         )}
         <ul>
           {list.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="group relative">
               <Link
                 to={`/c/${c.id}`}
                 aria-current={activeId === c.id ? "page" : undefined}
+                aria-haspopup="menu"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  // Some browsers still synthesize a keyboard contextmenu event with no pointer position.
+                  if (e.clientX === 0 && e.clientY === 0) {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    actions.openMenu(c, r.left + 48, r.top + r.height / 2);
+                  } else actions.openMenu(c, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                    e.preventDefault(); // handled here; stop the browser's own contextmenu event
+                    const r = e.currentTarget.getBoundingClientRect();
+                    actions.openMenu(c, r.left + 48, r.top + r.height / 2);
+                  }
+                }}
+                {...touchHandlers(c)}
                 className={cx(
-                  "flex items-center gap-3 px-3 py-2.5 transition-colors",
+                  "flex select-none items-center gap-3 px-3 py-2.5 transition-colors [-webkit-touch-callout:none]",
                   activeId === c.id ? "bg-accent-soft/60" : "hover:bg-surface-2",
                 )}
               >
@@ -147,6 +199,18 @@ export function ConversationList() {
                   </span>
                 </span>
               </Link>
+              <button
+                type="button"
+                aria-label={`More actions for ${c.title}`}
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  actions.openMenu(c, r.left, r.bottom + 4);
+                }}
+                className="absolute right-2 top-1/2 hidden size-8 -translate-y-1/2 items-center justify-center rounded-md border border-line bg-surface text-muted shadow-sm hover:text-ink focus-visible:flex group-hover:flex [@media(hover:none)]:!hidden"
+              >
+                <MoreHorizontal className="size-4" />
+              </button>
             </li>
           ))}
         </ul>

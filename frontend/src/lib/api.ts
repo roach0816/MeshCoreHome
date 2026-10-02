@@ -185,3 +185,27 @@ export interface Device {
 export interface SearchHit extends Message {
   conversation_title: string;
 }
+
+export interface ConversationInfo {
+  conversation: Conversation;
+  created_at: string;
+  radio_name: string;
+  contact: {
+    id: string;
+    name: string;
+    alias: string | null;
+    public_key: string;
+    kind: number;
+    last_advert_at: string | null;
+    on_radio: boolean;
+  } | null;
+  channel: { slot: number; name: string; generation: number; active: boolean } | null;
+  stats: {
+    total: number;
+    incoming: number;
+    outgoing: number;
+    first_message_at: string | null;
+    last_message_at: string | null;
+  };
+  delete_action: "clear" | "delete";
+}

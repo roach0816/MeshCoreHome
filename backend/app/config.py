@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.2.0"
 
 
 class Settings(BaseSettings):
