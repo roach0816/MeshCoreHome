@@ -108,9 +108,193 @@ backend/app/services/   persistence rules (positions, dedup, channel generations
 backend/app/api/        REST routes (setup/auth, inbox, radio/status)
 backend/migrations/     Alembic migrations
 frontend/src/           React + TypeScript + Tailwind UI
+deploy/k8s/             Fleet bundle (kustomization) + *.example.yaml templates applied by hand
 ```
 
-## Not yet in v0.1
+## Deploying to K3s with Rancher Continuous Delivery
 
-Kubernetes/Fleet manifests and the image publish + SHA-pin workflow, backup CronJob, contact-card
-import, Playwright tests in CI, and live-hardware verification.
+Every push to `main` deploys automatically:
+
+```
+git push → CI (tests) → multi-arch image to ghcr.io/roach0816/meshcorehome:<commit-sha>
+        → CI bot commits the new SHA into deploy/k8s/deployment.yaml ([skip ci])
+        → Fleet (Rancher Continuous Delivery) sees the manifest change → rolls out the app
+```
+
+Fleet deploys only `deploy/k8s` (via `kustomization.yaml`): the app, PostgreSQL, their Services,
+and a daily backup CronJob. Anything specific to your environment is created once by hand from the
+`*.example.yaml` templates and is **not** part of the bundle:
+
+- the namespace
+- the database Secret
+- the PersistentVolumeClaims (which need your StorageClass)
+- the Ingress
+
+Because those stay outside the bundle, real values never land in this public repo, and removing
+the bundle can never delete your data. `fleet.yaml` also sets `keepResources: true`.
+
+You need a Rancher-managed K3s cluster with:
+
+- a StorageClass for the database (NFS works if it meets the requirements in step 4)
+- an ingress controller
+- cert-manager with a ClusterIssuer
+- internal DNS
+
+Run the `kubectl` commands below from the Rancher **kubectl shell** (the `>_` icon at the top right
+of the cluster view) or any shell with access to the cluster.
+
+### 1. Let CI publish the first image
+
+Pushing to `main` runs CI. When it goes green, CI publishes the image and a
+`github-actions[bot]` commit replaces `pending-first-ci-build` in `deploy/k8s/deployment.yaml` with
+a commit SHA. **Don't add the Git repo to Fleet until that pin commit exists**, or the first rollout
+will fail to pull.
+
+Then make the image pullable by the cluster. Either:
+
+- **Public (simplest):** GitHub → your profile → **Packages** → `meshcorehome` → **Package settings** →
+  **Change visibility → Public**. The code is already public.
+- **Private:** create a GitHub token with `read:packages`, then (after step 3):
+  ```bash
+  kubectl -n meshcore create secret docker-registry ghcr-pull \
+    --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<TOKEN>
+  kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+  ```
+
+### 2. Look up your cluster's values
+
+```bash
+kubectl get storageclass     # the NFS (or other) class for the database and backups
+kubectl get ingressclass     # e.g. traefik or nginx — don't assume
+kubectl get clusterissuer    # the cert-manager issuer to use
+```
+
+### 3. Create the namespace and database Secret
+
+Create the namespace in Rancher (**Cluster → Projects/Namespaces → Create Namespace**, name
+`meshcore`), or apply `deploy/k8s/namespace.example.yaml`. Then:
+
+```bash
+PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+kubectl -n meshcore create secret generic meshcore-db --from-literal=POSTGRES_PASSWORD="$PW"
+echo "$PW"   # store this in your password manager; restores need it
+```
+
+The password must be URL-safe, because the app embeds it in its database URL. `token_urlsafe` output
+is URL-safe.
+
+### 4. Create the volumes
+
+Copy `deploy/k8s/pvc.example.yaml`, replace `<YOUR_NFS_STORAGECLASS>`, and apply it with Rancher's
+**Import YAML** button, or with **Storage → PersistentVolumeClaims → Create → Edit as YAML**. This
+creates `meshcore-db-data` and `meshcore-backups`, 10 GiB each.
+
+If the database lives on NFS:
+
+- **Ownership:** the database directory must be owned by **UID/GID 999** (the image's `postgres`
+  user). After the claim binds, find its directory on the NAS and run `chown -R 999:999 <dir>`. A
+  root-squashed export won't let the pod fix ownership itself.
+- **Mount and export:** the mount must be `hard` (check with `mount | grep nfs` on a node), and the
+  export must honour synchronous writes. If the NAS can't meet that, put the database claim on
+  local/block storage and keep NFS for `meshcore-backups` only.
+
+### 5. Add the Git repo to Continuous Delivery
+
+In Rancher: **☰ → Continuous Delivery → Git Repos**. In the workspace dropdown, choose
+`fleet-default` for a downstream cluster, or `fleet-local` if Rancher runs on this same cluster.
+Then **Add Repository**:
+
+| Field | Value |
+| --- | --- |
+| Name | `meshcore-home` |
+| Repository URL | `https://github.com/roach0816/MeshCoreHome.git` |
+| Branch | `main` |
+| Paths | `deploy/k8s` |
+| Deploy To | your K3s cluster |
+
+No Git credentials are needed, because the repo is public. Click **Create**, and wait for the Git
+repo and its bundle to show **Active/Ready**. Fleet polls about once a minute. The equivalent YAML
+(for **Edit as YAML**) is:
+
+```yaml
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: meshcore-home
+  namespace: fleet-default          # or fleet-local
+spec:
+  repo: https://github.com/roach0816/MeshCoreHome.git
+  branch: main
+  paths: [deploy/k8s]
+  targets:
+    - clusterName: <YOUR_CLUSTER_NAME>
+```
+
+Check the rollout:
+
+```bash
+kubectl -n meshcore get pods                       # meshcore and meshcore-db should be Running 1/1
+kubectl -n meshcore get deploy meshcore -o jsonpath='{..image}{"\n"}'
+```
+
+### 6. Run the setup wizard
+
+Get the one-time setup token: open **Workloads → Deployments → meshcore → ⋮ → View Logs** in
+Rancher, or run:
+
+```bash
+kubectl -n meshcore logs deploy/meshcore | grep -A3 "setup token"
+```
+
+You can finish setup before the Ingress exists. Run
+`kubectl -n meshcore port-forward svc/meshcore 8080:80`, then open <http://localhost:8080>.
+
+### 7. Create the private Ingress
+
+In Rancher: **Service Discovery → Ingresses → Create → Edit as YAML**. Avoid the guided form: it
+can drop `pathType` or the TLS settings. Paste `deploy/k8s/ingress.example.yaml` with your hostname,
+ingress class, and issuer filled in.
+
+Then point an **internal** DNS record (Pi-hole/AdGuard/router) at the ingress address. Don't add a
+port-forward to the internet. Verify the certificate actually issued:
+
+```bash
+kubectl -n meshcore get ingress meshcore -o yaml   # annotation and tls: block are present
+kubectl -n meshcore get certificate -w             # wait for READY=True
+```
+
+Open `https://<YOUR_HOSTNAME>` and sign in. The status line under your inbox name should not say
+"live updates paused"; if it does, WebSockets aren't getting through the ingress.
+
+### 8. Connect the radio
+
+Once the RAK companion has its DHCP reservation, go to **Settings → Radio connection → MeshCore
+TCP** and enter its IP and port `5000`. The pod reaches it with ordinary unicast TCP, so no
+`hostNetwork` is needed. Restrict the radio's TCP port at your firewall to the cluster nodes'
+addresses.
+
+### Day-to-day
+
+- **Updating:** push to `main`. CI tests, publishes, and pins, and Fleet rolls out within a few
+  minutes. The pods use `strategy: Recreate`, so expect a brief outage on each rollout. Messages the
+  radio receives in that window stay queued on the radio.
+- **Backups:** `meshcore-db-backup` runs daily at 03:17 UTC. It writes
+  `meshcore-<timestamp>.dump` and a `.sha256` file to the `meshcore-backups` volume, keeps 30 days,
+  and always keeps the newest three. To run one now:
+  `kubectl -n meshcore create job --from=cronjob/meshcore-db-backup backup-now`. Replicate the
+  backup directory off the NAS.
+- **Restore** (copy the dump from the backup share first). Pause the radio in Settings, then:
+  ```bash
+  kubectl -n meshcore exec -i deploy/meshcore-db -- \
+    pg_restore --clean --if-exists -U meshcore -d meshcore < meshcore-<timestamp>.dump
+  kubectl -n meshcore rollout restart deploy/meshcore
+  ```
+- **Maintenance client:** **Settings → Pause for maintenance** releases the radio's TCP connection.
+  The pause is saved, so a Fleet re-sync won't undo it.
+- **Demo or restore environments:** set `RADIO_ENABLED=false` on the app so it never connects to
+  the radio.
+
+## Not yet included
+
+Contact-card import, Playwright tests in CI, NetworkPolicies, and live-hardware verification of the
+MeshCore TCP adapter.
