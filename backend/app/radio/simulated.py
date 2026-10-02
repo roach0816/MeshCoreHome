@@ -1,0 +1,190 @@
+"""Deterministic-ish simulated radio for development and for running before hardware exists.
+
+Everything it produces is stored with ``is_simulated = true`` and labelled in the UI.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import random
+import time
+from collections import deque
+
+from app.radio.base import (
+    DeviceSnapshot,
+    IncomingMessage,
+    RadioAdapter,
+    RadioChannel,
+    RadioContact,
+    RadioError,
+    SendResult,
+)
+
+log = logging.getLogger(__name__)
+
+
+def _key(seed: str) -> str:
+    return hashlib.sha256(f"meshcore-home-sim:{seed}".encode()).hexdigest()
+
+
+SIM_SELF_KEY = _key("home")
+SIM_CONTACTS = [
+    RadioContact(public_key=_key("tracker"), name="Tracker (sim)", kind=1),
+    RadioContact(public_key=_key("neighbor"), name="Neighbor (sim)", kind=1),
+    RadioContact(public_key=_key("roof"), name="Roof Repeater (sim)", kind=2),
+]
+SIM_CHANNELS = [
+    RadioChannel(slot=0, name="Public", secret=b"sim-public-secret"),
+    RadioChannel(slot=1, name="#home-sim", secret=b"sim-home-secret!"),
+]
+CHANNEL_SENDERS = ["Tracker (sim)", "Neighbor (sim)", "Hilltop", "Kayak 🚣", "BaseCamp"]
+PHRASES = [
+    "Testing, anyone copy?",
+    "Heading out for a walk, back in an hour.",
+    "Signal looks good from the ridge today.",
+    "Can you hear me through the roof repeater?",
+    "Weather turning, bring a jacket 🌧️",
+    "All good here.",
+    "Ping 👋",
+    "Line one\nLine two — newlines survive the trip.",
+    "<b>not bold</b> — remote text is always rendered as plain text",
+]
+
+
+class SimulatedRadio(RadioAdapter):
+    is_simulated = True
+
+    def __init__(self, interval_seconds: int = 60, ack_probability: float = 0.8, seed: int | None = None):
+        super().__init__()
+        self.interval = interval_seconds
+        self.ack_probability = ack_probability
+        self._rng = random.Random(seed)
+        self._queue: deque[IncomingMessage] = deque()
+        self._task: asyncio.Task | None = None
+        self._pending: set[asyncio.Task] = set()
+        self._connected = False
+
+    async def connect(self) -> None:
+        await asyncio.sleep(0.2)  # pretend handshake
+        self._connected = True
+        if self.interval > 0:
+            self._task = asyncio.create_task(self._generator(), name="sim-radio-generator")
+
+    async def disconnect(self) -> None:
+        self._connected = False
+        for t in [self._task, *self._pending]:
+            if t:
+                t.cancel()
+        self._task = None
+        self._pending.clear()
+
+    def _require(self) -> None:
+        if not self._connected:
+            raise RadioError("simulated radio is not connected")
+
+    async def get_device_snapshot(self) -> DeviceSnapshot:
+        self._require()
+        return DeviceSnapshot(
+            public_key=SIM_SELF_KEY,
+            name="Home (simulated)",
+            is_simulated=True,
+            model="Simulated companion",
+            firmware="sim-0.1",
+            radio={"freq_mhz": 910.525, "bw_khz": 62.5, "sf": 7, "cr": 5, "tx_power_dbm": 22},
+        )
+
+    async def get_contacts(self) -> list[RadioContact]:
+        self._require()
+        now = int(time.time())
+        return [
+            RadioContact(c.public_key, c.name, c.kind, now - 600 * (i + 1))
+            for i, c in enumerate(SIM_CONTACTS)
+        ]
+
+    async def get_channels(self) -> list[RadioChannel]:
+        self._require()
+        return list(SIM_CHANNELS)
+
+    async def fetch_next_message(self) -> IncomingMessage | None:
+        self._require()
+        return self._queue.popleft() if self._queue else None
+
+    async def send_channel(self, slot: int, text: str, timestamp: int) -> SendResult:
+        self._require()
+        if slot not in {c.slot for c in SIM_CHANNELS}:
+            return SendResult(ok=False, error="unknown channel slot")
+        await asyncio.sleep(0.15)
+        return SendResult(ok=True)
+
+    async def send_dm(self, public_key: str, text: str, timestamp: int) -> SendResult:
+        self._require()
+        await asyncio.sleep(0.15)
+        ack = self._rng.randbytes(4).hex()
+        if self._rng.random() < self.ack_probability:
+            self._spawn(self._deliver_ack(ack, self._rng.uniform(0.8, 3.0)))
+        if self._rng.random() < 0.5:
+            contact = next((c for c in SIM_CONTACTS if c.public_key == public_key), None)
+            if contact and contact.kind == 1:
+                self._spawn(self._auto_reply(contact, self._rng.uniform(3.0, 8.0)))
+        return SendResult(ok=True, expected_ack=ack, suggested_timeout_ms=8000)
+
+    # ---- simulation helpers -------------------------------------------------
+
+    def inject(self, msg: IncomingMessage) -> None:
+        self._queue.append(msg)
+        if self.on_messages_waiting:
+            self._spawn(self.on_messages_waiting())
+
+    def random_message(self) -> IncomingMessage:
+        now = int(time.time())
+        if self._rng.random() < 0.6:
+            ch = self._rng.choice(SIM_CHANNELS)
+            sender = self._rng.choice(CHANNEL_SENDERS)
+            return IncomingMessage(
+                kind="channel",
+                text=self._rng.choice(PHRASES),
+                channel_slot=ch.slot,
+                sender_label=sender,
+                sender_timestamp=now - self._rng.randint(0, 5),
+                meta={"snr": round(self._rng.uniform(-8, 12), 1), "path_len": self._rng.randint(0, 3)},
+            )
+        contact = self._rng.choice([c for c in SIM_CONTACTS if c.kind == 1])
+        return IncomingMessage(
+            kind="dm",
+            text=self._rng.choice(PHRASES),
+            pubkey_prefix=contact.public_key[:12],
+            sender_timestamp=now - self._rng.randint(0, 5),
+            meta={"snr": round(self._rng.uniform(-8, 12), 1)},
+        )
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def _deliver_ack(self, code: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if self._connected and self.on_ack:
+            await self.on_ack(code)
+
+    async def _auto_reply(self, contact: RadioContact, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if self._connected:
+            self.inject(
+                IncomingMessage(
+                    kind="dm",
+                    text=self._rng.choice(["Got it 👍", "Copy that.", "Thanks!", "Roger, talk soon."]),
+                    pubkey_prefix=contact.public_key[:12],
+                    sender_timestamp=int(time.time()),
+                )
+            )
+
+    async def _generator(self) -> None:
+        try:
+            while self._connected:
+                await asyncio.sleep(self._rng.uniform(0.5, 1.5) * self.interval)
+                self.inject(self.random_message())
+        except asyncio.CancelledError:
+            pass

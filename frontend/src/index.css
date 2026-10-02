@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --surface-2: #f0f1f3;
+  --border: #e3e4e8;
+  --text: #16181d;
+  --muted: #5f6470;
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --accent-soft: #ccfbf1;
+  --accent-fg: #ffffff;
+  --bubble-in: #ffffff;
+  --bubble-out: #0f766e;
+  --bubble-out-fg: #ffffff;
+  --danger: #b42318;
+  --warn: #9a6700;
+  --ok: #067647;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #161920;
+  --surface-2: #1d212a;
+  --border: #2a2f3a;
+  --text: #e8eaee;
+  --muted: #9aa1ad;
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: #123a37;
+  --accent-fg: #06201d;
+  --bubble-in: #1d212a;
+  --bubble-out: #155e57;
+  --bubble-out-fg: #f0fdfa;
+  --danger: #f97066;
+  --warn: #f5c451;
+  --ok: #47cd89;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-bubble-in: var(--bubble-in);
+  --color-bubble-out: var(--bubble-out);
+  --color-bubble-out-fg: var(--bubble-out-fg);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --color-ok: var(--ok);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Use the dynamic viewport so the composer stays above mobile keyboards. */
+.app-height {
+  height: 100dvh;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

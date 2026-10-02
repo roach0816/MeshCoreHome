@@ -1,0 +1,187 @@
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function csrfToken(): string {
+  const m = document.cookie.match(/(?:^|;\s*)mch_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function describe(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d?.msg === "string" ? d.msg.replace(/^Value error, /, "") : "Invalid input"))
+      .join("; ");
+  }
+  return "Request failed";
+}
+
+export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+  const { json, headers, ...rest } = init;
+  const method = (rest.method ?? (json !== undefined ? "POST" : "GET")).toUpperCase();
+  const h = new Headers(headers);
+  if (method !== "GET") {
+    h.set("X-Requested-With", "meshcore-home");
+    const token = csrfToken();
+    if (token) h.set("X-CSRF-Token", token);
+  }
+  if (json !== undefined) h.set("Content-Type", "application/json");
+  const res = await fetch(path, {
+    ...rest,
+    method,
+    headers: h,
+    credentials: "same-origin",
+    body: json !== undefined ? JSON.stringify(json) : rest.body,
+  });
+  if (res.status === 204) return undefined as T;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, describe((data as { detail?: unknown }).detail));
+  return data as T;
+}
+
+// ---- types (mirror backend schemas) ---------------------------------------------------
+
+export type RadioMode = "simulated" | "tcp" | "none";
+
+export interface RadioConfig {
+  mode: RadioMode;
+  host: string;
+  port: number;
+  paused: boolean;
+  sim_interval_seconds: number;
+}
+
+export interface Me {
+  username: string;
+  home_name: string;
+}
+
+export type MessageState =
+  | "received"
+  | "queued"
+  | "sending"
+  | "accepted"
+  | "acknowledged"
+  | "no_ack"
+  | "uncertain"
+  | "failed"
+  | "expired";
+
+export interface Message {
+  id: string;
+  position: number;
+  conversation_id: string;
+  direction: "in" | "out";
+  sender_label: string | null;
+  sender_key_prefix: string | null;
+  body: string;
+  sender_timestamp: number | null;
+  created_at: string;
+  state: MessageState;
+  error: string | null;
+  duplicate_count: number;
+  is_simulated: boolean;
+  client_message_id: string | null;
+  meta: Record<string, unknown>;
+}
+
+export interface Conversation {
+  id: string;
+  kind: "channel" | "dm";
+  title: string;
+  favorite: boolean;
+  muted: boolean;
+  last_message_at: string | null;
+  last_position: number;
+  read_position: number;
+  unread: number;
+  is_simulated: boolean;
+  archived: boolean;
+  channel_slot: number | null;
+  contact_id: string | null;
+  contact_public_key: string | null;
+  peer_prefix: string | null;
+  max_bytes: number;
+  preview: {
+    body: string;
+    direction: "in" | "out";
+    sender_label: string | null;
+    state: MessageState;
+    created_at: string;
+  } | null;
+}
+
+export interface MessagePage {
+  messages: Message[];
+  has_more: boolean;
+}
+
+export interface Contact {
+  id: string;
+  public_key: string;
+  name: string;
+  alias: string | null;
+  kind: number;
+  last_advert_at: string | null;
+  on_radio: boolean;
+  is_simulated: boolean;
+  conversation_id: string | null;
+}
+
+export interface RadioStatus {
+  state:
+    | "starting"
+    | "disabled"
+    | "not_configured"
+    | "paused"
+    | "connecting"
+    | "connected"
+    | "backoff"
+    | "lock_unavailable";
+  detail: string;
+  mode: RadioMode;
+  is_simulated: boolean;
+  radio_name: string | null;
+  connected_since: number | null;
+  last_interaction_at: number | null;
+  last_error: string | null;
+  next_retry_at: number | null;
+  reconnects: number;
+  received: number;
+  sent: number;
+  storage_warning: string | null;
+}
+
+export interface Status {
+  app: { version: string; radio_enabled_env: boolean };
+  database: { ok: boolean; messages: number };
+  radio: RadioStatus;
+  radio_config: { mode: RadioMode; host: string; port: number; paused: boolean };
+  realtime_clients: number;
+  gaps: { started_at: string; ended_at: string | null; reason: string; open: boolean }[];
+  server_time: number;
+}
+
+export interface Device {
+  radio: {
+    id: string;
+    name: string;
+    public_key: string;
+    is_simulated: boolean;
+    device_info: Record<string, unknown>;
+    rf: Record<string, number | null>;
+    last_connected_at: string | null;
+    live: boolean;
+  } | null;
+  channels: { slot: number; name: string; generation: number; active: boolean }[];
+  contacts: number;
+}
+
+export interface SearchHit extends Message {
+  conversation_title: string;
+}
