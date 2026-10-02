@@ -157,3 +157,100 @@ body {
   border-radius: 8px;
   outline: 3px solid color-mix(in srgb, var(--c) 35%, transparent);
 }
+
+/* ---- motion ------------------------------------------------------------------------- */
+/* Short, decelerating animations. The prefers-reduced-motion rule above turns them all off. */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes mc-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes mc-slide-from-right {
+  from {
+    opacity: 0.4;
+    transform: translateX(28px);
+  }
+}
+@keyframes mc-slide-from-left {
+  from {
+    opacity: 0.4;
+    transform: translateX(-28px);
+  }
+}
+@keyframes mc-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes mc-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes mc-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+@keyframes mc-pop-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+@keyframes mc-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Main pane content on route change (desktop: fade up; phone: slide in like a drill-down). */
+.mc-page-enter {
+  animation: mc-page-in 220ms var(--ease-out);
+}
+@media (max-width: 767px) {
+  .mc-page-enter {
+    animation: mc-slide-from-right 240ms var(--ease-out);
+  }
+  /* Sidebar returning on phones (back navigation). On desktop it never leaves. */
+  .mc-back-enter {
+    animation: mc-slide-from-left 240ms var(--ease-out);
+  }
+}
+
+/* Modals (native <dialog>). */
+dialog.mc-dialog[open] {
+  animation: mc-pop-in 200ms var(--ease-out);
+}
+dialog.mc-dialog[open]::backdrop {
+  animation: mc-fade-in 200ms var(--ease-out);
+}
+/* Exit "ghost": a static copy of a closing dialog, animated out after the real one unmounts. */
+.mc-dialog-ghost {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgb(0 0 0 / 0.4);
+  animation: mc-fade-out 160ms var(--ease-in) forwards;
+}
+.mc-dialog-ghost > dialog {
+  position: static;
+  animation: mc-pop-out 160ms var(--ease-in) forwards;
+}
+
+/* Context menus. */
+.mc-menu {
+  animation: mc-menu-in 120ms var(--ease-out);
+}

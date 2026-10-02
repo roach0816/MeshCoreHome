@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Map as MapIcon, MessagesSquare, Settings as SettingsIcon, Users } from "lucide-react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
@@ -61,6 +61,12 @@ export function Shell({ me }: { me: Me }) {
   const status = useStatus();
   const { pathname } = useLocation();
   const atRoot = pathname === "/";
+  // Animate the sidebar back in on phones only when returning from a page, not on first load.
+  const prevPath = useRef(pathname);
+  const returning = atRoot && prevPath.current !== "/";
+  useEffect(() => {
+    prevPath.current = pathname;
+  }, [pathname]);
 
   return (
     <div className="app-height flex overflow-hidden bg-bg">
@@ -68,6 +74,7 @@ export function Shell({ me }: { me: Me }) {
         className={cx(
           "flex h-full w-full flex-col border-line bg-surface md:w-80 md:border-r lg:w-96",
           !atRoot && "hidden md:flex",
+          returning && "mc-back-enter",
         )}
         aria-label="Conversations"
       >
@@ -86,7 +93,9 @@ export function Shell({ me }: { me: Me }) {
         <ConversationList />
         <UserPanel me={me} />
       </aside>
-      <main className={cx("h-full min-w-0 flex-1", atRoot && "hidden md:block")}>
+      <main className={cx("h-full min-w-0 flex-1 overflow-hidden", atRoot && "hidden md:block")}>
+        {/* Keyed by path so each page plays a short entrance animation. */}
+        <div key={pathname} className="mc-page-enter h-full">
         <Routes>
           <Route index element={<EmptyPane />} />
           <Route path="c/:id" element={<Thread status={status.data} />} />
@@ -104,6 +113,7 @@ export function Shell({ me }: { me: Me }) {
           />
           <Route path="*" element={<EmptyPane />} />
         </Routes>
+        </div>
       </main>
     </div>
   );

@@ -87,8 +87,8 @@ export function ContextMenu({
       aria-label={label}
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 min-w-52 rounded-xl border border-line bg-surface p-1 shadow-xl shadow-black/10"
+      style={{ left: pos.left, top: pos.top, transformOrigin: `${x <= pos.left + 1 ? "left" : "right"} ${y <= pos.top + 1 ? "top" : "bottom"}` }}
+      className="mc-menu fixed z-50 min-w-52 rounded-xl border border-line bg-surface p-1 shadow-xl shadow-black/10"
     >
       {items.map((item, i) =>
         item === "separator" ? (

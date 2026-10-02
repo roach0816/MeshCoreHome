@@ -1,6 +1,6 @@
 [project]
 name = "meshcore-home"
-version = "0.5.0"
+version = "0.5.1"
 description = "Self-hosted web inbox for a MeshCore Ethernet companion radio"
 requires-python = ">=3.12"
 dependencies = [
