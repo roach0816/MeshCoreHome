@@ -1,20 +1,33 @@
 # MeshCore Home
 
-A self-hosted web inbox for a [MeshCore](https://meshcore.io) companion radio. The server keeps one
-connection to your home radio open, archives every message it receives in PostgreSQL (even when no
-browser is open), and gives you a responsive chat interface for channels and direct messages from any
-browser on your network.
+A self-hosted web inbox for a [MeshCore](https://meshcore.io) radio gateway. The server holds one
+connection to a MeshCore companion radio on your network and archives every message it receives in
+PostgreSQL, even when no browser is open. It gives you a responsive chat interface for channels and
+direct messages from any browser that can reach it.
 
-> **Status: v0.1 (early).** Works end-to-end with the built-in **simulated radio**. The MeshCore
-> TCP adapter is written against the `meshcore` Python client (2.3.14) but **has not yet been tested
-> against real hardware**.
+> **Status: early (v0.1.x).** Everything works end-to-end with the built-in **simulated radio**. The
+> MeshCore TCP adapter is built on the official `meshcore` Python client (2.3.14) but has **not yet
+> been verified against physical hardware**. Please report results.
 
-## What's in v0.1
+## Contents
 
-- **First-run setup wizard**: creates the owner account and chooses the radio mode. Nothing
-  installation-specific (passwords, radio address, hostnames) lives in this repository.
-- **Radio modes**: *Simulated* (sample traffic for use without hardware), *MeshCore TCP* (Ethernet
-  companion, e.g. RAK4631 + RAK13800), or *None*. You can switch modes from Settings at any time.
+- [Features](#features)
+- [Compatible radio gateways](#compatible-radio-gateways)
+- [Quick start with Docker Compose](#quick-start-with-docker-compose)
+- [Deploying on K3s with Rancher Continuous Delivery](#deploying-on-k3s-with-rancher-continuous-delivery)
+- [Connecting a MeshCore TCP gateway](#connecting-a-meshcore-tcp-gateway)
+- [Operations](#operations)
+- [Configuration](#configuration)
+- [Using your own fork](#using-your-own-fork)
+- [Development](#development)
+
+## Features
+
+- **First-run setup wizard**: creates the owner account and chooses the radio connection. Nothing
+  specific to an installation (passwords, addresses, hostnames) is stored in the repository or
+  the image.
+- **Radio modes**: *MeshCore TCP* (a network-attached companion radio), *Simulated* (sample traffic,
+  no hardware required), or *None*. You can switch modes at any time in Settings.
 - Channels and DMs with unread counts, favorites, search, paginated history, date separators, a
   "new messages" divider, per-conversation drafts, and a UTF-8 byte budget in the composer.
 - Honest delivery states: *Queued → Sending → Sent by radio / Acknowledged / No acknowledgement /
@@ -25,11 +38,27 @@ browser on your network.
   and shown in Settings.
 - Read state is shared across browsers and only moves forward. Realtime updates use an authenticated
   WebSocket, and the app falls back to REST resyncs if that connection drops.
-- Maintenance pause/resume (releases the TCP connection for a maintenance client), device info,
-  contacts with full public keys and local aliases, and JSON export.
+- Maintenance pause/resume, device information, contacts with full public keys and local aliases,
+  and JSON export.
 - Light and dark themes. Layouts for phone, tablet, and desktop.
 
-## Quick start (Docker Compose)
+## Compatible radio gateways
+
+The app talks to a radio running **MeshCore companion firmware with TCP (Ethernet/Wi-Fi)
+transport**. This is the same companion protocol the MeshCore phone and desktop apps use, carried
+over a TCP socket (port `5000` by default).
+
+| Works | Does not work |
+| --- | --- |
+| MeshCore **companion** firmware with a TCP/Ethernet build, e.g. RAK4631 + RAK13800 Ethernet (+ RAK19018 PoE) with the `RAK_4631_companion_radio_ethernet` target, MeshCore v1.17.0 or later | MeshCore **repeater** or **room server** firmware |
+| Any other board whose MeshCore companion build exposes the companion protocol over TCP | Meshtastic firmware, or MQTT-only gateways |
+| | Companion radios reachable only by BLE or USB serial (not supported yet) |
+
+**The gateway has its own identity.** It has its own MeshCore keys, contacts, and channels. Direct
+messages reach this inbox only if they are addressed to the gateway's identity. Channel messages
+appear if the gateway has the same channel configured (same name and key) and can hear the traffic.
+
+## Quick start with Docker Compose
 
 ```bash
 cp .env.example .env                    # then set POSTGRES_PASSWORD to a long random value
@@ -38,41 +67,281 @@ docker compose logs app | grep -A3 "setup token"
 ```
 
 Open <http://localhost:8080> and follow the wizard. The **setup token** from the server log proves
-you control the server, so nobody else on your network can claim the app before you do. The token
-can only be used once; after setup, the app requires a sign-in.
+you control the server, so nobody else on the network can claim the app before you do. It can only be
+used once; after setup, the app requires a sign-in.
 
-## When your radio arrives
+## Deploying on K3s with Rancher Continuous Delivery
 
-1. Flash the MeshCore **Ethernet companion** firmware (`RAK_4631_companion_radio_ethernet`, v1.17.0+).
-2. Give the radio a DHCP reservation on your router.
-3. In **Settings → Radio connection**, choose **MeshCore TCP**, enter the IP and port (default `5000`),
-   use **Test reachability**, then **Save and reconnect**.
-4. Watch the status card. If the handshake fails, the server keeps retrying with backoff and records
-   the error. Use **Pause for maintenance** when you need a desktop/CLI client to talk to the radio.
-5. Once real data is flowing, switch away from Simulated and use **Delete simulated data** to clear
-   the sample conversations.
+Rancher Continuous Delivery (Fleet) watches the `deploy/k8s` directory of a Git repository and keeps
+the cluster in sync with it. That directory is a Kustomize bundle containing:
 
-Live-hardware checks still pending: handshake, contact and channel sync, receive, channel send, DM
-ACKs, and the exact message byte limits (`DM_MAX_BYTES` / `CHANNEL_MAX_BYTES` in
-`backend/app/radio/base.py` are conservative defaults).
+- the app Deployment and Service
+- a single-instance PostgreSQL Deployment and Service
+- a daily backup CronJob
+
+Each build of `main` publishes a multi-arch image (`linux/amd64` + `linux/arm64`) and commits that
+image's commit SHA into `deploy/k8s/deployment.yaml`, so Fleet rolls out every release automatically
+(see [Using your own fork](#using-your-own-fork)).
+
+Anything specific to your environment is created **once by hand** from the `*.example.yaml`
+templates, and is deliberately not part of the bundle:
+
+| Resource | Template | Why it is outside the bundle |
+| --- | --- | --- |
+| Namespace | `namespace.example.yaml` | Removing the bundle must never delete the namespace and its data |
+| Database Secret | `secrets.example.yaml` | Secrets never go in Git |
+| Volumes (PVCs) | `pvc.example.yaml` | They need your StorageClass, and data must outlive the bundle |
+| Ingress | `ingress.example.yaml` | Hostname, ingress class, and certificate issuer are site-specific |
+
+`fleet.yaml` also sets `keepResources: true`, so deleting the Git repo from Rancher leaves running
+workloads in place.
+
+### Prerequisites
+
+You need:
+
+- A Rancher-managed K3s cluster. Arm64 (e.g. Raspberry Pi 5) and amd64 nodes both work.
+- A StorageClass for the database and backups. If you use NFS, see the requirements in step 3.
+- An ingress controller, plus cert-manager with a ClusterIssuer, for HTTPS.
+- A DNS name for the app that resolves on your private network.
+- Network reachability from the cluster nodes to the radio gateway's TCP port.
+
+Run the `kubectl` commands below from the Rancher **kubectl shell** (the `>_` icon at the top right
+of the cluster view) or any shell with access to the cluster.
+
+### 1. Look up your cluster's values
+
+```bash
+kubectl get storageclass     # which class to use for the database and backups
+kubectl get ingressclass     # e.g. traefik or nginx — check, don't assume
+kubectl get clusterissuer    # the cert-manager issuer for the certificate
+```
+
+### 2. Create the namespace and database Secret
+
+Create the namespace in Rancher (**Cluster → Projects/Namespaces → Create Namespace**, name
+`meshcore`), or apply `deploy/k8s/namespace.example.yaml`. Then:
+
+```bash
+PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+kubectl -n meshcore create secret generic meshcore-db --from-literal=POSTGRES_PASSWORD="$PW"
+echo "$PW"   # keep this in a password manager; restoring a backup elsewhere needs it
+```
+
+The password must be URL-safe, because the app embeds it in its database URL. `token_urlsafe` output
+is URL-safe.
+
+### 3. Create the volumes
+
+Copy `deploy/k8s/pvc.example.yaml`, replace `<YOUR_NFS_STORAGECLASS>` with your StorageClass, and
+apply it. Use Rancher's **Import YAML** button (top right), or **Storage → PersistentVolumeClaims →
+Create → Edit as YAML**. This creates `meshcore-db-data` and `meshcore-backups`, 10 GiB each; adjust
+the sizes as needed.
+
+If the database volume is on NFS:
+
+- **Ownership:** the database directory must be owned by **UID/GID 999** (the `postgres` user in
+  the official image). After the claim binds, find its directory on the NFS server and run
+  `chown -R 999:999 <dir>`. With root-squash enabled, the pod cannot fix ownership itself.
+- **Mount and export:** the mount must be `hard` (check with `mount | grep nfs` on a node), and the
+  export must honour synchronous writes. If your NFS server can't meet that, put `meshcore-db-data`
+  on local or block storage and use NFS only for `meshcore-backups`.
+
+### 4. Add the Git repo to Continuous Delivery
+
+In Rancher: **☰ → Continuous Delivery → Git Repos**. In the workspace dropdown, choose
+`fleet-default` to deploy to a downstream cluster, or `fleet-local` if Rancher runs on the same
+cluster. Then **Add Repository**:
+
+| Field | Value |
+| --- | --- |
+| Name | `meshcore-home` |
+| Repository URL | `https://github.com/roach0816/MeshCoreHome.git` (or your fork) |
+| Branch | `main` |
+| Paths | `deploy/k8s` |
+| Deploy To | your K3s cluster |
+
+A public repository needs no Git credentials. Click **Create**, and wait for the Git repo and its
+bundle to show **Active/Ready**. Fleet polls for changes about once a minute.
+
+The same thing as YAML (for **Edit as YAML**):
+
+```yaml
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: meshcore-home
+  namespace: fleet-default          # or fleet-local
+spec:
+  repo: https://github.com/roach0816/MeshCoreHome.git
+  branch: main
+  paths: [deploy/k8s]
+  targets:
+    - clusterName: <YOUR_CLUSTER_NAME>
+```
+
+Check the rollout:
+
+```bash
+kubectl -n meshcore get pods                       # meshcore and meshcore-db Running 1/1
+kubectl -n meshcore get deploy meshcore -o jsonpath='{..image}{"\n"}'
+```
+
+### 5. Run the setup wizard
+
+Get the one-time setup token: open **Workloads → Deployments → meshcore → ⋮ → View Logs** in
+Rancher, or run:
+
+```bash
+kubectl -n meshcore logs deploy/meshcore | grep -A3 "setup token"
+```
+
+You can finish setup before the Ingress exists. Run
+`kubectl -n meshcore port-forward svc/meshcore 8080:80`, then open <http://localhost:8080>. In the
+wizard, choose **MeshCore TCP** if the gateway is already on the network. Otherwise choose
+**Simulated** or **Decide later**, and connect it afterwards (see
+[Connecting a MeshCore TCP gateway](#connecting-a-meshcore-tcp-gateway)).
+
+### 6. Create the Ingress
+
+In Rancher: **Service Discovery → Ingresses → Create → Edit as YAML**. Use the YAML editor rather
+than the guided form, which can drop `pathType` or the TLS settings. Paste
+`deploy/k8s/ingress.example.yaml` with your hostname, ingress class, and issuer filled in.
+
+Point a DNS record for the hostname at your ingress address on your private network, using your
+local DNS server or router. Keep the app private: don't port-forward it to the internet. Then verify
+the certificate actually issued:
+
+```bash
+kubectl -n meshcore get ingress meshcore -o yaml   # cert-manager annotation and tls: block present
+kubectl -n meshcore get certificate -w             # wait for READY=True
+```
+
+### 7. Verify
+
+Open `https://<YOUR_HOSTNAME>` and sign in. Then check:
+
+- **Realtime updates:** the status line under the inbox name should not say "live updates paused".
+  If it does, WebSockets are not getting through the ingress.
+- **Server status:** **Settings** shows the radio state, the app version, and any collection gaps.
+
+## Connecting a MeshCore TCP gateway
+
+### 1. Prepare the gateway
+
+- Flash MeshCore **companion** firmware with TCP/Ethernet support for your board. For a RAK4631
+  with an Ethernet module, use `RAK_4631_companion_radio_ethernet` from MeshCore v1.17.0 or later.
+- Attach the antenna before transmitting. Then, using a MeshCore client, set the gateway's name.
+  Match the radio settings (frequency, bandwidth, spreading factor, coding rate) to your mesh, and add
+  the channels you want archived, with their exact names and keys.
+- Back up the gateway's identity and configuration using the firmware's or client's export
+  facilities.
+
+### 2. Give it a stable address and make it reachable
+
+- Create a **DHCP reservation** (or static IP) for the gateway, and note its IP or hostname.
+- The app pod connects **out** to the gateway over plain unicast TCP (default port `5000`). This
+  works with normal pod networking: no `hostNetwork`, multicast, or mDNS. Use an IP address, or a
+  DNS name the cluster can resolve. `.local` names will not resolve inside pods.
+- **Firewall:** the gateway's TCP port gives full control of the radio. Allow it only from your
+  cluster nodes (pod traffic usually leaves through the node's IP) and from any maintenance machine.
+  Never expose it to the internet or to guest networks.
+
+### 3. Connect it in the app
+
+1. Go to **Settings → Radio connection** and choose **MeshCore TCP**.
+2. Enter the gateway's IP or hostname and port, then click **Test reachability**. This only checks
+   that the TCP port is open from the server.
+3. Click **Save and reconnect**. The status card should move through *Connecting* to *Radio
+   connected*. **Settings → Device** then shows the gateway's name, public key, firmware, radio
+   settings, and channels.
+4. Send a test message from another MeshCore device to one of the gateway's channels, or as a DM to
+   the gateway. Check that it appears, then reply from the web app.
+
+If you used the simulated radio first, use **Settings → Data → Delete simulated data** to remove the
+sample conversations. This option is available once the mode is no longer *Simulated*.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| "Not reachable" / timed out | Wrong IP or port, a firewall blocks the cluster, or the gateway is offline |
+| Reachable, but status shows "companion did not answer the handshake" | The device on that port is not running MeshCore companion firmware, or another client is holding the connection |
+| Connected, but no channel messages | The channel name or key differs from the rest of the mesh, or the gateway can't hear the traffic (check placement and antenna) |
+| DMs don't arrive | The sender is messaging a different node; DMs must be addressed to the gateway's own identity |
+| "Read-only (another instance owns radio)" | A second copy of the app is running against the same database; only one may own the radio |
+
+The server retries with exponential backoff (up to 30 s) and never needs a restart for an ordinary
+radio outage. When you need a desktop or CLI client to talk to the gateway directly, use **Pause for
+maintenance**, which releases the TCP connection. Resume when you're done.
+
+**Message size:** the composer enforces conservative UTF-8 byte limits (`DM_MAX_BYTES` and
+`CHANNEL_MAX_BYTES` in `backend/app/radio/base.py`). Confirm them against your firmware before
+relying on them.
+
+## Operations
+
+- **Updating:** each successful build of `main` pins a new image, and Fleet rolls it out within a
+  few minutes. Pods use `strategy: Recreate`, so expect a short interruption on each rollout. The
+  gateway keeps messages it receives in that window queued (its buffer is finite).
+- **Backups:** the `meshcore-db-backup` CronJob runs daily at 03:17 UTC. It writes
+  `meshcore-<timestamp>.dump` and a `.sha256` file to the `meshcore-backups` volume, keeps 30 days,
+  and always keeps the newest three. To run one now:
+  `kubectl -n meshcore create job --from=cronjob/meshcore-db-backup backup-now`. Copy backups off the
+  storage server as well.
+- **Restore:** fetch the dump from the backup volume, pause the radio in Settings, then:
+  ```bash
+  kubectl -n meshcore exec -i deploy/meshcore-db -- \
+    pg_restore --clean --if-exists -U meshcore -d meshcore < meshcore-<timestamp>.dump
+  kubectl -n meshcore rollout restart deploy/meshcore
+  ```
+- **Demo or restore environments:** set `RADIO_ENABLED=false` on the app container so it never
+  connects to a radio.
+- **Uninstalling:** delete the Git repo in Continuous Delivery. Because of `keepResources: true`,
+  workloads stay in place; delete them, then the namespace, when you're sure you no longer need the
+  data.
 
 ## Configuration
 
-Environment variables cover deployment plumbing only. Everything else is set in the wizard and
-stored in the database.
+Environment variables cover deployment plumbing only. Everything else is set in the wizard or in
+Settings, and stored in the database.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+asyncpg://user:pass@host:5432/db` (keep in a secret) | required |
-| `RADIO_ENABLED` | `false` keeps the radio closed regardless of saved settings (restore/demo) | `true` |
+| `RADIO_ENABLED` | `false` keeps the radio closed regardless of saved settings | `true` |
 | `SETUP_TOKEN` | Fixed first-run token instead of a random one | random |
 | `COOKIE_SECURE` | `auto` / `true` / `false` | `auto` |
 | `SESSION_DAYS` | Sign-in lifetime | `30` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
 
-Run the app as a **single process** (`--workers 1`), because exactly one process may own the radio. A
-PostgreSQL advisory lock enforces this: a second instance can serve history but will not connect to
-the radio.
+Run the app as a **single process** (`--workers 1`, one replica), because exactly one process may own
+the radio. A PostgreSQL advisory lock enforces this: a second instance can serve history but will not
+connect to the radio.
+
+## Using your own fork
+
+The CI workflow (`.github/workflows/ci.yml`) handles forks automatically. On each push to `main` it:
+
+1. Runs the backend tests against PostgreSQL, then lints and builds the frontend.
+2. Builds and publishes `ghcr.io/<owner>/<repo>:<commit-sha>` (plus `:latest`) for `linux/amd64`
+   and `linux/arm64`.
+3. Commits that image reference into `deploy/k8s/deployment.yaml` as `github-actions[bot]`, with
+   `[skip ci]`. This step is skipped if `main` has moved on since the build started.
+
+To deploy from a fork:
+
+- **Wait for the pin:** push to your fork's `main` and wait for the first `deploy: pin image …`
+  commit before adding the fork in Continuous Delivery.
+- **Make the image pullable:** make the GHCR package public (**GitHub → Packages → your package →
+  Package settings → Change visibility**), or give the cluster a pull secret:
+  ```bash
+  kubectl -n meshcore create secret docker-registry ghcr-pull \
+    --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<READ_PACKAGES_TOKEN>
+  kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+  ```
+- **Leave `[skip ci]` to the bot:** it is reserved for the deploy-pin commit. Don't use it in your
+  own commit messages.
 
 ## Development
 
@@ -100,8 +369,6 @@ cd backend && .venv/bin/pytest -q
 
 API docs are served at `/api/docs`.
 
-## Layout
-
 ```
 backend/app/radio/      adapter contract, simulated radio, MeshCore TCP adapter, supervisor
 backend/app/services/   persistence rules (positions, dedup, channel generations, sends)
@@ -111,190 +378,7 @@ frontend/src/           React + TypeScript + Tailwind UI
 deploy/k8s/             Fleet bundle (kustomization) + *.example.yaml templates applied by hand
 ```
 
-## Deploying to K3s with Rancher Continuous Delivery
+### Not yet included
 
-Every push to `main` deploys automatically:
-
-```
-git push → CI (tests) → multi-arch image to ghcr.io/roach0816/meshcorehome:<commit-sha>
-        → CI bot commits the new SHA into deploy/k8s/deployment.yaml ([skip ci])
-        → Fleet (Rancher Continuous Delivery) sees the manifest change → rolls out the app
-```
-
-Fleet deploys only `deploy/k8s` (via `kustomization.yaml`): the app, PostgreSQL, their Services,
-and a daily backup CronJob. Anything specific to your environment is created once by hand from the
-`*.example.yaml` templates and is **not** part of the bundle:
-
-- the namespace
-- the database Secret
-- the PersistentVolumeClaims (which need your StorageClass)
-- the Ingress
-
-Because those stay outside the bundle, real values never land in this public repo, and removing
-the bundle can never delete your data. `fleet.yaml` also sets `keepResources: true`.
-
-You need a Rancher-managed K3s cluster with:
-
-- a StorageClass for the database (NFS works if it meets the requirements in step 4)
-- an ingress controller
-- cert-manager with a ClusterIssuer
-- internal DNS
-
-Run the `kubectl` commands below from the Rancher **kubectl shell** (the `>_` icon at the top right
-of the cluster view) or any shell with access to the cluster.
-
-### 1. Let CI publish the first image
-
-Pushing to `main` runs CI. When it goes green, CI publishes the image and a
-`github-actions[bot]` commit replaces `pending-first-ci-build` in `deploy/k8s/deployment.yaml` with
-a commit SHA. **Don't add the Git repo to Fleet until that pin commit exists**, or the first rollout
-will fail to pull.
-
-Then make the image pullable by the cluster. Either:
-
-- **Public (simplest):** GitHub → your profile → **Packages** → `meshcorehome` → **Package settings** →
-  **Change visibility → Public**. The code is already public.
-- **Private:** create a GitHub token with `read:packages`, then (after step 3):
-  ```bash
-  kubectl -n meshcore create secret docker-registry ghcr-pull \
-    --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<TOKEN>
-  kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
-  ```
-
-### 2. Look up your cluster's values
-
-```bash
-kubectl get storageclass     # the NFS (or other) class for the database and backups
-kubectl get ingressclass     # e.g. traefik or nginx — don't assume
-kubectl get clusterissuer    # the cert-manager issuer to use
-```
-
-### 3. Create the namespace and database Secret
-
-Create the namespace in Rancher (**Cluster → Projects/Namespaces → Create Namespace**, name
-`meshcore`), or apply `deploy/k8s/namespace.example.yaml`. Then:
-
-```bash
-PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-kubectl -n meshcore create secret generic meshcore-db --from-literal=POSTGRES_PASSWORD="$PW"
-echo "$PW"   # store this in your password manager; restores need it
-```
-
-The password must be URL-safe, because the app embeds it in its database URL. `token_urlsafe` output
-is URL-safe.
-
-### 4. Create the volumes
-
-Copy `deploy/k8s/pvc.example.yaml`, replace `<YOUR_NFS_STORAGECLASS>`, and apply it with Rancher's
-**Import YAML** button, or with **Storage → PersistentVolumeClaims → Create → Edit as YAML**. This
-creates `meshcore-db-data` and `meshcore-backups`, 10 GiB each.
-
-If the database lives on NFS:
-
-- **Ownership:** the database directory must be owned by **UID/GID 999** (the image's `postgres`
-  user). After the claim binds, find its directory on the NAS and run `chown -R 999:999 <dir>`. A
-  root-squashed export won't let the pod fix ownership itself.
-- **Mount and export:** the mount must be `hard` (check with `mount | grep nfs` on a node), and the
-  export must honour synchronous writes. If the NAS can't meet that, put the database claim on
-  local/block storage and keep NFS for `meshcore-backups` only.
-
-### 5. Add the Git repo to Continuous Delivery
-
-In Rancher: **☰ → Continuous Delivery → Git Repos**. In the workspace dropdown, choose
-`fleet-default` for a downstream cluster, or `fleet-local` if Rancher runs on this same cluster.
-Then **Add Repository**:
-
-| Field | Value |
-| --- | --- |
-| Name | `meshcore-home` |
-| Repository URL | `https://github.com/roach0816/MeshCoreHome.git` |
-| Branch | `main` |
-| Paths | `deploy/k8s` |
-| Deploy To | your K3s cluster |
-
-No Git credentials are needed, because the repo is public. Click **Create**, and wait for the Git
-repo and its bundle to show **Active/Ready**. Fleet polls about once a minute. The equivalent YAML
-(for **Edit as YAML**) is:
-
-```yaml
-apiVersion: fleet.cattle.io/v1alpha1
-kind: GitRepo
-metadata:
-  name: meshcore-home
-  namespace: fleet-default          # or fleet-local
-spec:
-  repo: https://github.com/roach0816/MeshCoreHome.git
-  branch: main
-  paths: [deploy/k8s]
-  targets:
-    - clusterName: <YOUR_CLUSTER_NAME>
-```
-
-Check the rollout:
-
-```bash
-kubectl -n meshcore get pods                       # meshcore and meshcore-db should be Running 1/1
-kubectl -n meshcore get deploy meshcore -o jsonpath='{..image}{"\n"}'
-```
-
-### 6. Run the setup wizard
-
-Get the one-time setup token: open **Workloads → Deployments → meshcore → ⋮ → View Logs** in
-Rancher, or run:
-
-```bash
-kubectl -n meshcore logs deploy/meshcore | grep -A3 "setup token"
-```
-
-You can finish setup before the Ingress exists. Run
-`kubectl -n meshcore port-forward svc/meshcore 8080:80`, then open <http://localhost:8080>.
-
-### 7. Create the private Ingress
-
-In Rancher: **Service Discovery → Ingresses → Create → Edit as YAML**. Avoid the guided form: it
-can drop `pathType` or the TLS settings. Paste `deploy/k8s/ingress.example.yaml` with your hostname,
-ingress class, and issuer filled in.
-
-Then point an **internal** DNS record (Pi-hole/AdGuard/router) at the ingress address. Don't add a
-port-forward to the internet. Verify the certificate actually issued:
-
-```bash
-kubectl -n meshcore get ingress meshcore -o yaml   # annotation and tls: block are present
-kubectl -n meshcore get certificate -w             # wait for READY=True
-```
-
-Open `https://<YOUR_HOSTNAME>` and sign in. The status line under your inbox name should not say
-"live updates paused"; if it does, WebSockets aren't getting through the ingress.
-
-### 8. Connect the radio
-
-Once the RAK companion has its DHCP reservation, go to **Settings → Radio connection → MeshCore
-TCP** and enter its IP and port `5000`. The pod reaches it with ordinary unicast TCP, so no
-`hostNetwork` is needed. Restrict the radio's TCP port at your firewall to the cluster nodes'
-addresses.
-
-### Day-to-day
-
-- **Updating:** push to `main`. CI tests, publishes, and pins, and Fleet rolls out within a few
-  minutes. The pods use `strategy: Recreate`, so expect a brief outage on each rollout. Messages the
-  radio receives in that window stay queued on the radio.
-- **Backups:** `meshcore-db-backup` runs daily at 03:17 UTC. It writes
-  `meshcore-<timestamp>.dump` and a `.sha256` file to the `meshcore-backups` volume, keeps 30 days,
-  and always keeps the newest three. To run one now:
-  `kubectl -n meshcore create job --from=cronjob/meshcore-db-backup backup-now`. Replicate the
-  backup directory off the NAS.
-- **Restore** (copy the dump from the backup share first). Pause the radio in Settings, then:
-  ```bash
-  kubectl -n meshcore exec -i deploy/meshcore-db -- \
-    pg_restore --clean --if-exists -U meshcore -d meshcore < meshcore-<timestamp>.dump
-  kubectl -n meshcore rollout restart deploy/meshcore
-  ```
-- **Maintenance client:** **Settings → Pause for maintenance** releases the radio's TCP connection.
-  The pause is saved, so a Fleet re-sync won't undo it.
-- **Demo or restore environments:** set `RADIO_ENABLED=false` on the app so it never connects to
-  the radio.
-
-## Not yet included
-
-Contact-card import, Playwright tests in CI, NetworkPolicies, and live-hardware verification of the
-MeshCore TCP adapter.
+Contact-card import, BLE/serial gateways, Playwright tests in CI, NetworkPolicies, and
+physical-hardware verification of the MeshCore TCP adapter.

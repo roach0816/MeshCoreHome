@@ -116,7 +116,9 @@ jobs:
             exit 0
           fi
           git checkout -B main origin/main
-          sed -i -E "s#^(\s*image: ghcr\.io/[^:]+/meshcorehome):.*#\1:${GITHUB_SHA}#" deploy/k8s/deployment.yaml
+          # Works for forks too: points the app container at this repository's own image.
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sed -i -E "s#^(\s*image: )ghcr\.io/.*#\1${IMAGE}:${GITHUB_SHA}#" deploy/k8s/deployment.yaml
           grep -n "image: ghcr.io" deploy/k8s/deployment.yaml
           if git diff --quiet; then echo "already pinned"; exit 0; fi
           git config user.name "github-actions[bot]"
