@@ -204,13 +204,50 @@ wizard, choose **MeshCore TCP** if the gateway is already on the network. Otherw
 
 ### 6. Create the Ingress
 
-In Rancher: **Service Discovery → Ingresses → Create → Edit as YAML**. Use the YAML editor rather
-than the guided form, which can drop `pathType` or the TLS settings. Paste
-`deploy/k8s/ingress.example.yaml` with your hostname, ingress class, and issuer filled in.
+The app doesn't need to be told its hostname. You choose it here, and it lives only in the
+Ingress and in your DNS.
 
-Point a DNS record for the hostname at your ingress address on your private network, using your
-local DNS server or router. Keep the app private: don't port-forward it to the internet. Then verify
-the certificate actually issued:
+**a. Choose the hostname and find where its DNS record should point.** The A record for the
+hostname points at your **ingress controller**, not at the app pod:
+
+```bash
+HOST=meshcore.example.com     # the fully qualified name you want to use
+kubectl get svc -A | grep -iE 'traefik|ingress'
+```
+
+Use the controller Service's `EXTERNAL-IP`. On K3s, the bundled Traefik is exposed by ServiceLB
+(klipper), which usually lists your node IPs; any of them works, and a virtual IP (e.g. kube-vip or
+MetalLB) is best if you have one. If you already have another app behind the same ingress, its record
+points to the same place:
+
+```bash
+kubectl get ingress -A        # the ADDRESS column shows the IP(s) existing hosts use
+```
+
+**b. Create the DNS record** `HOST → that IP` on your **private** DNS (local DNS server or router).
+Don't port-forward the app to the internet. Check it from a machine on your network:
+
+```bash
+dig +short "$HOST"            # or: nslookup "$HOST"
+```
+
+**c. Create the Ingress.** Fill in the three placeholders in `deploy/k8s/ingress.example.yaml`:
+the hostname (in both `host:` and `tls.hosts`), the ingress class (from step 1), and the ClusterIssuer (from step 1).
+Then either:
+
+- **In Rancher:** **Service Discovery → Ingresses → Create → Edit as YAML**, then paste the filled-in
+  file. Use the YAML editor rather than the guided form, which can drop `pathType` or the TLS
+  settings.
+- **With kubectl**, from a checkout of this repo:
+  ```bash
+  sed -e "s/<YOUR_HOSTNAME>/$HOST/g" \
+      -e "s/<YOUR_INGRESS_CLASS>/traefik/" \
+      -e "s/<YOUR_CLUSTER_ISSUER>/<issuer-name>/" \
+      deploy/k8s/ingress.example.yaml | kubectl apply -f -
+  ```
+
+**d. Verify the certificate issued.** If your hostname is in a public domain but resolves to a
+private IP, the ClusterIssuer must use a **DNS-01** solver; HTTP-01 can't reach a private app.
 
 ```bash
 kubectl -n meshcore get ingress meshcore -o yaml   # cert-manager annotation and tls: block present
