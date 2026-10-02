@@ -14,5 +14,10 @@ this repository. The main ones are listed below. Full license texts ship with ea
 | TanStack Query | MIT |
 | Tailwind CSS | MIT |
 | lucide-react | ISC |
+| Leaflet | BSD-2-Clause |
+
+Map data shown by default is © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors,
+available under the Open Database License. Tiles are fetched at runtime and are not distributed with
+this project.
 
 No third-party source code is copied into this repository (see `docs/upstream-reuse.md`).

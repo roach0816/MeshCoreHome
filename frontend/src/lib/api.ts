@@ -209,3 +209,30 @@ export interface ConversationInfo {
   };
   delete_action: "clear" | "delete";
 }
+
+export interface MapConfig {
+  tile_url: string;
+  attribution: string;
+  max_zoom: number;
+}
+
+export interface MapNode {
+  id: string;
+  public_key: string;
+  name: string;
+  alias: string | null;
+  kind: number;
+  lat: number;
+  lon: number;
+  last_advert_at: string | null;
+  on_radio: boolean;
+  is_simulated: boolean;
+  conversation_id: string | null;
+}
+
+export interface MapData {
+  gateways: { name: string; lat: number; lon: number; is_simulated: boolean; live: boolean }[];
+  nodes: MapNode[];
+  without_location: number;
+  tiles: MapConfig;
+}

@@ -20,6 +20,7 @@ from app.radio.base import (
     RadioContact,
     RadioError,
     SendResult,
+    advert_position,
     split_channel_text,
 )
 
@@ -124,8 +125,11 @@ class MeshCoreTcpRadio(RadioAdapter):
         key = si.get("public_key")
         if not isinstance(key, str) or len(key) != 64:
             raise RadioError("device did not report a full public key")
+        lat, lon = advert_position(si.get("adv_lat"), si.get("adv_lon"))
         return DeviceSnapshot(
             public_key=key,
+            lat=lat,
+            lon=lon,
             name=str(si.get("name") or ""),
             is_simulated=False,
             model=di.get("model"),
@@ -155,6 +159,7 @@ class MeshCoreTcpRadio(RadioAdapter):
             key = c.get("public_key") if isinstance(c, dict) else None
             if not isinstance(key, str) or len(key) != 64:
                 continue
+            lat, lon = advert_position(c.get("adv_lat"), c.get("adv_lon"))
             out.append(
                 RadioContact(
                     public_key=key,
@@ -162,6 +167,8 @@ class MeshCoreTcpRadio(RadioAdapter):
                     kind=int(c.get("type") or 0),
                     last_advert=c.get("last_advert") or None,
                     meta={"out_path_len": c.get("out_path_len")},
+                    lat=lat,
+                    lon=lon,
                 )
             )
         return out

@@ -48,6 +48,7 @@ export function useRealtime(enabled: boolean): SocketState {
             break;
           case "contacts-updated":
             qc.invalidateQueries({ queryKey: ["contacts"] });
+            qc.invalidateQueries({ queryKey: ["map"] });
             qc.invalidateQueries({ queryKey: ["device"] });
             break;
           case "radio-status-changed":

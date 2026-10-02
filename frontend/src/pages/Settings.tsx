@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { ChevronLeft, Download, LogOut, Pause, Play, PlugZap, Sparkles, Trash2 } from "lucide-react";
-import { api, type Device, type Me, type RadioConfig, type RadioMode } from "../lib/api";
+import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { radioSummary } from "../components/StatusPill";
 import { useStatus } from "./Shell";
@@ -45,6 +45,7 @@ export function Settings({ me }: { me: Me }) {
           <RadioSection />
           <DeviceSection />
           <GapsSection />
+          <MapSection />
           <AppearanceSection />
           <AccountSection me={me} />
           <DataSection />
@@ -296,6 +297,75 @@ function GapsSection() {
           ))}
         </ul>
       )}
+    </Section>
+  );
+}
+
+const OSM_DEFAULT: MapConfig = {
+  tile_url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  attribution: "© OpenStreetMap contributors",
+  max_zoom: 19,
+};
+
+function MapSection() {
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["map-settings"], queryFn: () => api<MapConfig>("/api/settings/map") });
+  const [form, setForm] = useState<MapConfig>(OSM_DEFAULT);
+  useEffect(() => {
+    if (cfg.data) setForm(cfg.data);
+  }, [cfg.data]);
+  const save = useMutation({
+    mutationFn: (body: MapConfig) => api<MapConfig>("/api/settings/map", { method: "PUT", json: body }),
+    onSuccess: (saved) => {
+      setForm(saved);
+      qc.invalidateQueries({ queryKey: ["map-settings"] });
+      qc.invalidateQueries({ queryKey: ["map"] });
+    },
+  });
+  const dirty = cfg.data && JSON.stringify(cfg.data) !== JSON.stringify(form);
+  return (
+    <Section
+      title="Map"
+      description={
+        <>
+          Map tiles are loaded by your browser from this tile server; the server sees which areas you view. The
+          default is <a className="text-accent underline" href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>{" "}
+          (free, open data, light personal use). Point this at a self-hosted XYZ tile server for full privacy.
+        </>
+      }
+    >
+      <Field label="Tile URL template" htmlFor="tile-url" hint="https:// with {z}, {x} and {y} placeholders.">
+        <Input
+          id="tile-url"
+          spellCheck={false}
+          autoCapitalize="none"
+          className="font-mono text-xs sm:text-xs"
+          value={form.tile_url}
+          onChange={(e) => setForm({ ...form, tile_url: e.target.value })}
+        />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+        <Field label="Attribution" htmlFor="tile-attr" hint="Required by most tile providers.">
+          <Input id="tile-attr" value={form.attribution} onChange={(e) => setForm({ ...form, attribution: e.target.value })} />
+        </Field>
+        <Field label="Max zoom" htmlFor="tile-zoom">
+          <Input
+            id="tile-zoom"
+            inputMode="numeric"
+            value={String(form.max_zoom)}
+            onChange={(e) => setForm({ ...form, max_zoom: Number(e.target.value) || 0 })}
+          />
+        </Field>
+      </div>
+      <ErrorText error={save.error} />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" onClick={() => save.mutate(form)} disabled={!dirty || save.isPending}>
+          Save map settings
+        </Button>
+        <Button onClick={() => save.mutate(OSM_DEFAULT)} disabled={save.isPending}>
+          Reset to OpenStreetMap
+        </Button>
+      </div>
     </Section>
   );
 }

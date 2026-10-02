@@ -99,3 +99,61 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- map ---------------------------------------------------------------------------- */
+.leaflet-container {
+  font: inherit;
+  background: var(--surface-2);
+}
+/* Dark mode: tone down light raster tiles instead of needing a second tile source. */
+[data-theme="dark"] .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.6);
+}
+.leaflet-container .leaflet-popup-content-wrapper,
+.leaflet-container .leaflet-popup-tip {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+.leaflet-container .leaflet-popup-content {
+  margin: 12px 14px;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted);
+}
+.leaflet-container .leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
+  color: var(--muted);
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--accent);
+}
+.leaflet-container .leaflet-bar a {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+.leaflet-container .leaflet-bar a:hover {
+  background: var(--surface-2);
+}
+.mc-marker {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 2px solid #fff;
+  background: var(--c);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+}
+.mc-marker.is-stale {
+  opacity: 0.55;
+}
+.mc-marker.is-gateway {
+  border-radius: 8px;
+  outline: 3px solid color-mix(in srgb, var(--c) 35%, transparent);
+}

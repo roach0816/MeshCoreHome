@@ -36,7 +36,29 @@ class InstallationConfig(BaseModel):
     setup_completed_at: str | None = None
 
 
+OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+
+class MapConfig(BaseModel):
+    # Any XYZ raster tile server. OpenStreetMap's public tiles are the default; their usage policy
+    # asks for attribution and light, interactive use, which fits a single household.
+    tile_url: str = Field(default=OSM_TILE_URL, max_length=500)
+    attribution: str = Field(default="© OpenStreetMap contributors", max_length=200)
+    max_zoom: int = Field(default=19, ge=1, le=22)
+
+    @field_validator("tile_url")
+    @classmethod
+    def _valid_template(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("https://"):
+            raise ValueError("Tile URL must start with https://")
+        if not all(p in v for p in ("{z}", "{x}", "{y}")):
+            raise ValueError("Tile URL must contain {z}, {x} and {y}")
+        return v
+
+
 RADIO_KEY = "radio"
+MAP_KEY = "map"
 INSTALLATION_KEY = "installation"
 FINGERPRINT_KEY = "fingerprint_key"
 
@@ -61,6 +83,15 @@ async def get_radio_config(db: AsyncSession) -> RadioConfig:
 
 async def put_radio_config(db: AsyncSession, cfg: RadioConfig) -> None:
     await _put(db, RADIO_KEY, cfg.model_dump())
+
+
+async def get_map_config(db: AsyncSession) -> MapConfig:
+    raw = await _get(db, MAP_KEY)
+    return MapConfig.model_validate(raw) if raw else MapConfig()
+
+
+async def put_map_config(db: AsyncSession, cfg: MapConfig) -> None:
+    await _put(db, MAP_KEY, cfg.model_dump())
 
 
 async def get_installation(db: AsyncSession) -> InstallationConfig:

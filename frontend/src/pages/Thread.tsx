@@ -430,7 +430,7 @@ function Composer({ conv, online, onSent }: { conv: Conversation; online: boolea
             label="Send"
             onClick={submit}
             disabled={!text.trim() || over || !online || !canReply || send.isPending}
-            className="bg-accent text-accent-fg hover:bg-accent-hover hover:text-accent-fg disabled:bg-surface-2 disabled:text-muted"
+            className="bg-bubble-out !text-white hover:bg-bubble-out hover:brightness-110 disabled:bg-surface-2 disabled:!text-muted"
           >
             <SendHorizontal className="size-5" />
           </IconButton>

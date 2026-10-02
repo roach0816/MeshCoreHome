@@ -58,7 +58,10 @@ async def upsert_radio(db: AsyncSession, snap: DeviceSnapshot) -> Radio:
         db.add(radio)
     radio.name = snap.name
     radio.device_info = {"model": snap.model, "firmware": snap.firmware, **snap.raw_device_info}
-    radio.self_info = {"radio": snap.radio}
+    radio.self_info = {
+        "radio": snap.radio,
+        "location": {"lat": snap.lat, "lon": snap.lon} if snap.lat is not None else None,
+    }
     radio.last_connected_at = utcnow()
     await db.flush()
     return radio
@@ -79,6 +82,7 @@ async def sync_contacts(db: AsyncSession, radio: Radio, contacts: list[RadioCont
         row.name = rc.name
         row.kind = rc.kind
         row.last_advert_at = _epoch(rc.last_advert)
+        row.lat, row.lon = rc.lat, rc.lon
         row.on_radio = True
         row.meta = rc.meta
     for key, row in existing.items():

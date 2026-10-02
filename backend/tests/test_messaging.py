@@ -76,3 +76,12 @@ async def test_exact_repeat_is_counted_not_duplicated(client):
         assert m1.id == m2.id and m1.duplicate_count == 1
         assert m3.position > m1.position
         await s.rollback()
+
+
+def test_advert_position_normalisation():
+    from app.radio.base import advert_position
+
+    assert advert_position(40.1, -105.2) == (40.1, -105.2)
+    assert advert_position(0, 0) == (None, None)  # MeshCore's "no location"
+    assert advert_position(91, 0) == (None, None)
+    assert advert_position(None, "x") == (None, None)

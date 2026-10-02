@@ -38,6 +38,12 @@ direct messages from any browser that can reach it.
   and shown in Settings.
 - Read state is shared across browsers and only moves forward. Realtime updates use an authenticated
   WebSocket, and the app falls back to REST resyncs if that connection drops.
+- **Node map**: shows the companions, repeaters, room servers, and sensors heard by the gateway,
+  at the positions they advertise (sharing a position is optional in MeshCore). You can filter by
+  type and by when each node was last heard. Built with [Leaflet](https://leafletjs.com) and
+  [OpenStreetMap](https://www.openstreetmap.org) tiles by default.
+- Right-click (or long-press) menu on conversations: info, mark as read, favorite, delete or clear
+  history.
 - Maintenance pause/resume, device information, contacts with full public keys and local aliases,
   and JSON export.
 - Light and dark themes. Layouts for phone, tablet, and desktop.
@@ -351,6 +357,12 @@ Settings, and stored in the database.
 | `COOKIE_SECURE` | `auto` / `true` / `false` | `auto` |
 | `SESSION_DAYS` | Sign-in lifetime | `30` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
+
+**Map tiles and privacy:** the browser loads map tiles directly from the configured tile server.
+That server sees your IP address, which map areas you view, and the app's origin (the tile
+requests send the origin as `Referer`, as OpenStreetMap's tile policy expects). Nothing else is sent:
+no message content, node names, or keys. OpenStreetMap's public tiles suit light personal use. To
+avoid any third-party requests, point **Settings → Map** at a self-hosted XYZ tile server.
 
 Run the app as a **single process** (`--workers 1`, one replica), because exactly one process may own
 the radio. A PostgreSQL advisory lock enforces this: a second instance can serve history but will not

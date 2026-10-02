@@ -252,3 +252,29 @@ async def test_conversation_info_and_delete_semantics(client):
     assert (await client.get(f"/api/conversations/{conv_id}")).status_code == 404
     # The contact itself is untouched and a DM can be reopened.
     assert any(c["id"] == tracker["id"] for c in (await client.get("/api/contacts")).json())
+
+
+async def test_map_nodes_and_settings(client):
+    await do_setup(client)
+    await _connected_conversations(client)
+    data = (await client.get("/api/map")).json()
+    kinds = {n["kind"] for n in data["nodes"]}
+    assert {1, 2, 3, 4} <= kinds  # companions, repeaters, room server, sensor
+    assert data["without_location"] == 1  # the simulated node that shares no position
+    assert len(data["gateways"]) == 1 and data["gateways"][0]["live"] is True
+    assert data["tiles"]["tile_url"].startswith("https://tile.openstreetmap.org/")
+    bad = await client.put(
+        "/api/settings/map", headers=csrf(client), json={"tile_url": "http://x/{z}/{x}/{y}.png"}
+    )
+    assert bad.status_code == 422
+    ok = await client.put(
+        "/api/settings/map",
+        headers=csrf(client),
+        json={
+            "tile_url": "https://tiles.example.net/{z}/{x}/{y}.png",
+            "attribution": "Example",
+            "max_zoom": 18,
+        },
+    )
+    assert ok.status_code == 200
+    assert (await client.get("/api/map")).json()["tiles"]["attribution"] == "Example"

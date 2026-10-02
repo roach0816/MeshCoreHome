@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -87,6 +88,9 @@ class Contact(Base):
     alias: Mapped[str | None] = mapped_column(String(64))
     kind: Mapped[int] = mapped_column(Integer, default=1)  # MeshCore advert type (1 = chat)
     last_advert_at: Mapped[datetime | None]
+    # Advertised position (WGS84). Null when the node does not share one.
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
     on_radio: Mapped[bool] = mapped_column(Boolean, default=True)
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

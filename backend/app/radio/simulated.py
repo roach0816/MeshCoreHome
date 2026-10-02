@@ -30,10 +30,19 @@ def _key(seed: str) -> str:
 
 
 SIM_SELF_KEY = _key("home")
+# Fictional positions around a public landmark (Boulder, Colorado), not any real installation.
+SIM_HOME_POSITION = (40.0150, -105.2705)
 SIM_CONTACTS = [
-    RadioContact(public_key=_key("tracker"), name="Tracker (sim)", kind=1),
-    RadioContact(public_key=_key("neighbor"), name="Neighbor (sim)", kind=1),
-    RadioContact(public_key=_key("roof"), name="Roof Repeater (sim)", kind=2),
+    RadioContact(public_key=_key("tracker"), name="Tracker (sim)", kind=1, lat=40.0274, lon=-105.2519),
+    RadioContact(public_key=_key("neighbor"), name="Neighbor (sim)", kind=1, lat=40.0108, lon=-105.2790),
+    RadioContact(public_key=_key("roof"), name="Roof Repeater (sim)", kind=2, lat=40.0163, lon=-105.2662),
+    RadioContact(
+        public_key=_key("hilltop"), name="Hilltop Repeater (sim)", kind=2, lat=39.9990, lon=-105.2930
+    ),
+    RadioContact(public_key=_key("room"), name="Club Room (sim)", kind=3, lat=40.0201, lon=-105.2829),
+    RadioContact(public_key=_key("wx"), name="Weather Station (sim)", kind=4, lat=40.0060, lon=-105.2600),
+    # Shares no position, like many real nodes.
+    RadioContact(public_key=_key("hiker"), name="Hiker (sim, no location)", kind=1),
 ]
 SIM_CHANNELS = [
     RadioChannel(slot=0, name="Public", secret=b"sim-public-secret"),
@@ -93,13 +102,15 @@ class SimulatedRadio(RadioAdapter):
             model="Simulated companion",
             firmware="sim-0.1",
             radio={"freq_mhz": 910.525, "bw_khz": 62.5, "sf": 7, "cr": 5, "tx_power_dbm": 22},
+            lat=SIM_HOME_POSITION[0],
+            lon=SIM_HOME_POSITION[1],
         )
 
     async def get_contacts(self) -> list[RadioContact]:
         self._require()
         now = int(time.time())
         return [
-            RadioContact(c.public_key, c.name, c.kind, now - 600 * (i + 1))
+            RadioContact(c.public_key, c.name, c.kind, now - 600 * (i + 1), lat=c.lat, lon=c.lon)
             for i, c in enumerate(SIM_CONTACTS)
         ]
 

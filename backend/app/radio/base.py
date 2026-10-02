@@ -32,6 +32,8 @@ class DeviceSnapshot:
     firmware: str | None = None
     radio: dict[str, Any] = field(default_factory=dict)  # freq/bw/sf/cr/tx power — no secrets
     raw_device_info: dict[str, Any] = field(default_factory=dict)
+    lat: float | None = None  # the gateway's own advertised position, if set
+    lon: float | None = None
 
 
 @dataclass
@@ -41,6 +43,8 @@ class RadioContact:
     kind: int = 1
     last_advert: int | None = None  # epoch seconds, from the radio
     meta: dict[str, Any] = field(default_factory=dict)
+    lat: float | None = None  # position from the node's advert, if it shares one
+    lon: float | None = None
 
 
 @dataclass
@@ -112,6 +116,17 @@ class RadioAdapter(ABC):
 
     async def sync_clock(self, epoch_seconds: int) -> None:  # noqa: B027 - optional hook
         """Set the radio clock where supported."""
+
+
+def advert_position(lat: Any, lon: Any) -> tuple[float | None, float | None]:
+    """Normalise an advertised position. MeshCore uses 0,0 for "no location"; reject out-of-range values."""
+    try:
+        la, lo = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None, None
+    if (la == 0 and lo == 0) or not (-90 <= la <= 90 and -180 <= lo <= 180):
+        return None, None
+    return la, lo
 
 
 def split_channel_text(text: str) -> tuple[str | None, str]:
