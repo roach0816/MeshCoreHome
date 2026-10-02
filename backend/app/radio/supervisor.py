@@ -268,9 +268,9 @@ class RadioSupervisor:
             return SimulatedRadio(interval_seconds=cfg.sim_interval_seconds)
         return MeshCoreTcpRadio(cfg.host, cfg.port)
 
-    async def _cmd(self, coro_fn, *args):
+    async def _cmd(self, coro_fn, *args, timeout: float = COMMAND_TIMEOUT):
         async with self._cmd_lock:
-            result = await asyncio.wait_for(coro_fn(*args), COMMAND_TIMEOUT)
+            result = await asyncio.wait_for(coro_fn(*args), timeout)
         self.status.last_interaction_at = time.time()
         return result
 
@@ -297,6 +297,45 @@ class RadioSupervisor:
             await s.commit()
         hub.publish("contacts-updated")
         return n
+
+    # ---- node configuration ----------------------------------------------------------
+
+    async def read_node_config(self) -> dict:
+        adapter = self._adapter
+        if adapter is None or not self.connected:
+            raise RadioError("radio is not connected")
+        # Reads every channel slot, so allow longer than a single command.
+        return await self._cmd(adapter.read_config, timeout=60)
+
+    async def current_channel_secret(self, slot: int) -> bytes | None:
+        """Used only to rename a channel while keeping its key; never leaves the server."""
+        adapter = self._adapter
+        if adapter is None or not self.connected:
+            raise RadioError("radio is not connected")
+        for ch in await self._cmd(adapter.get_channels):
+            if ch.slot == slot and any(ch.secret):
+                return ch.secret
+        return None
+
+    async def configure_node(self, op: str, params: dict) -> dict:
+        adapter = self._adapter
+        if adapter is None or not self.connected:
+            raise RadioError("radio is not connected")
+        result = await self._cmd(adapter.configure, op, params, timeout=30)
+        if op in ("identity", "radio", "channel", "channel_clear"):
+            # Refresh what the archive knows: device name/location/RF and channel generations.
+            snap = await self._cmd(adapter.get_device_snapshot)
+            channels = await self._cmd(adapter.get_channels)
+            async with db.session_factory()() as s:
+                radio = await messaging.upsert_radio(s, snap)
+                await messaging.sync_channels(s, radio, channels, await app_settings.get_fingerprint_key(s))
+                await s.commit()
+                self._radio = radio
+            self.status.radio_name = snap.name
+            hub.publish("conversations-updated")
+            hub.publish("contacts-updated")  # refreshes device info and the map
+            hub.publish("radio-status-changed", state=self.status.state)
+        return result
 
     # ---- receive ---------------------------------------------------------------------
 

@@ -278,3 +278,115 @@ async def test_map_nodes_and_settings(client):
     )
     assert ok.status_code == 200
     assert (await client.get("/api/map")).json()["tiles"]["attribution"] == "Example"
+
+
+async def test_username_change_and_release_url(client):
+    await do_setup(client, mode="none")
+    status_ = (await client.get("/api/setup/status")).json()
+    assert status_["release_url"].endswith(f"/releases/tag/v{status_['version']}")
+    bad = await client.put(
+        "/api/auth/username", headers=csrf(client), json={"username": "x", "current_password": "nope"}
+    )
+    assert bad.status_code == 403
+    ok = await client.put(
+        "/api/auth/username", headers=csrf(client), json={"username": "admin2", "current_password": PASSWORD}
+    )
+    assert ok.status_code == 200 and ok.json()["username"] == "admin2"
+    client.cookies.clear()
+    r = await client.post(
+        "/api/auth/login", headers=HEADERS, json={"username": "admin2", "password": PASSWORD}
+    )
+    assert r.status_code == 200
+
+
+async def test_node_configuration_on_simulated_radio(client):
+    from app.radio import simulated
+
+    simulated._SIM_STATE = None  # fresh simulated node
+    await do_setup(client)
+    await _connected_conversations(client)
+    cfg = (await client.get("/api/radio/config")).json()
+    assert cfg["simulated"] is True and cfg["identity"]["name"] == "Home (simulated)"
+    assert "secret" not in str(cfg).lower()
+
+    # Identity: rename and move; device info and map follow.
+    r = await client.put(
+        "/api/radio/config/identity",
+        headers=csrf(client),
+        json={"name": "Basecamp", "lat": 40.1, "lon": -105.1, "share_location": True},
+    )
+    assert r.status_code == 200 and r.json()["identity"]["name"] == "Basecamp"
+    assert (await client.get("/api/device")).json()["radio"]["name"] == "Basecamp"
+    too_long = await client.put(
+        "/api/radio/config/identity", headers=csrf(client), json={"name": "x" * 40, "share_location": False}
+    )
+    assert too_long.status_code == 422
+
+    # Radio: firmware ranges enforced before anything is sent.
+    radio = {"freq_mhz": 915.0, "bw_khz": 250, "sf": 10, "cr": 5, "tx_power_dbm": 20}
+    assert (await client.put("/api/radio/config/radio", headers=csrf(client), json=radio)).status_code == 200
+    for bad in ({"sf": 13}, {"bw_khz": 100}, {"tx_power_dbm": 23}):
+        assert (
+            await client.put("/api/radio/config/radio", headers=csrf(client), json={**radio, **bad})
+        ).status_code == 422
+
+    # Channels: random key returned exactly once; a new channel gets a conversation.
+    r = await client.put(
+        "/api/radio/channels/3", headers=csrf(client), json={"name": "Family", "key_mode": "random"}
+    )
+    body = r.json()
+    assert len(body["new_key"]["hex"]) == 32
+    assert any(c["slot"] == 3 and c["key"] == "private" for c in body["config"]["channels"])
+    assert "new_key" not in (await client.get("/api/radio/config")).text
+    assert any(c["title"] == "Family" for c in (await client.get("/api/conversations")).json())
+    r = await client.put(
+        "/api/radio/channels/4", headers=csrf(client), json={"name": "#hikers", "key_mode": "hashtag"}
+    )
+    assert any(c["slot"] == 4 and c["key"] == "hashtag" for c in r.json()["config"]["channels"])
+    r = await client.put(
+        "/api/radio/channels/3", headers=csrf(client), json={"name": "Family Chat", "key_mode": "keep"}
+    )
+    assert any(c["slot"] == 3 and c["name"] == "Family Chat" for c in r.json()["config"]["channels"])
+    r = await client.delete("/api/radio/channels/4", headers=csrf(client))
+    assert not any(c["slot"] == 4 and c["name"] for c in r.json()["channels"])
+
+    # Telemetry, behaviour, tuning, custom variables, actions.
+    assert (
+        await client.put(
+            "/api/radio/config/telemetry",
+            headers=csrf(client),
+            json={"base": 2, "location": 0, "environment": 1},
+        )
+    ).json()["telemetry"] == {"base": 2, "location": 0, "environment": 1}
+    assert (
+        await client.put(
+            "/api/radio/config/behavior",
+            headers=csrf(client),
+            json={
+                "auto_add_contacts": False,
+                "multi_acks": 1,
+                "path_hash_mode": 1,
+                "default_flood_scope": "#local",
+            },
+        )
+    ).json()["behavior"]["default_flood_scope"] == "local"
+    assert (
+        await client.put(
+            "/api/radio/config/tuning", headers=csrf(client), json={"rx_delay": 25, "airtime_factor": 1}
+        )
+    ).status_code == 422
+    assert (
+        await client.put("/api/radio/custom-vars", headers=csrf(client), json={"key": "gps", "value": "1"})
+    ).json()["custom_vars"]["gps"] == "1"
+    assert (
+        await client.post("/api/radio/actions/advert", headers=csrf(client), json={"flood": True})
+    ).status_code == 200
+    assert (await client.post("/api/radio/actions/reboot", headers=csrf(client))).status_code == 200
+    await wait_for(lambda: _state_is("connected"), timeout=15)  # reconnects after the simulated reboot
+    simulated._SIM_STATE = None
+
+
+async def test_node_configuration_requires_connection(client):
+    await do_setup(client, mode="none")
+    r = await client.get("/api/radio/config")
+    assert r.status_code == 409

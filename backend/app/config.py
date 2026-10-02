@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 
 class Settings(BaseSettings):
@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     session_days: int = Field(default=30, alias="SESSION_DAYS")
     send_expiry_seconds: int = Field(default=60, alias="SEND_EXPIRY_SECONDS")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Where the version number in the UI links to. "{version}" is replaced (e.g. 0.4.0). Forks can
+    # point this at their own repository; set it empty to show the version without a link.
+    release_notes_url: str = Field(
+        default="https://github.com/roach0816/MeshCoreHome/releases/tag/v{version}", alias="RELEASE_NOTES_URL"
+    )
 
     # Directory holding the built frontend. Empty disables static serving (dev uses the Vite server).
     static_dir: str = Field(default="app/static", alias="STATIC_DIR")

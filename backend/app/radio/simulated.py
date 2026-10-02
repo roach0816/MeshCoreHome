@@ -15,11 +15,14 @@ from collections import deque
 from app.radio.base import (
     DeviceSnapshot,
     IncomingMessage,
+    NotSupported,
     RadioAdapter,
     RadioChannel,
     RadioContact,
     RadioError,
     SendResult,
+    channel_key_kind,
+    hashtag_key,
 )
 
 log = logging.getLogger(__name__)
@@ -62,6 +65,39 @@ PHRASES = [
 ]
 
 
+SIM_MAX_CHANNELS = 8
+
+
+def _initial_state() -> dict:
+    return {
+        "name": "Home (simulated)",
+        "lat": SIM_HOME_POSITION[0],
+        "lon": SIM_HOME_POSITION[1],
+        "share_location": True,
+        "radio": {"freq_mhz": 910.525, "bw_khz": 62.5, "sf": 7, "cr": 5, "tx_power_dbm": 22, "repeat": False},
+        "auto_add_contacts": True,
+        "multi_acks": 0,
+        "path_hash_mode": 0,
+        "default_flood_scope": "",
+        "telemetry": {"base": 0, "location": 0, "environment": 0},
+        "tuning": {"rx_delay": 0.0, "airtime_factor": 1.0},
+        "channels": {c.slot: (c.name, c.secret) for c in SIM_CHANNELS},
+        "custom_vars": {"gps": "0", "gps_interval": "900"},
+    }
+
+
+# Simulated node settings live for the process lifetime, so they survive reconnects like a real
+# node's flash would (but reset when the app restarts).
+_SIM_STATE: dict | None = None
+
+
+def sim_state() -> dict:
+    global _SIM_STATE
+    if _SIM_STATE is None:
+        _SIM_STATE = _initial_state()
+    return _SIM_STATE
+
+
 class SimulatedRadio(RadioAdapter):
     is_simulated = True
 
@@ -95,15 +131,16 @@ class SimulatedRadio(RadioAdapter):
 
     async def get_device_snapshot(self) -> DeviceSnapshot:
         self._require()
+        st = sim_state()
         return DeviceSnapshot(
             public_key=SIM_SELF_KEY,
-            name="Home (simulated)",
+            name=st["name"],
             is_simulated=True,
             model="Simulated companion",
             firmware="sim-0.1",
-            radio={"freq_mhz": 910.525, "bw_khz": 62.5, "sf": 7, "cr": 5, "tx_power_dbm": 22},
-            lat=SIM_HOME_POSITION[0],
-            lon=SIM_HOME_POSITION[1],
+            radio={k: v for k, v in st["radio"].items() if k != "repeat"},
+            lat=st["lat"],
+            lon=st["lon"],
         )
 
     async def get_contacts(self) -> list[RadioContact]:
@@ -116,7 +153,10 @@ class SimulatedRadio(RadioAdapter):
 
     async def get_channels(self) -> list[RadioChannel]:
         self._require()
-        return list(SIM_CHANNELS)
+        return [
+            RadioChannel(slot=slot, name=name, secret=secret)
+            for slot, (name, secret) in sorted(sim_state()["channels"].items())
+        ]
 
     async def fetch_next_message(self) -> IncomingMessage | None:
         self._require()
@@ -124,7 +164,7 @@ class SimulatedRadio(RadioAdapter):
 
     async def send_channel(self, slot: int, text: str, timestamp: int) -> SendResult:
         self._require()
-        if slot not in {c.slot for c in SIM_CHANNELS}:
+        if slot not in sim_state()["channels"]:
             return SendResult(ok=False, error="unknown channel slot")
         await asyncio.sleep(0.15)
         return SendResult(ok=True)
@@ -140,6 +180,98 @@ class SimulatedRadio(RadioAdapter):
             if contact and contact.kind == 1:
                 self._spawn(self._auto_reply(contact, self._rng.uniform(3.0, 8.0)))
         return SendResult(ok=True, expected_ack=ack, suggested_timeout_ms=8000)
+
+    # ---- node configuration (in memory) ---------------------------------------------
+
+    async def read_config(self) -> dict:
+        self._require()
+        st = sim_state()
+        return {
+            "simulated": True,
+            "firmware": {
+                "version_code": 10,
+                "version": "sim-0.1",
+                "build": "simulated",
+                "model": "Simulated companion",
+            },
+            "identity": {
+                "name": st["name"],
+                "lat": st["lat"],
+                "lon": st["lon"],
+                "share_location": st["share_location"],
+            },
+            "radio": {**st["radio"], "max_tx_power_dbm": 22},
+            "behavior": {
+                "auto_add_contacts": st["auto_add_contacts"],
+                "multi_acks": st["multi_acks"],
+                "path_hash_mode": st["path_hash_mode"],
+                "default_flood_scope": st["default_flood_scope"],
+            },
+            "telemetry": dict(st["telemetry"]),
+            "tuning": dict(st["tuning"]),
+            "channels": [
+                {
+                    "slot": i,
+                    "name": st["channels"].get(i, ("", bytes(16)))[0],
+                    "key": channel_key_kind(*st["channels"].get(i, ("", bytes(16)))),
+                }
+                for i in range(SIM_MAX_CHANNELS)
+            ],
+            "max_channels": SIM_MAX_CHANNELS,
+            "custom_vars": dict(st["custom_vars"]),
+        }
+
+    async def configure(self, op: str, params: dict) -> dict:
+        self._require()
+        await asyncio.sleep(0.1)
+        st = sim_state()
+        if op == "identity":
+            st.update(
+                name=params["name"],
+                lat=params.get("lat"),
+                lon=params.get("lon"),
+                share_location=params["share_location"],
+            )
+        elif op == "radio":
+            st["radio"].update({k: params[k] for k in ("freq_mhz", "bw_khz", "sf", "cr", "tx_power_dbm")})
+            if params.get("repeat") is not None:
+                st["radio"]["repeat"] = bool(params["repeat"])
+        elif op == "behavior":
+            st["auto_add_contacts"] = params["auto_add_contacts"]
+            st["multi_acks"] = params["multi_acks"]
+            for k in ("path_hash_mode", "default_flood_scope"):
+                if params.get(k) is not None:
+                    st[k] = params[k]
+        elif op == "telemetry":
+            st["telemetry"] = {k: params[k] for k in ("base", "location", "environment")}
+        elif op == "tuning":
+            st["tuning"] = {k: params[k] for k in ("rx_delay", "airtime_factor")}
+        elif op == "channel":
+            name = params["name"]
+            secret = (
+                hashtag_key(name)
+                if name.startswith("#") or params.get("secret") is None
+                else params["secret"]
+            )
+            st["channels"][params["slot"]] = (name, secret)
+        elif op == "channel_clear":
+            st["channels"].pop(params["slot"], None)
+        elif op == "custom_var":
+            st["custom_vars"][params["key"]] = params["value"]
+        elif op in ("advert", "sync_clock"):
+            pass
+        elif op == "reboot":
+            # Behave like the real thing: the connection drops and the supervisor reconnects.
+            self._spawn(self._simulate_reboot())
+        else:
+            raise NotSupported(f"unknown operation {op!r}")
+        return {}
+
+    async def _simulate_reboot(self) -> None:
+        await asyncio.sleep(0.3)
+        self._connected = False
+        if self.on_disconnect:
+            await self.on_disconnect("radio rebooted")
 
     # ---- simulation helpers -------------------------------------------------
 

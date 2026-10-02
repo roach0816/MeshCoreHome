@@ -236,3 +236,38 @@ export interface MapData {
   without_location: number;
   tiles: MapConfig;
 }
+
+export interface SetupStatus {
+  needs_setup: boolean;
+  version: string;
+  release_url: string | null;
+}
+
+export type ChannelKeyKind = "none" | "public" | "hashtag" | "private";
+export type TelemetryMode = 0 | 1 | 2;
+
+export interface NodeConfig {
+  simulated: boolean;
+  firmware: { version_code: number; version: string | null; build: string | null; model: string | null };
+  identity: { name: string; lat: number | null; lon: number | null; share_location: boolean };
+  radio: {
+    freq_mhz: number;
+    bw_khz: number;
+    sf: number;
+    cr: number;
+    tx_power_dbm: number;
+    max_tx_power_dbm: number | null;
+    repeat: boolean | null;
+  };
+  behavior: {
+    auto_add_contacts: boolean;
+    multi_acks: number;
+    path_hash_mode: number | null;
+    default_flood_scope: string | null;
+  };
+  telemetry: { base: TelemetryMode; location: TelemetryMode; environment: TelemetryMode };
+  tuning: { rx_delay: number; airtime_factor: number } | null;
+  channels: { slot: number; name: string; key: ChannelKeyKind }[];
+  max_channels: number;
+  custom_vars: Record<string, string> | null;
+}

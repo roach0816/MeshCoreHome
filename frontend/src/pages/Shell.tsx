@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Map as MapIcon, MessagesSquare, Settings as SettingsIcon, Users } from "lucide-react";
-import { NavLink, Route, Routes, useLocation } from "react-router";
+import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { api, type Me, type Status } from "../lib/api";
+import { useSetupStatus } from "../lib/queries";
 import { useRealtime } from "../lib/realtime";
 import { cx } from "../lib/util";
 import { ConversationList } from "../components/ConversationList";
@@ -14,6 +15,8 @@ import { Settings } from "./Settings";
 // Leaflet is only downloaded when the map is opened.
 const NodeMap = lazy(() => import("./NodeMap").then((m) => ({ default: m.NodeMap })));
 import { IconButton } from "../components/ui";
+import { Account } from "./Account";
+import { NodeSettings } from "./NodeSettings";
 
 export function useStatus() {
   return useQuery({ queryKey: ["status"], queryFn: () => api<Status>("/api/status"), refetchInterval: 15000 });
@@ -83,6 +86,8 @@ export function Shell({ me }: { me: Me }) {
           <Route path="c/:id" element={<Thread status={status.data} />} />
           <Route path="contacts" element={<Contacts />} />
           <Route path="settings" element={<Settings me={me} />} />
+          <Route path="settings/node" element={<NodeSettings />} />
+          <Route path="account" element={<Account me={me} />} />
           <Route
             path="map"
             element={
@@ -100,11 +105,8 @@ export function Shell({ me }: { me: Me }) {
 
 function UserPanel({ me }: { me: Me }) {
   const qc = useQueryClient();
-  const meta = useQuery({
-    queryKey: ["setup-status"],
-    queryFn: () => api<{ needs_setup: boolean; version: string }>("/api/setup/status"),
-    staleTime: Infinity,
-  });
+  const meta = useSetupStatus();
+  const { pathname } = useLocation();
   const logout = useMutation({
     mutationFn: () => api("/api/auth/logout", { method: "POST" }),
     onSettled: () => {
@@ -112,19 +114,46 @@ function UserPanel({ me }: { me: Me }) {
       location.assign("/login");
     },
   });
+  const version = meta.data?.version;
+  const active = pathname === "/account";
   return (
-    <footer className="safe-bottom flex items-center gap-3 border-t border-line px-3 pt-2.5">
-      <span
-        aria-hidden
-        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold uppercase text-accent"
+    <footer className="safe-bottom flex items-center gap-2 border-t border-line px-2 pt-2">
+      <div
+        className={cx(
+          "flex min-w-0 flex-1 items-center gap-3 rounded-lg px-1.5 py-1 transition-colors",
+          active ? "bg-accent-soft/60" : "hover:bg-surface-2",
+        )}
       >
-        {me.username.slice(0, 1)}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium" title={me.username}>
-          {me.username}
-        </p>
-        <p className="text-xs text-muted">MeshCore Home v{meta.data?.version ?? "…"}</p>
+        {/* Decorative duplicate of the username link, kept out of the tab order. */}
+        <Link to="/account" tabIndex={-1} aria-hidden className="shrink-0">
+          <span className="flex size-9 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold uppercase text-accent">
+            {me.username.slice(0, 1)}
+          </span>
+        </Link>
+        <div className="min-w-0">
+          <Link
+            to="/account"
+            aria-current={active ? "page" : undefined}
+            title="Account settings"
+            className="block truncate text-sm font-medium hover:underline"
+          >
+            {me.username}
+          </Link>
+          {version &&
+            (meta.data?.release_url ? (
+              <a
+                href={meta.data.release_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Release notes for v${version} (opens GitHub)`}
+                className="text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
+              >
+                MeshCore Home v{version}
+              </a>
+            ) : (
+              <span className="text-xs text-muted">MeshCore Home v{version}</span>
+            ))}
+        </div>
       </div>
       <IconButton label="Sign out" onClick={() => logout.mutate()} disabled={logout.isPending}>
         <LogOut className="size-5" />

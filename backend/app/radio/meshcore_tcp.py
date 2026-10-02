@@ -15,12 +15,14 @@ from typing import Any
 from app.radio.base import (
     DeviceSnapshot,
     IncomingMessage,
+    NotSupported,
     RadioAdapter,
     RadioChannel,
     RadioContact,
     RadioError,
     SendResult,
     advert_position,
+    channel_key_kind,
     split_channel_text,
 )
 
@@ -249,3 +251,185 @@ class MeshCoreTcpRadio(RadioAdapter):
         res = await mc.commands.set_time(epoch_seconds)
         if res is None or res.is_error():
             log.info("radio clock sync not accepted (%s)", _describe(res))
+
+    # ---- node configuration -------------------------------------------------------------
+    # Mirrors the MeshCore companion firmware (examples/companion_radio/MyMesh.cpp). Untested on
+    # hardware: every call checks for an error event and reports it rather than assuming success.
+
+    async def _ok(self, coro, what: str):
+        res = await coro
+        if res is None or res.is_error():
+            raise RadioError(f"{what} rejected by radio ({_describe(res)})")
+        return res
+
+    async def _fresh_self_info(self) -> dict[str, Any]:
+        mc = self._require()
+        res = await self._ok(mc.commands.send_appstart(), "reading settings")
+        self._self_info = dict(_payload(res))
+        return self._self_info
+
+    async def read_config(self) -> dict[str, Any]:
+        from meshcore import EventType
+
+        mc = self._require()
+        si = await self._fresh_self_info()
+        dres = await mc.commands.send_device_query()
+        if dres is not None and not dres.is_error():
+            self._device_info = _payload(dres)
+        di = self._device_info
+        fw_ver = int(di.get("fw ver") or 0)
+
+        tuning = None
+        tres = await mc.commands.get_tuning()
+        if tres is not None and tres.type == EventType.TUNING_PARAMS:
+            p = _payload(tres)
+            tuning = {
+                "rx_delay": p.get("rx_delay", 0) / 1000,
+                "airtime_factor": p.get("airtime_factor", 0) / 1000,
+            }
+
+        custom_vars = None
+        cres = await mc.commands.get_custom_vars()
+        if cres is not None and cres.type == EventType.CUSTOM_VARS:
+            custom_vars = {str(k): str(v) for k, v in _payload(cres).items()}
+
+        flood_scope = None
+        try:
+            fres = await mc.commands.get_default_flood_scope()
+            if fres is not None and fres.type == EventType.DEFAULT_FLOOD_SCOPE:
+                flood_scope = str(_payload(fres).get("scope_name") or "")
+        except Exception:  # noqa: BLE001 - older firmware/library combinations
+            flood_scope = None
+
+        channels = []
+        max_channels = int(di.get("max_channels") or MAX_CHANNEL_SLOTS_FALLBACK)
+        for idx in range(max_channels):
+            res = await mc.commands.get_channel(idx)
+            if res is None or res.is_error():
+                continue
+            p = _payload(res)
+            name = str(p.get("channel_name") or "").strip()
+            secret = bytes(p.get("channel_secret") or b"")
+            channels.append({"slot": idx, "name": name, "key": channel_key_kind(name, secret)})
+
+        lat, lon = advert_position(si.get("adv_lat"), si.get("adv_lon"))
+        return {
+            "simulated": False,
+            "firmware": {
+                "version_code": fw_ver,
+                "version": di.get("ver"),
+                "build": di.get("fw_build"),
+                "model": di.get("model"),
+            },
+            "identity": {
+                "name": si.get("name", ""),
+                "lat": lat,
+                "lon": lon,
+                "share_location": si.get("adv_loc_policy") == 1,
+            },
+            "radio": {
+                "freq_mhz": si.get("radio_freq"),
+                "bw_khz": si.get("radio_bw"),
+                "sf": si.get("radio_sf"),
+                "cr": si.get("radio_cr"),
+                "tx_power_dbm": si.get("tx_power"),
+                "max_tx_power_dbm": si.get("max_tx_power"),
+                # Client repeat exists from firmware version code 9.
+                "repeat": di.get("repeat") if fw_ver >= 9 else None,
+            },
+            "behavior": {
+                "auto_add_contacts": not si.get("manual_add_contacts", False),
+                "multi_acks": int(si.get("multi_acks") or 0),
+                "path_hash_mode": di.get("path_hash_mode") if fw_ver >= 10 else None,
+                "default_flood_scope": flood_scope,
+            },
+            "telemetry": {
+                "base": si.get("telemetry_mode_base", 0),
+                "location": si.get("telemetry_mode_loc", 0),
+                "environment": si.get("telemetry_mode_env", 0),
+            },
+            "tuning": tuning,
+            "channels": channels,
+            "max_channels": max_channels,
+            "custom_vars": custom_vars,
+        }
+
+    async def _set_other(self, **changes) -> None:
+        mc = self._require()
+        infos = dict(await self._fresh_self_info())
+        infos.update(changes)
+        infos["manual_add_contacts"] = bool(infos.get("manual_add_contacts"))
+        for k in (
+            "telemetry_mode_base",
+            "telemetry_mode_loc",
+            "telemetry_mode_env",
+            "adv_loc_policy",
+            "multi_acks",
+        ):
+            infos[k] = int(infos.get(k) or 0)
+        await self._ok(mc.commands.set_other_params_from_infos(infos), "updating preferences")
+
+    async def configure(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
+        mc = self._require()
+        c = mc.commands
+        if op == "identity":
+            await self._ok(c.set_name(params["name"]), "setting the name")
+            if params.get("lat") is not None and params.get("lon") is not None:
+                await self._ok(c.set_coords(params["lat"], params["lon"]), "setting the location")
+            else:
+                await self._ok(c.set_coords(0.0, 0.0), "clearing the location")
+            await self._set_other(adv_loc_policy=1 if params["share_location"] else 0)
+        elif op == "radio":
+            repeat = params.get("repeat")
+            await self._ok(
+                c.set_radio(
+                    params["freq_mhz"],
+                    params["bw_khz"],
+                    params["sf"],
+                    params["cr"],
+                    None if repeat is None else int(repeat),
+                ),
+                "setting LoRa parameters",
+            )
+            await self._ok(c.set_tx_power(params["tx_power_dbm"]), "setting TX power")
+        elif op == "behavior":
+            await self._set_other(
+                manual_add_contacts=not params["auto_add_contacts"], multi_acks=params["multi_acks"]
+            )
+            if params.get("path_hash_mode") is not None:
+                await self._ok(c.set_path_hash_mode(params["path_hash_mode"]), "setting path hash mode")
+            if params.get("default_flood_scope") is not None:
+                await self._ok(
+                    c.set_default_flood_scope(params["default_flood_scope"] or None), "setting flood scope"
+                )
+        elif op == "telemetry":
+            await self._set_other(
+                telemetry_mode_base=params["base"],
+                telemetry_mode_loc=params["location"],
+                telemetry_mode_env=params["environment"],
+            )
+        elif op == "tuning":
+            await self._ok(
+                c.set_tuning(round(params["rx_delay"] * 1000), round(params["airtime_factor"] * 1000)),
+                "setting tuning",
+            )
+        elif op == "channel":
+            secret = params.get("secret")  # bytes; None means "derive from #name"
+            if params["name"].startswith("#"):
+                secret = None
+            await self._ok(c.set_channel(params["slot"], params["name"], secret), "saving the channel")
+        elif op == "channel_clear":
+            await self._ok(c.set_channel(params["slot"], "", bytes(16)), "clearing the channel")
+        elif op == "custom_var":
+            await self._ok(c.set_custom_var(params["key"], params["value"]), "setting the variable")
+        elif op == "advert":
+            await self._ok(c.send_advert(flood=bool(params.get("flood"))), "sending the advert")
+        elif op == "sync_clock":
+            await self._ok(c.set_time(int(params["epoch"])), "setting the clock")
+        elif op == "reboot":
+            await c.reboot()  # the firmware reboots without replying
+        else:
+            raise NotSupported(f"unknown operation {op!r}")
+        if op in ("identity", "radio", "behavior", "telemetry"):
+            await self._fresh_self_info()  # so the next device snapshot reflects the change
+        return {}

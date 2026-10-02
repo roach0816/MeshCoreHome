@@ -10,7 +10,7 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import db
-from app.api import auth, inbox, node_map, radio
+from app.api import auth, inbox, node_map, radio, radio_config
 from app.api.deps import load_session
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
@@ -82,6 +82,7 @@ app.include_router(auth.router)
 app.include_router(inbox.router)
 app.include_router(radio.router)
 app.include_router(node_map.router)
+app.include_router(radio_config.router)
 
 
 # ---- health ------------------------------------------------------------------------------

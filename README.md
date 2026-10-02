@@ -42,6 +42,19 @@ direct messages from any browser that can reach it.
   at the positions they advertise (sharing a position is optional in MeshCore). You can filter by
   type and by when each node was last heard. Built with [Leaflet](https://leafletjs.com) and
   [OpenStreetMap](https://www.openstreetmap.org) tiles by default.
+- **Node settings** (Settings → Configure node settings): change the connected radio's own
+  configuration from the browser:
+  - **Identity:** name, location, and whether adverts share the location.
+  - **LoRa radio:** frequency, bandwidth, spreading factor, coding rate, TX power, and client repeat.
+  - **Channels:** add, rename, or remove. Keys can be hashtag-derived, the Public key, a generated
+    random key (shown once), or entered by hand. Keys are never displayed afterwards.
+  - **Contacts and routing:** auto-add contacts, extra ACKs, path hash size, and default flood scope.
+  - **Other:** telemetry permissions, firmware variables, advanced timing, adverts, clock sync, and
+    reboot.
+
+  Values are checked against the firmware's own limits before anything is sent. Factory reset and
+  private-key export/import are deliberately left out. Use official MeshCore tools for those.
+- **Account page** (click your name, bottom left): change your username and password, and sign out.
 - Right-click (or long-press) menu on conversations: info, mark as read, favorite, delete or clear
   history.
 - Maintenance pause/resume, device information, contacts with full public keys and local aliases,
@@ -357,6 +370,7 @@ Settings, and stored in the database.
 | `COOKIE_SECURE` | `auto` / `true` / `false` | `auto` |
 | `SESSION_DAYS` | Sign-in lifetime | `30` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
+| `RELEASE_NOTES_URL` | Where the version number links (`{version}` is substituted); empty for no link | this repo's GitHub releases |
 
 **Map tiles and privacy:** the browser loads map tiles directly from the configured tile server.
 That server sees your IP address, which map areas you view, and the app's origin (the tile
@@ -389,6 +403,9 @@ To deploy from a fork:
     --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<READ_PACKAGES_TOKEN>
   kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
   ```
+- **Release notes link:** set `RELEASE_NOTES_URL` on the app container (for example
+  `https://github.com/<owner>/<repo>/releases/tag/v{version}`) so the version number in the app
+  links to your fork's releases.
 - **Leave `[skip ci]` to the bot:** it is reserved for the deploy-pin commit. Don't use it in your
   own commit messages.
 
@@ -429,5 +446,5 @@ deploy/k8s/             Fleet bundle (kustomization) + *.example.yaml templates 
 
 ### Not yet included
 
-Contact-card import, BLE/serial gateways, Playwright tests in CI, NetworkPolicies, and
+Physical-hardware verification of remote node configuration, contact-card import, BLE/serial gateways, Playwright tests in CI, NetworkPolicies, and
 physical-hardware verification of the MeshCore TCP adapter.

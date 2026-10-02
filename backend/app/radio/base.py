@@ -23,6 +23,32 @@ class RadioError(Exception):
     """A radio operation failed in a known way."""
 
 
+class NotSupported(RadioError):
+    """The connected firmware or adapter does not support this operation."""
+
+
+# Well-known MeshCore "Public" channel key (the default channel every companion ships with).
+PUBLIC_CHANNEL_KEY = bytes.fromhex("8b3387e9c5cdea6ac9e5edbaa115cd72")
+
+
+def hashtag_key(name: str) -> bytes:
+    """MeshCore derives the key of a "#name" channel from the name itself."""
+    import hashlib
+
+    return hashlib.sha256(name.encode("utf-8")).digest()[:16]
+
+
+def channel_key_kind(name: str, secret: bytes) -> str:
+    """Describe a channel key without revealing it."""
+    if not any(secret):
+        return "none"
+    if secret == PUBLIC_CHANNEL_KEY:
+        return "public"
+    if name.startswith("#") and secret == hashtag_key(name):
+        return "hashtag"
+    return "private"
+
+
 @dataclass
 class DeviceSnapshot:
     public_key: str
@@ -116,6 +142,16 @@ class RadioAdapter(ABC):
 
     async def sync_clock(self, epoch_seconds: int) -> None:  # noqa: B027 - optional hook
         """Set the radio clock where supported."""
+
+    # ---- node configuration ---------------------------------------------------------------
+    # read_config returns a plain dict (see app.api.radio_config.NodeConfig for the shape).
+    # configure applies one named operation; unknown or unsupported ops raise NotSupported.
+
+    async def read_config(self) -> dict[str, Any]:
+        raise NotSupported("this radio does not support remote configuration")
+
+    async def configure(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
+        raise NotSupported("this radio does not support remote configuration")
 
 
 def advert_position(lat: Any, lon: Any) -> tuple[float | None, float | None]:

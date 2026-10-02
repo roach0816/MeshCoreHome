@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { ChevronLeft, Download, LogOut, Pause, Play, PlugZap, Sparkles, Trash2 } from "lucide-react";
+import { ChevronLeft, Download, Pause, Play, PlugZap, SlidersHorizontal, Sparkles, Trash2, UserRound } from "lucide-react";
 import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { radioSummary } from "../components/StatusPill";
@@ -216,6 +216,14 @@ function RadioSection() {
             {cfg.data.paused ? "Resume radio" : "Pause for maintenance"}
           </Button>
         )}
+        {r?.state === "connected" && (
+          <Link
+            to="/settings/node"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium hover:bg-surface-2"
+          >
+            <SlidersHorizontal className="size-4" aria-hidden /> Configure node settings
+          </Link>
+        )}
         {r?.state === "connected" && r.is_simulated && (
           <Button onClick={() => simulate.mutate()} disabled={simulate.isPending}>
             <Sparkles className="size-4" aria-hidden /> Simulate incoming message
@@ -398,55 +406,14 @@ function AppearanceSection() {
 }
 
 function AccountSection({ me }: { me: Me }) {
-  const qc = useQueryClient();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [done, setDone] = useState(false);
-  const change = useMutation({
-    mutationFn: () => api("/api/auth/password", { json: { current_password: current, new_password: next } }),
-    onSuccess: () => {
-      setCurrent("");
-      setNext("");
-      setDone(true);
-    },
-  });
-  const logout = useMutation({
-    mutationFn: () => api("/api/auth/logout", { method: "POST" }),
-    onSettled: () => {
-      qc.clear();
-      location.assign("/login");
-    },
-  });
   return (
     <Section title="Account" description={`Signed in as ${me.username}.`}>
-      <form
-        className="space-y-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setDone(false);
-          change.mutate();
-        }}
+      <Link
+        to="/account"
+        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium hover:bg-surface-2"
       >
-        <input type="text" autoComplete="username" value={me.username} readOnly hidden />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Current password" htmlFor="cur-pw">
-            <Input id="cur-pw" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-          </Field>
-          <Field label="New password" htmlFor="new-pw" hint="At least 10 characters. Other browsers will be signed out.">
-            <Input id="new-pw" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-          </Field>
-        </div>
-        <ErrorText error={change.error} />
-        {done && <p className="text-sm text-ok" role="status">Password changed.</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={!current || next.length < 10 || change.isPending}>
-            Change password
-          </Button>
-          <Button type="button" variant="ghost" onClick={() => logout.mutate()}>
-            <LogOut className="size-4" aria-hidden /> Sign out
-          </Button>
-        </div>
-      </form>
+        <UserRound className="size-4" aria-hidden /> Manage username and password
+      </Link>
     </Section>
   );
 }

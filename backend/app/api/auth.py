@@ -62,6 +62,7 @@ def _check_password(v: str) -> str:
 class SetupStatus(BaseModel):
     needs_setup: bool
     version: str
+    release_url: str | None = None
 
 
 class SetupRequest(BaseModel):
@@ -92,6 +93,11 @@ class ChangePasswordRequest(BaseModel):
         return _check_password(v)
 
 
+class ChangeUsernameRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
+    current_password: str = Field(min_length=1, max_length=256)
+
+
 class Me(BaseModel):
     username: str
     home_name: str
@@ -101,7 +107,12 @@ class Me(BaseModel):
 async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
     from app.config import APP_VERSION
 
-    return SetupStatus(needs_setup=not await app_settings.setup_complete(db), version=APP_VERSION)
+    template = get_settings().release_notes_url
+    return SetupStatus(
+        needs_setup=not await app_settings.setup_complete(db),
+        version=APP_VERSION,
+        release_url=template.replace("{version}", APP_VERSION) if template else None,
+    )
 
 
 @router.post("/setup", response_model=Me, dependencies=[Depends(require_requested_with)])
@@ -198,6 +209,27 @@ async def change_password(
     await db.commit()
     response.status_code = 204
     return response
+
+
+@router.put("/auth/username", response_model=Me)
+async def change_username(
+    body: ChangeUsernameRequest,
+    ctx: AuthContext = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> Me:
+    if not verify_password(ctx.user.password_hash, body.current_password):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
+    taken = (
+        await db.execute(select(User.id).where(User.username == body.username, User.id != ctx.user.id))
+    ).first()
+    if taken:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That username is already in use")
+    user = await db.get(User, ctx.user.id)
+    user.username = body.username
+    db.add(AuditEvent(kind="auth.username_changed", detail={}))
+    await db.commit()
+    inst = await app_settings.get_installation(db)
+    return Me(username=user.username, home_name=inst.home_name)
 
 
 _DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
