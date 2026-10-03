@@ -20,6 +20,8 @@ Usage: meshcore-home <command>
   backup         Back up the database now
   https          Set up HTTPS (nginx + Let's Encrypt via Cloudflare DNS); --disable to remove
   security-updates   Turn on Debian's automatic OS security updates
+  radio-hat [remove [--purge] | restart | logs [-f]]
+                 Set up (or remove) the RAK6421 radio HAT on a Raspberry Pi 4/5
   uninstall      Remove the application (add --purge to delete all data)
   version        Print the installed version
 USAGE
@@ -42,6 +44,15 @@ case "$cmd" in
     if [[ ${1:-} == --disable ]]; then exec bash "$INSTALLER" --https-disable; fi
     exec bash "$INSTALLER" --https "$@" ;;
   security-updates) need_root "$cmd" "$@"; exec bash "$INSTALLER" --security-updates ;;
+  radio-hat)
+    need_root "$cmd" "$@"
+    case "${1:-setup}" in
+      setup) exec bash "$INSTALLER" --radio-hat ;;
+      remove) shift; exec bash "$INSTALLER" --radio-hat --remove "$@" ;;
+      restart) systemctl restart meshcore-home-radio && systemctl --no-pager status meshcore-home-radio | head -n 5 ;;
+      logs) shift; exec journalctl -u meshcore-home-radio --no-pager -n 200 "$@" ;;
+      *) usage; exit 2 ;;
+    esac ;;
   setup-token)
     need_root "$cmd" "$@"
     if [[ -f $STATE_DIR/setup-token ]]; then cat "$STATE_DIR/setup-token"; else echo "Setup has already been completed (no token)."; fi ;;

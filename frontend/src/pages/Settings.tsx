@@ -17,6 +17,7 @@ import { playChime, type SoundSetting } from "../lib/sound";
 import { useUpdateInfo } from "../lib/queries";
 import { NetworkSection } from "../components/NetworkSettings";
 import { ApiKeysSection } from "../components/ApiKeys";
+import { RadioHatPanel, useRadioHat } from "../components/RadioHat";
 import { api, type Device, type MapConfig, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
@@ -102,6 +103,7 @@ function RadioSection() {
   const qc = useQueryClient();
   const status = useStatus();
   const cfg = useQuery({ queryKey: ["radio-settings"], queryFn: () => api<RadioConfig>("/api/settings/radio") });
+  const hat = useRadioHat();
   const [mode, setMode] = useState<RadioMode>("none");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("5000");
@@ -149,6 +151,9 @@ function RadioSection() {
       host.trim() !== cfg.data.host ||
       Number(port) !== cfg.data.port ||
       Number(interval) !== cfg.data.sim_interval_seconds);
+  // The HAT option is offered on a Raspberry Pi 4/5 native install (or when it is already chosen).
+  const offerHat = !!hat.data?.board || cfg.data?.mode === "hat";
+  const hatUsable = hat.data && ["ready", "stopped", "needs_reboot"].includes(hat.data.phase);
 
   return (
     <Section
@@ -179,11 +184,12 @@ function RadioSection() {
 
       <fieldset className="space-y-2">
         <legend className="mb-1 text-sm font-medium">Mode</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className={cx("grid gap-2", offerHat ? "sm:grid-cols-2" : "sm:grid-cols-3")}>
           {(
             [
               ["simulated", "Simulated", "Sample traffic, no hardware"],
               ["tcp", "MeshCore TCP", "Ethernet companion radio"],
+              ...(offerHat ? [["hat", "Radio HAT on this Pi", "RAK6421 LoRa HAT, run by MeshCore Home"]] : []),
               ["none", "None", "No radio connection"],
             ] as [RadioMode, string, string][]
           ).map(([m, title, sub]) => (
@@ -238,6 +244,11 @@ function RadioSection() {
         </div>
       )}
 
+      {mode === "hat" && <RadioHatPanel connected={r?.state === "connected"} />}
+      {mode === "hat" && cfg.data?.mode !== "hat" && hat.data && !hatUsable && (
+        <p className="text-xs text-muted">Set up the radio HAT first, then select Save and reconnect.</p>
+      )}
+
       {mode === "simulated" && (
         <Field label="Average seconds between simulated messages" htmlFor="sim-interval" hint="0 turns off automatic traffic.">
           <Input
@@ -252,7 +263,11 @@ function RadioSection() {
 
       <ErrorText error={save.error ?? pause.error ?? simulate.error ?? test.error} />
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+        <Button
+          variant="primary"
+          onClick={() => save.mutate()}
+          disabled={!dirty || save.isPending || (mode === "hat" && cfg.data?.mode !== "hat" && !hatUsable)}
+        >
           {save.isPending ? "Saving…" : "Save and reconnect"}
         </Button>
         {cfg.data && cfg.data.mode !== "none" && (

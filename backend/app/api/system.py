@@ -2,6 +2,7 @@
 
 import re
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -12,7 +13,7 @@ from app.config import APP_VERSION, get_settings
 from app.db import get_db
 from app.models import AuditEvent
 from app.security import RateLimiter
-from app.services import system_config, updates
+from app.services import radio_hat, system_config, updates
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -211,3 +212,45 @@ async def network_status(ctx: AuthContext = Depends(require_auth)):
         "certificate": system_config.certificate(),
         "in_progress": system_config.in_progress(),
     }
+
+
+# ---- radio HAT (native Raspberry Pi installs) ------------------------------------------------
+
+
+class RadioHatAction(BaseModel):
+    # install: download and set up ZephCore; remove: uninstall it (the radio's identity is kept);
+    # restart: restart the radio service; reboot: restart the Pi (needed once after SPI is enabled).
+    action: Literal["install", "remove", "restart", "reboot"]
+
+
+@router.get("/radio-hat")
+async def radio_hat_info(ctx: AuthContext = Depends(require_auth)):
+    data = await radio_hat.info()
+    data["request_pending"] = radio_hat.native() and system_config.in_progress()
+    data["helper_status"] = system_config.status() if radio_hat.native() else None
+    return data
+
+
+@router.post("/radio-hat", status_code=202)
+async def radio_hat_action(
+    body: RadioHatAction, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
+):
+    if not radio_hat.native():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "The radio HAT is available on Raspberry Pi installs only"
+        )
+    if system_config.in_progress():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Another system change is in progress; try again shortly"
+        )
+    info = await radio_hat.info()
+    if body.action == "install" and not info["available"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, info["unavailable_reason"] or "The radio HAT is not available"
+        )
+    if body.action in ("remove", "restart") and not info["service"].get("installed"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "The radio HAT software is not set up")
+    system_config.write_request({"action": f"hat-{body.action}" if body.action != "reboot" else "reboot"})
+    db.add(AuditEvent(kind=f"radio_hat.{body.action}", detail={}))
+    await db.commit()
+    return {"accepted": True}

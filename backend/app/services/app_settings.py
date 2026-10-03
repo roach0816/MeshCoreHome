@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AppSetting, User, utcnow
 
-RadioMode = Literal["simulated", "tcp", "none"]
+# "hat": the radio HAT on this Pi (ZephCore on 127.0.0.1:5000, managed by the native installer).
+RadioMode = Literal["simulated", "tcp", "hat", "none"]
 
 
 class RadioConfig(BaseModel):

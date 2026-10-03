@@ -14,7 +14,7 @@ from app.db import get_db
 from app.models import AuditEvent, Channel, CollectionGap, Contact, Message, Radio
 from app.radio.supervisor import supervisor
 from app.realtime import hub
-from app.services import app_settings
+from app.services import app_settings, radio_hat
 
 router = APIRouter(prefix="/api", tags=["radio"])
 
@@ -110,6 +110,11 @@ async def put_radio_settings(
     )
     if cfg.mode == "tcp" and not cfg.host:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Enter the radio's IP address or hostname")
+    if cfg.mode == "hat" and not radio_hat.native():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "The radio HAT is available on Raspberry Pi installs made with install.sh",
+        )
     await app_settings.put_radio_config(db, cfg)
     db.add(AuditEvent(kind="radio.settings_changed", detail={"mode": cfg.mode}))
     await db.commit()

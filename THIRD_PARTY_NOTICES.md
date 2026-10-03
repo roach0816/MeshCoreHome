@@ -15,9 +15,19 @@ this repository. The main ones are listed below. Full license texts ship with ea
 | Tailwind CSS | MIT |
 | lucide-react | ISC |
 | Leaflet | BSD-2-Clause |
+| uqr (QR code generation), jsQR (QR code scanning) | MIT / Apache-2.0 |
+| unicode-emoji-json (emoji data, compacted at build time) | MIT |
 
 Map data shown by default is © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors,
 available under the Open Database License. Tiles are fetched at runtime and are not distributed with
 this project.
 
 No third-party source code is copied into this repository (see `docs/upstream-reuse.md`).
+
+## Downloaded at install time (native Raspberry Pi installs, optional)
+
+When you set up the **radio HAT**, the installer downloads a prebuilt
+[ZephCore](https://github.com/liquidraver/ZephCore) binary (MIT licence; it includes Monocypher,
+BSD-2-Clause OR CC0-1.0, and is built on Zephyr RTOS, Apache-2.0) from its GitHub releases. It is
+not distributed with MeshCore Home; the exact version and SHA-256 checksums are pinned in
+`deploy/native/zephcore.lock`.

@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.2**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.7.3**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -495,6 +495,7 @@ Nodes with an advertised position, and the gateway itself, for drawing a map.
 | `GET /api/radio/config` | The connected node's configuration: identity, LoRa parameters, channels (names and key *types*, never keys), behaviour and telemetry. `409` if the radio is offline. |
 | `GET /api/radio/channels/hashtag-key?name=%23hikers` | The key of a public `#hashtag` channel, derived from its name: `{"name", "hex", "base64"}`. |
 | `GET /api/system/update` | Installed version and whether an update is available. |
+| `GET /api/system/radio-hat` | Raspberry Pi installs: the optional radio HAT (RAK6421 run by ZephCore): `phase` (`absent`, `installing`, `needs_reboot`, `ready`, `stopped`, …), `available`, Pi `model`, `installed_version`, and the service state. |
 
 `PUT /api/settings/notifications` and `PUT /api/settings/map` are **write** and take the same
 shape they return.
@@ -504,7 +505,7 @@ shape they return.
 `/api/auth/*` (except `GET /api/auth/me`, which returns `{"username", "home_name"}`),
 `/api/api-keys`, `/api/setup`, `POST`/`PUT` under `/api/system/*`, `PUT /api/settings/radio`,
 `/api/radio/pause`, `/api/radio/resume`, `/api/radio/test-connection`,
-`/api/radio/simulate-incoming`, `DELETE /api/simulated-data`, and every `PUT`/`POST`/`DELETE`
+`/api/radio/simulate-incoming`, `DELETE /api/simulated-data`, `POST /api/system/radio-hat`, and every `PUT`/`POST`/`DELETE`
 under `/api/radio/config`, `/api/radio/channels`, `/api/radio/custom-vars` and `/api/radio/actions`.
 
 ## 6. Realtime events (WebSocket)

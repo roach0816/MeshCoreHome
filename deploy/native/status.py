@@ -338,8 +338,17 @@ def check_radio(r: Report, snap: dict | None) -> None:
     radio, cfg = snap.get("radio") or {}, snap.get("radio_config") or {}
     mode, state = cfg.get("mode") or radio.get("mode"), radio.get("state", "?")
     host, port = cfg.get("host") or "", cfg.get("port") or 5000
-    target = f"{host}:{port}" if host else "no address set"
-    name = radio.get("radio_name") or "the gateway"
+    if mode == "hat":
+        host, port = (
+            "",
+            5000,
+        )  # 127.0.0.1:5000; checked in the Radio HAT section instead of probed
+        target = "radio HAT on 127.0.0.1:5000"
+    else:
+        target = f"{host}:{port}" if host else "no address set"
+    name = radio.get("radio_name") or (
+        "the radio HAT" if mode == "hat" else "the gateway"
+    )
 
     if radio.get("storage_warning"):
         r.row(
@@ -367,7 +376,11 @@ def check_radio(r: Report, snap: dict | None) -> None:
         r.row(
             OK,
             "Connection",
-            f"connected to {name} at {target}"
+            (
+                f"connected to {name} ({target})"
+                if mode == "hat"
+                else f"connected to {name} at {target}"
+            )
             + (f" for {duration(time.time() - since)}" if since else ""),
         )
     elif state == "paused":
@@ -414,6 +427,12 @@ def check_radio(r: Report, snap: dict | None) -> None:
             "Connection",
             f"not connected ({state}): {detail}{extra} · reconnects {radio.get('reconnects', 0)}",
         )
+        if mode == "hat":
+            r.row(
+                INFO,
+                "Radio HAT",
+                "see the Radio HAT section below for the radio service and SPI",
+            )
         if host:
             # Only probe while disconnected: a companion radio may serve one client at a time.
             reachable, why = tcp_reachable(host, int(port))
@@ -462,6 +481,164 @@ def check_radio(r: Report, snap: dict | None) -> None:
             if n == 0
             else f"{n} gap(s) in the last 24 h (now collecting)",
         )
+
+
+HAT_SERVICE = "meshcore-home-radio"
+HAT_DIR = "/opt/meshcore-home-radio"
+
+
+def check_radio_hat(r: Report, snap: dict | None) -> None:
+    """Only shown when the radio HAT is set up or selected."""
+    mode = ((snap or {}).get("radio_config") or {}).get("mode")
+    unit = systemd(
+        HAT_SERVICE,
+        "LoadState",
+        "ActiveState",
+        "SubState",
+        "NRestarts",
+        "ConditionResult",
+        "ActiveEnterTimestampMonotonic",
+        "IPAddressDeny",
+    )
+    installed = unit.get("LoadState") not in (None, "", "not-found")
+    if not installed and mode != "hat":
+        return
+    r.section("Radio HAT")
+    st = read_json(f"{STATE_DIR}/radio-hat.json") or {}
+    model = ""
+    try:
+        model = read_text("/proc/device-tree/model").replace("\0", "").strip()
+    except OSError:
+        pass
+    product = ""
+    try:
+        product = read_text("/proc/device-tree/hat/product").replace("\0", "").strip()
+    except OSError:
+        pass
+    r.row(
+        INFO,
+        "Hardware",
+        f"{model or 'unknown computer'} · HAT: {product or 'not reported'}",
+    )
+    if model and not product:
+        r.row(
+            WARN,
+            "HAT identity",
+            "the Pi did not report a HAT at boot",
+            "Check that the RAK6421 is seated on all 40 pins, with the radio in IO slot 1 and the antenna attached.",
+        )
+    if not installed:
+        r.row(
+            BAD,
+            "Software",
+            "the radio HAT is selected but its software is not set up",
+            "Set it up: sudo meshcore-home radio-hat (or Settings → Radio connection).",
+        )
+        return
+
+    current = ""
+    try:
+        current = os.path.basename(
+            os.path.realpath(f"{HAT_DIR}/zephcore")
+        ).removeprefix("zephcore-")
+    except OSError:
+        pass
+    pinned = st.get("pinned_version")
+    text = f"ZephCore {current or '?'}"
+    if pinned and current and pinned != current:
+        text += f" (this release pins {pinned}: sudo meshcore-home update)"
+    r.row(OK if current else BAD, "Software", text)
+
+    spi = os.path.exists("/dev/spidev0.0")
+    if spi:
+        r.row(OK, "SPI", "/dev/spidev0.0 present")
+    else:
+        r.row(
+            BAD,
+            "SPI",
+            "no SPI device (/dev/spidev0.0)",
+            "SPI is off, or the Pi has not restarted since it was turned on. Restart it: sudo reboot",
+        )
+
+    active = unit.get("ActiveState") == "active" and unit.get("SubState") == "running"
+    restarts = unit.get("NRestarts", "0")
+    try:
+        up = float(read_text("/proc/uptime").split()[0])
+        running_for = up - int(unit.get("ActiveEnterTimestampMonotonic", "0")) / 1e6
+    except (OSError, ValueError):
+        running_for = 0
+    if unit.get("ConditionResult") == "no":
+        r.row(
+            WARN,
+            "Service",
+            "waiting: systemd skipped the start because SPI is not available yet",
+            "Restart the Pi to finish the setup: sudo reboot",
+        )
+    elif active and running_for < 30 and restarts.isdigit() and int(restarts) >= 3:
+        r.row(
+            BAD,
+            "Service",
+            f"restarting repeatedly ({restarts} restarts)",
+            "The radio software keeps stopping; its errors are listed below. Logs: sudo meshcore-home radio-hat logs",
+        )
+    elif active:
+        r.row(
+            OK, "Service", f"running for {duration(running_for)} · restarts {restarts}"
+        )
+    else:
+        r.row(
+            BAD,
+            "Service",
+            f"not running: {unit.get('ActiveState', '?')} ({unit.get('SubState', '?')})",
+            "Restart it: sudo meshcore-home radio-hat restart — logs: sudo meshcore-home radio-hat logs",
+        )
+
+    _, listen = run("ss", "-Hltn", "sport = :5000")
+    if active:
+        if listen:
+            limited = "0.0.0.0/0" in unit.get("IPAddressDeny", "") or "any" in unit.get(
+                "IPAddressDeny", ""
+            )
+            r.row(
+                OK if limited else WARN,
+                "Companion port",
+                "listening on 5000 · this Pi only"
+                if limited
+                else "listening on 5000, open to the network",
+                None
+                if limited
+                else "Other devices could connect to the radio: reinstall it with sudo meshcore-home radio-hat",
+            )
+        else:
+            r.row(
+                WARN,
+                "Companion port",
+                "the service runs but port 5000 is not listening yet",
+            )
+
+    _, out = run(
+        "journalctl",
+        "-u",
+        HAT_SERVICE,
+        "--since",
+        "24 hours ago",
+        "--no-pager",
+        "-o",
+        "cat",
+        timeout=15,
+    )
+    errors: dict[str, int] = {}
+    for line in out.splitlines():
+        if "<err>" in line or "Failed with result" in line:
+            msg = re.sub(r"^\[[^]]*\]\s*", "", line).replace("<err> ", "").strip()
+            errors[msg] = errors.get(msg, 0) + 1
+    if errors:
+        r.text(f"  {MARK[INFO]} radio errors in the last 24 h (most recent):")
+        for msg, n in list(errors.items())[-5:]:
+            text = msg + (f" (×{n})" if n > 1 else "")
+            r.text(
+                "      " + (text if len(text) <= WIDTH - 6 else text[: WIDTH - 7] + "…")
+            )
 
 
 def check_database(r: Report, snap: dict | None) -> None:
@@ -817,6 +994,7 @@ def main() -> int:
     )
     check_app(r, env, snap)
     check_radio(r, snap)
+    check_radio_hat(r, snap)
     check_database(r, snap)
     check_https(r, env)
     check_updates(r, snap)

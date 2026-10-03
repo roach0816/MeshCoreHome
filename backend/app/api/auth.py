@@ -30,7 +30,7 @@ from app.security import (
     setup_failures,
     verify_password,
 )
-from app.services import app_settings
+from app.services import app_settings, radio_hat
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -86,6 +86,8 @@ class SetupStatus(BaseModel):
     needs_setup: bool
     version: str
     release_url: str | None = None
+    # The installer set up a radio HAT on this Pi, so the wizard can offer it.
+    radio_hat_ready: bool = False
 
 
 class SetupRequest(BaseModel):
@@ -131,10 +133,15 @@ async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
     from app.config import APP_VERSION
 
     template = get_settings().release_notes_url
+    needs_setup = not await app_settings.setup_complete(db)
+    hat_ready = False
+    if needs_setup and radio_hat.native():
+        hat_ready = (await radio_hat.service_state()).get("installed", False)
     return SetupStatus(
-        needs_setup=not await app_settings.setup_complete(db),
+        needs_setup=needs_setup,
         version=APP_VERSION,
         release_url=template.replace("{version}", APP_VERSION) if template else None,
+        radio_hat_ready=hat_ready,
     )
 
 
@@ -155,6 +162,8 @@ async def run_setup(
         )
     if body.radio.mode == "tcp" and not body.radio.host:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Enter the radio's IP address or hostname")
+    if body.radio.mode == "hat" and not radio_hat.native():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "There is no radio HAT on this install")
 
     user = User(username=body.username, password_hash=hash_password(body.password))
     db.add(user)

@@ -46,7 +46,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
 
 // ---- types (mirror backend schemas) ---------------------------------------------------
 
-export type RadioMode = "simulated" | "tcp" | "none";
+export type RadioMode = "simulated" | "tcp" | "hat" | "none";
 
 export interface RadioConfig {
   mode: RadioMode;
@@ -262,6 +262,26 @@ export interface SetupStatus {
   needs_setup: boolean;
   version: string;
   release_url: string | null;
+  radio_hat_ready?: boolean;
+}
+
+export interface RadioHatInfo {
+  available: boolean;
+  unavailable_reason: string | null;
+  phase: "absent" | "checking" | "installing" | "rebooting" | "needs_reboot" | "ready" | "stopped";
+  model: string | null;
+  board: "pi4" | "pi5" | null;
+  hat_product: string | null;
+  spi_device: boolean;
+  service: { installed?: boolean; active?: boolean; state?: string; restarts?: number | null; condition_met?: boolean };
+  installed_version: string | null;
+  pinned_version: string | null;
+  last_message: string | null;
+  last_state: string | null;
+  updated_at: number | null;
+  host: string;
+  port: number;
+  request_pending: boolean;
 }
 
 export type ChannelKeyKind = "none" | "public" | "hashtag" | "private";

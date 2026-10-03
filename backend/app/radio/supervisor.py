@@ -25,7 +25,7 @@ from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioErr
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
-from app.services import app_settings, messaging
+from app.services import app_settings, messaging, radio_hat
 from app.services.messaging import States
 
 log = logging.getLogger(__name__)
@@ -199,7 +199,10 @@ class RadioSupervisor:
                 disconnected.set()
 
             adapter.on_disconnect = _on_disconnect
-            target = "simulated radio" if cfg.mode == "simulated" else f"{cfg.host}:{cfg.port}"
+            target = {
+                "simulated": "simulated radio",
+                "hat": f"the radio HAT ({radio_hat.HOST}:{radio_hat.PORT})",
+            }.get(cfg.mode, f"{cfg.host}:{cfg.port}")
             self._set("connecting", f"Connecting to {target}", is_simulated=cfg.mode == "simulated")
             await asyncio.wait_for(adapter.connect(), COMMAND_TIMEOUT)
             self._adapter = adapter
@@ -266,6 +269,8 @@ class RadioSupervisor:
     def _build_adapter(self, cfg: app_settings.RadioConfig) -> RadioAdapter:
         if cfg.mode == "simulated":
             return SimulatedRadio(interval_seconds=cfg.sim_interval_seconds)
+        if cfg.mode == "hat":
+            return MeshCoreTcpRadio(radio_hat.HOST, radio_hat.PORT)
         return MeshCoreTcpRadio(cfg.host, cfg.port)
 
     async def _cmd(self, coro_fn, *args, timeout: float = COMMAND_TIMEOUT):

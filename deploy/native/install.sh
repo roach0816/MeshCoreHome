@@ -20,6 +20,9 @@
 #                        Cloudflare DNS validation (also offered at the end of a fresh install)
 #     --https-disable    remove the HTTPS front end and serve plain HTTP again
 #     --security-updates turn on Debian's automatic security updates (unattended-upgrades)
+#     --radio-hat        set up the RAK6421 radio HAT on a Raspberry Pi 4/5 (ZephCore); with
+#                        --remove [--purge] remove it again
+#     --radio-hat-sync   after an upgrade, update the radio HAT software (run by the installer)
 #     --apply-config     apply network/HTTPS settings requested from the web UI (run by
 #                        meshcore-home-config.service, never by hand)
 #     --sync-units       install helper systemd units shipped with the running release (run as
@@ -59,7 +62,7 @@ API_URL="${MESHCORE_HOME_API:-https://api.github.com}"
 DOWNLOAD_BASE="${MESHCORE_HOME_DOWNLOAD_BASE:-}"
 
 # ---- arguments -----------------------------------------------------------------------------
-WANT_VERSION="" FROM_FILE="" PORT="" PLAIN=0 ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
+WANT_VERSION="" FROM_FILE="" PORT="" PLAIN=0 HAT_REMOVE=0 ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
 HTTPS_HOST="${MESHCORE_HOME_HTTPS_HOST:-}" HTTPS_EMAIL="${MESHCORE_HOME_HTTPS_EMAIL:-}"
 while (($#)); do
   case "$1" in
@@ -75,10 +78,13 @@ while (($#)); do
     --https-disable) MODE=https-disable ;;
     --https-host) HTTPS_HOST="${2:?--https-host needs a value}"; shift ;;
     --security-updates) MODE=security-updates ;;
+    --radio-hat) MODE=radio-hat ;;
+    --remove) HAT_REMOVE=1 ;;
+    --radio-hat-sync) MODE=radio-hat-sync; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --apply-config) MODE=apply-config; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --sync-units) MODE=sync-units; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,33p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,36p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -155,8 +161,9 @@ activity() {  # activity TEXT [PERCENT] — what is happening now (shown above t
   ACTIVITY=$1 ACT_PCT=${2:--1} ACT_SINCE=$SECONDS
   tui_draw
 }
-step_note() { STEP_NOTE[STEP - 1]=$1; tui_draw; }  # short result shown beside the current step
+step_note() { ((STEP > 0)) || return 0; STEP_NOTE[STEP - 1]=$1; tui_draw; }  # short result beside the current step
 step_skip() {  # step_skip [NOTE] — mark the current step as skipped
+  ((STEP > 0)) || return 0
   STEP_STATE[STEP - 1]=skipped
   [[ -z ${1:-} ]] || STEP_NOTE[STEP - 1]=$1
   tui_draw
@@ -892,6 +899,7 @@ install_release() {
     -r "$dest/requirements.txt"
   run "Precompiling" "$dest/venv/bin/python" -m compileall -q "$dest/app" "$dest/migrations"
   chmod 755 "$dest/deploy/native/install.sh" "$dest/deploy/native/meshcore-home" "$dest/deploy/native/tls-hook"
+  if [[ -f $dest/deploy/native/radio-hat-run ]]; then chmod 755 "$dest/deploy/native/radio-hat-run"; fi
   ok "v$TARGET_VERSION installed to $dest"
   step_note "v$TARGET_VERSION"
 }
@@ -1046,9 +1054,11 @@ uninstall() {
   [[ -f $NGINX_SITE || -L /etc/nginx/sites-enabled/meshcore-home ]] && nginx=1
   local -a titles=("Review what will be removed" "Stop and remove the services" "Remove the application files")
   ((nginx)) && titles+=("Remove the HTTPS site")
+  local hat=0
+  [[ -f $HAT_UNIT ]] && hat=1 && titles+=("Remove the radio HAT software")
   ((PURGE)) && titles+=("Delete the database and data")
   if ((PURGE)); then tui_start "Uninstall (including all data)"; else tui_start "Uninstall"; fi
-  STEP_WEIGHTS=(1 3 3 1 3)
+  STEP_WEIGHTS=(1 3 3 1 1 3)
   banner
   plan "${titles[@]}"
 
@@ -1058,6 +1068,7 @@ uninstall() {
   note "  • The $SERVICE services and the $CLI_LINK command"
   note "  • The application files in $PREFIX"
   ((nginx)) && note "  • The nginx HTTPS site for $(env_get HTTPS_HOST) (nginx itself stays installed)"
+  ((hat)) && note "  • The radio HAT software (ZephCore) and its service$( ((PURGE)) && echo ", including the radio's identity" || echo "; the radio's identity in $HAT_DATA is kept")"
   if ((PURGE)); then
     note "  • ${R}The database $DB_NAME (all message history), $CONF_DIR and $STATE_DIR${N}"
     note "  • The system user $APP_USER"
@@ -1085,6 +1096,10 @@ uninstall() {
     rm -f /etc/nginx/sites-enabled/meshcore-home "${NGINX_SITE:?}"
     run_bg "Reloading nginx" systemctl reload nginx || true
     ok "HTTPS site removed"
+  fi
+  if ((hat)); then
+    step
+    hat_remove "$PURGE"
   fi
   if ((PURGE)); then
     step
@@ -1495,7 +1510,7 @@ def flag(k, default):
     v = r.get(k, default)
     return "1" if v in (True, 1, "1") else "0"
 action = s("action", "apply")
-if action not in ("apply", "renew", "refresh"):
+if action not in ("apply", "renew", "refresh", "hat-install", "hat-remove", "hat-restart", "reboot"):
     action = "invalid"
 token = s("cf_token")
 if token and not re.fullmatch(r"[A-Za-z0-9_\-]{20,200}", token):
@@ -1518,6 +1533,24 @@ PY
   STATUS_FILE=$CONFIG_STATUS
   case "${ACTION:-invalid}" in
     refresh) write_network_snapshot; return 0 ;;
+    hat-install)
+      status applying "Setting up the radio HAT"
+      if hat_install; then status "done" "Radio HAT set up"; else status failed "Radio HAT not set up"; return 1; fi ;;
+    hat-remove)
+      status applying "Removing the radio HAT software"
+      hat_lock || true
+      hat_remove 0; status "done" "Radio HAT software removed" ;;
+    hat-restart)
+      status applying "Restarting the radio"
+      hat_lock || true
+      systemctl restart "$HAT_SERVICE" >>"$LOG_FILE" 2>&1 || true
+      if hat_wait_ready 30; then hat_status ready "Restarted"; status "done" "Radio restarted"
+      else hat_status failed "The radio service did not start"; status failed "The radio service did not start"; return 1; fi ;;
+    reboot)
+      log "restarting the Pi (requested from the web UI)"
+      hat_status rebooting "Restarting the Pi"
+      status "done" "Restarting the Pi"
+      systemctl reboot ;;
     renew)
       if ! https_enabled; then status failed "HTTPS is not enabled"; return 1; fi
       status certificate "Renewing the certificate for $(env_get HTTPS_HOST)"
@@ -1558,6 +1591,305 @@ sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartP
   done
   write_network_snapshot
   return 0
+}
+
+# ---- optional radio HAT (RAK6421 + RAK13300) driven by ZephCore --------------------------------
+# ZephCore is a port of the MeshCore firmware that runs as a Linux program: it drives the SX1262 on
+# the HAT over SPI and serves the MeshCore companion protocol on TCP port 5000, where MeshCore Home
+# connects ("Radio HAT on this Pi"). It runs as its own unprivileged service that only this Pi can
+# reach. The radio's settings, contacts and channels are managed from MeshCore Home.
+HAT_DIR=/opt/meshcore-home-radio
+HAT_DATA=/var/lib/meshcore-home-radio
+HAT_USER=meshcore-radio
+HAT_SERVICE=meshcore-home-radio
+HAT_UNIT=$UNIT_DIR/$HAT_SERVICE.service
+HAT_UDEV_RULE=/etc/udev/rules.d/90-meshcore-home-radio.rules
+HAT_STATUS=$STATE_DIR/radio-hat.json
+HAT_SPIDEV=/dev/spidev0.0
+HAT_PROBLEM=""
+
+override() {  # override NAME — a test/mirror override from the environment or the root-owned env file
+  local v=${!1:-}
+  [[ -n $v ]] || v=$(env_get "$1")
+  printf '%s' "$v"
+}
+
+hat_src() {  # the release directory that holds the radio HAT files being installed
+  local d
+  for d in ${TARGET_VERSION:+"$PREFIX/releases/$TARGET_VERSION/deploy/native"} "$PREFIX/current/deploy/native"; do
+    [[ -f $d/zephcore.lock ]] && { printf '%s' "$d"; return 0; }
+  done
+  return 1
+}
+
+hat_lock() {  # load the pinned ZephCore release (ZEPHCORE_*) from the release being installed
+  local d; d=$(hat_src) || return 1
+  # shellcheck disable=SC1091
+  . "$d/zephcore.lock"
+}
+
+pi_model() {
+  local m; m=$(override MESHCORE_HOME_PI_MODEL)
+  [[ -n $m || ! -r /proc/device-tree/model ]] || m=$(tr -d '\0' </proc/device-tree/model)
+  printf '%s' "$m"
+}
+
+hat_board() {  # pi4 | pi5 | nothing when the HAT is not supported on this computer
+  case "$(pi_model)" in
+    *"Raspberry Pi 5"* | *"Compute Module 5"*) echo pi5 ;;  # also matches the Pi 500
+    *"Raspberry Pi 4"* | *"Compute Module 4"*) echo pi4 ;;  # also matches the Pi 400
+  esac
+}
+
+hat_product() {  # the HAT's EEPROM identity, if the Pi firmware found one
+  local p="" v=""
+  [[ -r /proc/device-tree/hat/product ]] && p=$(tr -d '\0' </proc/device-tree/hat/product)
+  [[ -r /proc/device-tree/hat/vendor ]] && v=$(tr -d '\0' </proc/device-tree/hat/vendor)
+  if [[ -n $p ]]; then printf '%s%s' "$p" "${v:+ ($v)}"; fi
+}
+
+glibc_version() { getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}'; }
+version_ge() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]; }  # version_ge A B: A >= B
+
+boot_config() {
+  local f; f=$(override MESHCORE_HOME_BOOT_CONFIG)
+  if [[ -n $f ]]; then printf '%s' "$f"; return; fi
+  for f in /boot/firmware/config.txt /boot/config.txt; do
+    if [[ -f $f ]]; then printf '%s' "$f"; return; fi
+  done
+}
+
+spi_configured() { local f; f=$(boot_config); [[ -n $f && -f $f ]] && grep -qE '^[[:space:]]*dtparam=spi=on' "$f"; }
+
+meshtastic_present() {
+  [[ -x /usr/bin/meshtasticd || -x /usr/sbin/meshtasticd ]] && return 0
+  [[ $(systemctl list-unit-files meshtasticd.service --no-legend 2>/dev/null) == *meshtasticd* ]]
+}
+
+hat_test_mode() { [[ -n $(override MESHCORE_HOME_HAT_TEST) ]]; }  # containers: no SPI device or HAT EEPROM
+
+hat_installed_version() {
+  local t; t=$(readlink -f "$HAT_DIR/zephcore" 2>/dev/null || true)
+  [[ -n $t && -f $t ]] && basename "$t" | sed 's/^zephcore-//'
+}
+
+hat_listening() { [[ -n $(ss -Hltn "sport = :${ZEPHCORE_PORT:-5000}" 2>/dev/null) ]]; }
+
+hat_status() {  # hat_status STATE MESSAGE — facts and progress for the web UI (world-readable, no secrets)
+  [[ -d $STATE_DIR ]] || return 0
+  python3 - "$HAT_STATUS" "$1" "$2" "${ZEPHCORE_VERSION:-}" "$(hat_installed_version)" "$(hat_board)" \
+    "$(pi_model)" "$(hat_product)" "$(glibc_version)" "$(boot_config)" <<'PY' || true
+import json, os, sys, time
+path, state, message, pinned, installed, board, model, product, glibc, bootcfg = sys.argv[1:11]
+data = {
+    "state": state, "message": message, "pinned_version": pinned or None,
+    "installed_version": installed or None, "board": board or None, "model": model or None,
+    "hat_product": product or None, "glibc": glibc or None, "boot_config": bootcfg or None,
+    "updated_at": time.time(),
+}
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f)
+os.chmod(tmp, 0o644)
+os.replace(tmp, path)
+PY
+}
+
+hat_check() {  # sets HAT_PROBLEM and returns 1 if the radio HAT software cannot run here
+  HAT_PROBLEM=""
+  hat_lock || { HAT_PROBLEM="This release does not include the radio HAT files"; return 1; }
+  if [[ $(uname -m) != aarch64 ]]; then
+    HAT_PROBLEM="The radio HAT needs 64-bit Raspberry Pi OS (found $(uname -m))"; return 1
+  fi
+  if [[ -z $(hat_board) ]]; then
+    local model; model=$(pi_model)
+    HAT_PROBLEM="The RAK6421 radio HAT works on a Raspberry Pi 4 or 5 (this computer: ${model:-not a Raspberry Pi})"
+    return 1
+  fi
+  local g; g=$(glibc_version)
+  if ! version_ge "${g:-0}" "$ZEPHCORE_MIN_GLIBC"; then
+    HAT_PROBLEM="The radio software (ZephCore) needs Raspberry Pi OS 13 \"Trixie\" or Debian 13 (glibc $ZEPHCORE_MIN_GLIBC or newer); this system has glibc ${g:-unknown}. Re-image the SD card with the current 64-bit Raspberry Pi OS, then install MeshCore Home again."
+    return 1
+  fi
+  if meshtastic_present; then
+    HAT_PROBLEM="Meshtastic (meshtasticd) is installed and would take over the radio. Remove it first: sudo apt remove meshtasticd"
+    return 1
+  fi
+}
+
+hat_download() {  # hat_download — fetch and verify the pinned ZephCore build into $HAT_DIR; returns 1 on failure
+  local board asset sha base tmp
+  board=$(hat_board)
+  if [[ $board == pi5 ]]; then asset=$ZEPHCORE_PI5_ASSET sha=$ZEPHCORE_PI5_SHA256; else asset=$ZEPHCORE_PI4_ASSET sha=$ZEPHCORE_PI4_SHA256; fi
+  base=$(override MESHCORE_HOME_ZEPHCORE_BASE); base=${base:-$ZEPHCORE_BASE_URL}
+  tmp=$(mktemp)
+  if ! run_bg "Downloading ZephCore $ZEPHCORE_VERSION" curl -fsSL --retry 3 -o "$tmp" "$base/$asset"; then
+    rm -f "$tmp"; HAT_PROBLEM="Could not download $base/$asset (check internet access)"; return 1
+  fi
+  if [[ $(sha256sum "$tmp" | cut -d' ' -f1) != "$sha" ]]; then
+    rm -f "$tmp"; HAT_PROBLEM="The ZephCore download failed its SHA-256 check, so it was not installed"; return 1
+  fi
+  install -d -m 755 "$HAT_DIR"
+  install -m 755 "$tmp" "$HAT_DIR/zephcore-$ZEPHCORE_VERSION"
+  rm -f "$tmp"
+  ok "Downloaded and verified ZephCore $ZEPHCORE_VERSION ($board build)"
+}
+
+hat_activate_binary() {  # point $HAT_DIR/zephcore at version $1
+  ln -sfn "zephcore-$1" "$HAT_DIR/zephcore.new" && mv -T "$HAT_DIR/zephcore.new" "$HAT_DIR/zephcore"
+}
+
+hat_install_files() {  # the start script and unit from the release (also refreshed on upgrades)
+  local src; src=$(hat_src) || return 1
+  install -m 755 "$src/radio-hat-run" "$HAT_DIR/run"
+  install -m 644 "$src/systemd/$HAT_SERVICE.service" "$HAT_UNIT"
+  if hat_test_mode; then
+    # Testing in a container: no SPI device, so start without it (the radio itself stays absent).
+    install -d -m 755 "$HAT_UNIT.d"
+    printf '[Unit]\nConditionPathExists=\n' >"$HAT_UNIT.d/test.conf"
+  fi
+  systemctl daemon-reload
+}
+
+hat_wait_ready() {  # hat_wait_ready SECONDS — the companion port is listening (no connection is made)
+  local end=$((SECONDS + $1))
+  while ((SECONDS < end)); do
+    hat_listening && return 0
+    sleep 1
+  done
+  return 1
+}
+
+hat_install() {  # interactive or web-UI setup; returns 1 (without exiting) if the HAT was not set up
+  hat_status checking "Checking this Raspberry Pi"
+  if ! hat_check; then
+    warn "$HAT_PROBLEM"; hat_status unsupported "$HAT_PROBLEM"; return 1
+  fi
+  local bootcfg product
+  bootcfg=$(boot_config); product=$(hat_product)
+  ((TUI_ON)) || printf '\n'
+  note "${B}Radio HAT${N} on this $(pi_model)${product:+ · detected: $product}"
+  [[ -n $product ]] || hat_test_mode ||
+    note "${Y}The Pi did not report a HAT.${N} Check that the RAK6421 is seated, with the radio module in IO slot 1 and the antenna attached."
+  note "${B}These changes will be made:${N}"
+  note "  • Download ZephCore $ZEPHCORE_VERSION (MeshCore for Linux, MIT licence, about 5 MB) from GitHub, check its SHA-256 and install it in $HAT_DIR"
+  spi_configured || note "  • Turn on SPI in ${bootcfg:-the boot configuration} (dtparam=spi=on); the Pi needs ${B}one restart${N} afterwards"
+  note "  • Create the system user $HAT_USER, allowed to use the SPI and GPIO devices and nothing else"
+  note "  • Install the service $HAT_SERVICE: starts at boot, restarts if it stops, and only this Pi can connect to it (port $ZEPHCORE_PORT)"
+  note "  • Keep the radio's identity, contacts and channels in $HAT_DATA"
+  note "${Y}ZephCore starts on 869.618 MHz, the EU/UK frequency.${N} Before using it, set your region's frequency in MeshCore Home → Settings → Node settings."
+  ask_yn "Set up the radio HAT?" y || { info "Skipped. Set it up later with: sudo meshcore-home radio-hat"; hat_status absent "Not set up"; return 1; }
+
+  hat_status installing "Downloading ZephCore $ZEPHCORE_VERSION"
+  if ! hat_download; then warn "$HAT_PROBLEM"; hat_status failed "$HAT_PROBLEM"; return 1; fi
+  hat_activate_binary "$ZEPHCORE_VERSION"
+
+  hat_status installing "Setting up the radio service"
+  getent group spi >/dev/null || groupadd --system spi
+  getent group gpio >/dev/null || groupadd --system gpio
+  if ! id "$HAT_USER" >/dev/null 2>&1; then
+    useradd --system --user-group --no-create-home --home-dir "$HAT_DATA" --shell /usr/sbin/nologin "$HAT_USER"
+  fi
+  usermod -aG spi,gpio "$HAT_USER"
+  install -d -m 750 -o "$HAT_USER" -g "$HAT_USER" "$HAT_DATA"
+  install -d -m 755 "$(dirname "$HAT_UDEV_RULE")"
+  cat >"$HAT_UDEV_RULE" <<'RULE'
+# MeshCore Home radio HAT: the "spi" and "gpio" groups may use the radio's SPI bus and GPIO lines.
+KERNEL=="spidev*", GROUP="spi", MODE="0660"
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+RULE
+  if command -v udevadm >/dev/null; then
+    udevadm control --reload-rules >>"$LOG_FILE" 2>&1 || true
+    udevadm trigger --subsystem-match=spidev --subsystem-match=gpio >>"$LOG_FILE" 2>&1 || true
+  fi
+  ok "System user $HAT_USER with access to SPI and GPIO"
+
+  if ! spi_configured; then
+    if [[ -z $bootcfg ]]; then
+      warn "No boot configuration file found: turn on SPI with raspi-config (Interface Options → SPI)"
+    else
+      cp -p "$bootcfg" "$bootcfg.meshcore-home.bak"
+      printf '\n# Added by MeshCore Home for the radio HAT (SPI bus for the LoRa module)\n[all]\ndtparam=spi=on\n' >>"$bootcfg"
+      ok "Turned on SPI in $bootcfg (previous version saved as $bootcfg.meshcore-home.bak)"
+    fi
+  fi
+
+  hat_install_files || { hat_status failed "Radio HAT files are missing from this release"; return 1; }
+  systemctl enable "$HAT_SERVICE" >>"$LOG_FILE" 2>&1
+  if [[ ! -e $HAT_SPIDEV ]] && ! hat_test_mode; then
+    hat_status needs_reboot "Restart the Pi to finish: SPI was just turned on. The radio starts automatically afterwards."
+    warn "Restart the Pi to finish setting up the radio HAT (SPI was just turned on): sudo reboot"
+    step_note "ZephCore $ZEPHCORE_VERSION · restart the Pi to finish"
+    return 0
+  fi
+  run_bg "Starting the radio" systemctl restart "$HAT_SERVICE" || true
+  if hat_wait_ready 30; then
+    ok "The radio HAT is running (MeshCore companion on 127.0.0.1:$ZEPHCORE_PORT)"
+    step_note "ZephCore $ZEPHCORE_VERSION · running"
+    hat_status ready "Running"
+    return 0
+  fi
+  journalctl -u "$HAT_SERVICE" -n 30 --no-pager >>"$LOG_FILE" 2>&1 || true
+  warn "The radio service did not start; see: sudo meshcore-home radio-hat logs"
+  hat_status failed "The radio service did not start. Details: sudo meshcore-home radio-hat logs"
+  return 1
+}
+
+hat_remove() {  # hat_remove PURGE(0/1) — remove the radio HAT software; PURGE also deletes the radio's identity
+  systemctl disable --now "$HAT_SERVICE" >>"$LOG_FILE" 2>&1 || true
+  rm -f "$HAT_UNIT"
+  rm -rf "${HAT_UNIT:?}.d" "${HAT_DIR:?}"
+  rm -f "${HAT_UDEV_RULE:?}"
+  systemctl daemon-reload
+  if (($1)); then
+    rm -rf "${HAT_DATA:?}"
+    userdel "$HAT_USER" >>"$LOG_FILE" 2>&1 || true
+    ok "Radio HAT software and the radio's identity removed"
+  else
+    ok "Radio HAT software removed (the radio's identity is kept in $HAT_DATA)"
+  fi
+  hat_status absent "Not set up"
+}
+
+hat_sync() {  # --radio-hat-sync: after an upgrade, bring an installed HAT to this release's pinned ZephCore
+  [[ -f $HAT_UNIT ]] || return 0
+  hat_lock || return 0
+  local cur; cur=$(hat_installed_version)
+  hat_install_files || return 0
+  if [[ $cur == "$ZEPHCORE_VERSION" ]]; then
+    if [[ -e $HAT_SPIDEV ]] || hat_test_mode; then systemctl try-restart "$HAT_SERVICE" >>"$LOG_FILE" 2>&1 || true; fi
+    hat_status "$( (systemctl is-active --quiet "$HAT_SERVICE") && echo ready || echo installed)" "ZephCore $cur"
+    return 0
+  fi
+  log "radio HAT: ZephCore ${cur:-none} -> $ZEPHCORE_VERSION"
+  if ! hat_check; then hat_status failed "Could not update ZephCore: $HAT_PROBLEM"; return 1; fi
+  if ! hat_download; then hat_status failed "Could not update ZephCore: $HAT_PROBLEM"; return 1; fi
+  hat_activate_binary "$ZEPHCORE_VERSION"
+  if [[ ! -e $HAT_SPIDEV ]] && ! hat_test_mode; then hat_status needs_reboot "Restart the Pi to start the radio"; return 0; fi
+  systemctl restart "$HAT_SERVICE" >>"$LOG_FILE" 2>&1 || true
+  if hat_wait_ready 30; then
+    [[ -n $cur && $cur != "$ZEPHCORE_VERSION" ]] && rm -f "$HAT_DIR/zephcore-$cur"
+    hat_status ready "Updated to ZephCore $ZEPHCORE_VERSION"
+    return 0
+  fi
+  if [[ -n $cur && -f $HAT_DIR/zephcore-$cur ]]; then  # roll back to the version that worked
+    hat_activate_binary "$cur"
+    systemctl restart "$HAT_SERVICE" >>"$LOG_FILE" 2>&1 || true
+    rm -f "$HAT_DIR/zephcore-$ZEPHCORE_VERSION"
+    hat_status ready "ZephCore $ZEPHCORE_VERSION did not start; kept $cur"
+  else
+    hat_status failed "ZephCore $ZEPHCORE_VERSION did not start"
+  fi
+  return 1
+}
+
+radio_hat_after_upgrade() {  # run the new release's HAT sync (an older installer cannot know its files)
+  [[ -f $HAT_UNIT ]] || return 0
+  if bash "$PREFIX/current/deploy/native/install.sh" --radio-hat-sync >>"$LOG_FILE" 2>&1; then
+    ok "Radio HAT software is up to date"
+  else
+    warn "The radio HAT software was not updated (the previous version keeps running); see $LOG_FILE"
+  fi
 }
 
 # ---- optional automatic OS security updates (Debian's unattended-upgrades) -------------------
@@ -1625,6 +1957,33 @@ main() {
     apply_config_request || exit 1
     return 0
   fi
+  if [[ $MODE == radio-hat-sync ]]; then hat_sync; return; fi
+  if [[ $MODE == radio-hat ]]; then
+    [[ -n $(installed_version) ]] || die "$APP_NAME is not installed"
+    TARGET_VERSION=$(installed_version)
+    if ((HAT_REMOVE)); then
+      [[ -f $HAT_UNIT ]] || { ok "The radio HAT is not set up"; return 0; }
+      tui_start "Radio HAT"; plan "Remove the radio HAT software"; step
+      note "${B}This will remove${N} the radio HAT service and ZephCore$( ((PURGE)) && echo ", and delete the radio's identity, contacts and channels" || echo "; the radio's identity is kept in $HAT_DATA")."
+      note "SPI stays turned on. Switch MeshCore Home to another radio in Settings → Radio connection."
+      confirm "Remove the radio HAT software?"
+      hat_lock || true
+      hat_remove "$PURGE"; steps_done; tui_end
+      return
+    fi
+    tui_start "Radio HAT"
+    banner
+    plan "Set up the radio HAT"; step
+    if hat_install; then
+      steps_done; tui_end
+      printf '\n  %s✓ Radio HAT set up.%s In MeshCore Home choose %sSettings → Radio connection → Radio HAT on this Pi%s.\n' "$G" "$N" "$B" "$N"
+      [[ -e $HAT_SPIDEV ]] || hat_test_mode || printf '  %sRestart the Pi first (SPI was just turned on): sudo reboot%s\n' "$Y" "$N"
+      printf '\n'
+    else
+      step_skip "Not set up"; tui_end; exit 1
+    fi
+    return
+  fi
   if [[ $MODE == security-updates ]]; then
     tui_start "Security updates"
     plan "Automatic security updates"; step
@@ -1672,16 +2031,20 @@ main() {
     step; fetch_package
     step; install_release
     step; activate; prune_releases
+    radio_hat_after_upgrade
     finish
     return
   fi
 
   tui_start "Installer"
   banner
-  STEP_WEIGHTS=(3 1 20 1 6 40 4 12 7 6)
-  plan "Check this system" "Choose the version" "System packages" "Review system changes" \
-    "Download and verify" "Install the app" "Set up the database" "Start the service" "HTTPS (optional)" \
-    "Automatic security updates (optional)"
+  local -a titles=("Check this system" "Choose the version" "System packages" "Review system changes"
+    "Download and verify" "Install the app" "Set up the database" "Start the service")
+  STEP_WEIGHTS=(3 1 20 1 6 40 4 12)
+  local offer_hat=0
+  if [[ -n $(hat_board) ]]; then offer_hat=1; titles+=("Radio HAT (optional)"); STEP_WEIGHTS+=(8); fi
+  titles+=("HTTPS (optional)" "Automatic security updates (optional)"); STEP_WEIGHTS+=(7 6)
+  plan "${titles[@]}"
   step; preflight
   step; choose_version
   step; install_packages
@@ -1690,6 +2053,19 @@ main() {
   step; ensure_user_and_dirs; install_release
   step; ensure_database; write_env
   step; activate; prune_releases
+  if ((offer_hat)); then
+    step
+    local product; product=$(hat_product)
+    if [[ -n $product ]]; then
+      note "A HAT was detected: ${B}$product${N}."
+      if ask_yn "Set up the radio HAT (RAK6421) as this Pi's MeshCore radio?" y; then hat_install || step_skip "Not set up"; else step_skip "Skipped"; fi
+    elif ask_yn "Set up a RAK6421 radio HAT on this Pi? (no HAT was detected)" n; then
+      hat_install || step_skip "Not set up"
+    else
+      info "Skipped. Set it up later with: sudo meshcore-home radio-hat"
+      step_skip "Skipped"
+    fi
+  fi
   step
   if [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain on Cloudflare)" n; then
     https_setup || step_skip "Not set up"

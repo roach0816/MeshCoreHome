@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Check, FlaskConical, KeyRound, Radio, RadioTower, UserRound, WifiOff } from "lucide-react";
+import { Check, Cpu, FlaskConical, KeyRound, Radio, RadioTower, UserRound, WifiOff } from "lucide-react";
 import { api, type Me, type RadioMode } from "../lib/api";
 import { Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { cx } from "../lib/util";
+import { useSetupStatus } from "../lib/queries";
 
 const STEPS = [
   { title: "Verify", icon: KeyRound },
@@ -12,6 +13,13 @@ const STEPS = [
   { title: "Radio", icon: RadioTower },
   { title: "Review", icon: Check },
 ];
+
+const HAT_MODE = {
+  mode: "hat" as RadioMode,
+  title: "Radio HAT on this Pi",
+  body: "The RAK6421 LoRa HAT that the installer set up on this Raspberry Pi.",
+  icon: Cpu,
+};
 
 const MODES: { mode: RadioMode; title: string; body: string; icon: typeof Radio }[] = [
   {
@@ -47,6 +55,13 @@ export function SetupWizard() {
   const [host, setHost] = useState("");
   const [port, setPort] = useState("5000");
   const [touched, setTouched] = useState(false);
+  const setupStatus = useSetupStatus();
+  const hatReady = !!setupStatus.data?.radio_hat_ready;
+  const modes = hatReady ? [HAT_MODE, ...MODES] : MODES;
+  // The installer already set up a radio HAT: offer it first.
+  useEffect(() => {
+    if (hatReady) setMode("hat");
+  }, [hatReady]);
 
   const pwError =
     password.length > 0 && password.length < 10
@@ -209,7 +224,7 @@ export function SetupWizard() {
                 </div>
                 <fieldset className="space-y-2">
                   <legend className="sr-only">Radio mode</legend>
-                  {MODES.map((m) => (
+                  {modes.map((m) => (
                     <label
                       key={m.mode}
                       className={cx(
@@ -269,7 +284,7 @@ export function SetupWizard() {
                       "Radio",
                       mode === "tcp"
                         ? `MeshCore companion at ${host.trim()}:${portNum}`
-                        : MODES.find((m) => m.mode === mode)!.title,
+                        : modes.find((m) => m.mode === mode)!.title,
                     ],
                   ].map(([k, v]) => (
                     <div key={k} className="flex justify-between gap-4 px-3 py-2.5">
