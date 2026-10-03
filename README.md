@@ -117,6 +117,8 @@ The installer is a step-by-step wizard with progress bars:
    no password.
 8. **Start the service** and show the address to open and the **first-run setup token**.
 9. **HTTPS (optional):** see [HTTPS on the Pi](#https-on-the-pi).
+10. **Automatic security updates (optional, recommended):** turns on Debian's `unattended-upgrades`
+    so OS security fixes install daily. It never upgrades MeshCore Home itself.
 
 Answering **n** at any prompt cancels the installation. Re-running the installer is safe: it picks
 up where a failed attempt stopped, and repairs a broken install.
@@ -133,6 +135,7 @@ Manage it with the `meshcore-home` command:
 ```text
 meshcore-home status         version, service state, web address
 sudo meshcore-home https     set up HTTPS (or `https --disable` to go back to plain HTTP)
+sudo meshcore-home security-updates   turn on automatic OS security updates
 meshcore-home logs [-f]      application log
 sudo meshcore-home update    upgrade to the latest release (same wizard, with a database backup)
 sudo meshcore-home backup    back up the database now

@@ -20,6 +20,7 @@ Usage: meshcore-home <command>
   setup-token    Show the first-run setup token (until setup is completed)
   backup         Back up the database now
   https          Set up HTTPS (nginx + Let's Encrypt via Cloudflare DNS); --disable to remove
+  security-updates   Turn on Debian's automatic OS security updates
   uninstall      Remove the application (add --purge to delete all data)
   version        Print the installed version
 USAGE
@@ -44,6 +45,7 @@ case "$cmd" in
     need_root "$cmd" "$@"
     if [[ ${1:-} == --disable ]]; then exec bash "$INSTALLER" --https-disable; fi
     exec bash "$INSTALLER" --https "$@" ;;
+  security-updates) need_root "$cmd" "$@"; exec bash "$INSTALLER" --security-updates ;;
   setup-token)
     need_root "$cmd" "$@"
     if [[ -f $STATE_DIR/setup-token ]]; then cat "$STATE_DIR/setup-token"; else echo "Setup has already been completed (no token)."; fi ;;

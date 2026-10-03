@@ -14,12 +14,12 @@ jobs:
   native-package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tag must match APP_VERSION
         run: |
           v=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' backend/app/config.py)
           test "v$v" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME != APP_VERSION $v"; exit 1; }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -28,7 +28,7 @@ jobs:
         working-directory: frontend
       - name: Build package
         run: bash deploy/native/build-release.sh dist-release
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - name: Smoke-test the package installs its Python dependencies on arm64 (Raspberry Pi)
         run: |
           docker run --rm --platform linux/arm64 -v "$PWD/dist-release:/r:ro" python:3.11-slim-bookworm bash -c '

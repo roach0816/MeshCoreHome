@@ -18,6 +18,7 @@
 #     --https            set up (or redo) HTTPS on an existing install: nginx + Let's Encrypt via
 #                        Cloudflare DNS validation (also offered at the end of a fresh install)
 #     --https-disable    remove the HTTPS front end and serve plain HTTP again
+#     --security-updates turn on Debian's automatic security updates (unattended-upgrades)
 #
 # Everything the script changes is listed on screen and confirmed first. Answering "n" to any
 # confirmation cancels the installation.
@@ -67,8 +68,9 @@ while (($#)); do
     --https) MODE=https ;;
     --https-disable) MODE=https-disable ;;
     --https-host) HTTPS_HOST="${2:?--https-host needs a value}"; shift ;;
+    --security-updates) MODE=security-updates ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -270,7 +272,7 @@ latest_version() {  # parsed with sed so it works before python3 is installed
 missing_packages() {  # missing_packages PKG... — prints those not installed
   local p
   for p in "$@"; do
-    dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null | grep -qx installed || printf '%s\n' "$p"
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null || true)" == installed ]] || printf '%s\n' "$p"
   done
 }
 
@@ -823,7 +825,7 @@ server {
 }
 NGINX
   # nginx before 1.25 (Debian 12) has no "http2 on;" directive: use the older listen flag.
-  if ! nginx -v 2>&1 | grep -qE 'nginx/1\.(2[5-9]|[3-9][0-9])'; then
+  if ! grep -qE 'nginx/1\.(2[5-9]|[3-9][0-9])' <<<"$(nginx -v 2>&1)"; then
     sed -i -e '/^    http2 on;$/d' -e 's/listen 443 ssl;/listen 443 ssl http2;/' \
       -e 's/listen \[::\]:443 ssl;/listen [::]:443 ssl http2;/' "$NGINX_SITE"
   fi
@@ -869,6 +871,38 @@ https_disable() {
   ok "HTTPS disabled — $APP_NAME is on http://$(lan_addresses | head -n1):$port"
 }
 
+# ---- optional automatic OS security updates (Debian's unattended-upgrades) -------------------
+security_updates_enabled() {
+  # Here-strings, not pipes into `grep -q`: with pipefail, grep exiting early makes a long
+  # producer (apt-config dump) die of SIGPIPE and the check would wrongly fail.
+  local status conf
+  status=$(dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null || true)
+  conf=$(apt-config dump 2>/dev/null || true)
+  [[ $status == installed ]] && grep -q '^APT::Periodic::Unattended-Upgrade "1";' <<<"$conf"
+}
+
+security_updates_setup() {  # returns 1 if skipped; never cancels the installer
+  if security_updates_enabled; then ok "Automatic security updates are already enabled"; return 0; fi
+  printf '\n  Debian can install %ssecurity updates%s for the operating system automatically\n' "$B" "$N"
+  printf '  (unattended-upgrades) — recommended for an always-on Pi. It only applies security fixes from\n'
+  printf '  your OS repositories; it never upgrades %s itself (you choose when to do that).\n' "$APP_NAME"
+  ask_yn "Enable automatic security updates?" y || { info "Skipped. Enable later with: sudo meshcore-home security-updates"; return 1; }
+  local missing; mapfile -t missing < <(missing_packages unattended-upgrades)
+  if ((${#missing[@]})); then
+    apt_review_install "Install this package?" skip "${missing[@]}" ||
+      { info "Skipped. Enable later with: sudo meshcore-home security-updates"; return 1; }
+  fi
+  # Debian's documented way to switch it on (writes /etc/apt/apt.conf.d/20auto-upgrades).
+  echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections
+  run "Enabling automatic security updates" env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive unattended-upgrades
+  if security_updates_enabled; then
+    ok "Security updates will be installed automatically (daily, via apt-daily-upgrade.timer)"
+  else
+    warn "unattended-upgrades is installed but not enabled; see $LOG_FILE"
+    return 1
+  fi
+}
+
 read_request() {  # web-UI upgrade: take the version from the request file written by the app
   local req="$STATE_DIR/update-request.json"
   [[ -f $req ]] || { log "no update request; nothing to do"; exit 0; }
@@ -891,6 +925,10 @@ main() {
   log "---- $APP_NAME installer started (args: mode=${MODE:-auto}) ----"
 
   if [[ $MODE == uninstall ]]; then uninstall; return; fi
+  if [[ $MODE == security-updates ]]; then
+    security_updates_setup || exit 1
+    return
+  fi
   if [[ $MODE == https || $MODE == https-disable ]]; then
     [[ -n $(installed_version) ]] || die "$APP_NAME is not installed"
     TARGET_VERSION=$(installed_version)
@@ -929,7 +967,8 @@ main() {
 
   banner
   plan "Check this system" "Choose the version" "System packages" "Review system changes" \
-    "Download and verify" "Install the app" "Set up the database" "Start the service" "HTTPS (optional)"
+    "Download and verify" "Install the app" "Set up the database" "Start the service" "HTTPS (optional)" \
+    "Automatic security updates (optional)"
   step; preflight
   step; choose_version
   step; install_packages
@@ -944,6 +983,7 @@ main() {
   else
     info "Skipped. You can add it later with: sudo meshcore-home https"
   fi
+  step; security_updates_setup || true
   finish
 }
 
