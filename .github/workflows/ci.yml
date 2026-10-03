@@ -58,9 +58,18 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck the native installer and tools
+        run: |
+          docker run --rm -v "$PWD:/w:ro" koalaman/shellcheck:stable -S warning \
+            /w/deploy/native/install.sh /w/deploy/native/meshcore-home /w/deploy/native/build-release.sh
+
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, installer]
     permissions:
       contents: read
       packages: write

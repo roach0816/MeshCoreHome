@@ -292,3 +292,25 @@ export interface NodeConfig {
   max_channels: number;
   custom_vars: Record<string, string> | null;
 }
+
+export type UpdateState = "queued" | "downloading" | "installing" | "migrating" | "restarting" | "done" | "failed" | "rolled_back";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  version: string;
+  message: string;
+  log_tail?: string[];
+  updated_at: number;
+}
+
+export interface UpdateInfo {
+  current_version: string;
+  install_kind: "native" | "container";
+  checks_enabled: boolean;
+  checked_at: number | null;
+  error: string | null;
+  latest: { version: string; url: string; notes: string; published_at: string | null; has_native_package: boolean } | null;
+  update_available: boolean;
+  can_install: boolean;
+  status: UpdateStatus | null;
+}

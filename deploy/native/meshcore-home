@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# meshcore-home — manage a native MeshCore Home install.
+set -euo pipefail
+PREFIX=/opt/meshcore-home
+ENV_FILE=/etc/meshcore-home/meshcore-home.env
+STATE_DIR=/var/lib/meshcore-home
+SERVICE=meshcore-home
+INSTALLER=$PREFIX/current/deploy/native/install.sh
+
+need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"; }
+
+usage() {
+  cat <<USAGE
+Usage: meshcore-home <command>
+
+  status         Show version, service state and web address
+  logs [-f]      Show (or follow) the application log
+  update         Upgrade to the latest release (interactive)
+  restart        Restart the application
+  setup-token    Show the first-run setup token (until setup is completed)
+  backup         Back up the database now
+  uninstall      Remove the application (add --purge to delete all data)
+  version        Print the installed version
+USAGE
+}
+
+cmd=${1:-status}; shift || true
+case "$cmd" in
+  version) cat "$PREFIX/current/VERSION" ;;
+  status)
+    v=$(cat "$PREFIX/current/VERSION" 2>/dev/null || echo "?")
+    state=$(systemctl is-active "$SERVICE" 2>/dev/null || true)
+    port=$(sed -n 's/^PORT=//p' "$ENV_FILE" 2>/dev/null | tail -n1); port=${port:-8080}
+    echo "MeshCore Home v$v — service: $state"
+    for ip in $(hostname -I 2>/dev/null); do [[ $ip == *.* ]] && echo "  http://$ip:$port"; done
+    if st=$(cat "$STATE_DIR/update-status.json" 2>/dev/null); then echo "  last update: $st" | cut -c1-160; fi
+    ;;
+  logs) exec journalctl -u "$SERVICE" --no-pager -n 200 "$@" ;;
+  restart) need_root "$cmd" "$@"; systemctl restart "$SERVICE"; systemctl --no-pager status "$SERVICE" | head -n 5 ;;
+  update|upgrade) need_root "$cmd" "$@"; exec bash "$INSTALLER" --upgrade "$@" ;;
+  uninstall) need_root "$cmd" "$@"; cp "$INSTALLER" /tmp/meshcore-home-uninstall.sh; exec bash /tmp/meshcore-home-uninstall.sh --uninstall "$@" ;;
+  setup-token)
+    need_root "$cmd" "$@"
+    if [[ -f $STATE_DIR/setup-token ]]; then cat "$STATE_DIR/setup-token"; else echo "Setup has already been completed (no token)."; fi ;;
+  backup)
+    need_root "$cmd" "$@"
+    f="$STATE_DIR/backups/manual-$(date +%Y%m%dT%H%M%S).dump"
+    runuser -u meshcore -- pg_dump -Fc -f "$f" meshcore && echo "Backup written to $f" ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

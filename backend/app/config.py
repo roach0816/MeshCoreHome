@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.6.0"
 
 
 class Settings(BaseSettings):
@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     release_notes_url: str = Field(
         default="https://github.com/roach0816/MeshCoreHome/releases/tag/v{version}", alias="RELEASE_NOTES_URL"
     )
+
+    # ---- updates / native install ----------------------------------------------------------
+    # "native" (Debian/Raspberry Pi install via deploy/native/install.sh) enables in-place
+    # upgrades from the web UI; "container" (Docker/Kubernetes) only reports new versions.
+    install_kind: Literal["native", "container"] = Field(default="container", alias="MESHCORE_INSTALL_KIND")
+    # Writable state directory for a native install (update requests/status, setup token file).
+    state_dir: str = Field(default="", alias="MESHCORE_STATE_DIR")
+    # GitHub "owner/repo" whose releases are checked for updates. Empty disables update checks.
+    update_repo: str = Field(default="roach0816/MeshCoreHome", alias="UPDATE_REPO")
+    update_api_url: str = Field(default="https://api.github.com", alias="UPDATE_API_URL")
 
     # Directory holding the built frontend. Empty disables static serving (dev uses the Vite server).
     static_dir: str = Field(default="app/static", alias="STATIC_DIR")

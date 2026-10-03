@@ -13,6 +13,7 @@ direct messages from any browser that can reach it.
 
 - [Features](#features)
 - [Compatible radio gateways](#compatible-radio-gateways)
+- [Install on a Raspberry Pi or Debian](#install-on-a-raspberry-pi-or-debian)
 - [Quick start with Docker Compose](#quick-start-with-docker-compose)
 - [Deploying on K3s with Rancher Continuous Delivery](#deploying-on-k3s-with-rancher-continuous-delivery)
 - [Connecting a MeshCore TCP gateway](#connecting-a-meshcore-tcp-gateway)
@@ -90,6 +91,67 @@ over a TCP socket (port `5000` by default).
 **The gateway has its own identity.** It has its own MeshCore keys, contacts, and channels. Direct
 messages reach this inbox only if they are addressed to the gateway's identity. Channel messages
 appear if the gateway has the same channel configured (same name and key) and can hear the traffic.
+
+## Install on a Raspberry Pi or Debian
+
+A native install runs directly on the OS (no Docker), with its own local PostgreSQL. It works on a
+**Raspberry Pi 4 or 5** with **Raspberry Pi OS (64-bit)**, or any 64-bit **Debian 12 (bookworm)** or
+**Debian 13 (trixie)** system. 32-bit Raspberry Pi OS is not supported.
+
+```bash
+curl -fsSLo install.sh https://github.com/roach0816/MeshCoreHome/releases/latest/download/install.sh
+sudo bash install.sh
+```
+
+The installer is a step-by-step wizard with progress bars:
+
+1. **Check this system:** OS, 64-bit CPU, systemd, memory, disk space, and internet access.
+2. **Choose the version:** the latest release.
+3. **System packages:** lists exactly which apt packages it will install, with versions,
+   descriptions, and download size, then asks **Install these packages? [Y/n]**.
+4. **Review system changes:** asks for the port (default 8080), lists every change it will make
+   (system user, directories, database, services, port), then asks **Make these changes? [Y/n]**.
+5. **Download and verify** the release package (SHA-256 checksum).
+6. **Install the app** into its own Python environment (prebuilt packages, no compiling).
+7. **Set up the database:** a local PostgreSQL database, reached as the app's OS user, so there's
+   no password.
+8. **Start the service** and show the address to open and the **first-run setup token**.
+
+Answering **n** at any prompt cancels the installation. Re-running the installer is safe: it picks
+up where a failed attempt stopped, and repairs a broken install.
+
+| Where | What |
+| --- | --- |
+| `/opt/meshcore-home/releases/<version>` | The app. `current` points at the active version; the previous one is kept for rollback |
+| `/etc/meshcore-home/meshcore-home.env` | Configuration (port, database URL), readable only by root and the app |
+| `/var/lib/meshcore-home` | Update status, setup token, and database backups |
+| `meshcore-home.service` | Runs as the unprivileged `meshcore` user, with the rest of the system read-only to it |
+
+Manage it with the `meshcore-home` command:
+
+```text
+meshcore-home status         version, service state, web address
+meshcore-home logs [-f]      application log
+sudo meshcore-home update    upgrade to the latest release (same wizard, with a database backup)
+sudo meshcore-home backup    back up the database now
+sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
+```
+
+### Updates
+
+The app checks this repository's GitHub Releases for new versions every few hours. When one is
+available, the version under your name in the sidebar changes to **Update to vX.Y.Z**, and
+**Settings → Software updates** shows the release notes with an **Install** button. Installing:
+
+1. downloads the release and verifies its checksum;
+2. backs up the database;
+3. installs the new version next to the current one and restarts the app (about a minute offline);
+4. **rolls back automatically** if the new version doesn't start.
+
+The web app itself never gets root access. It only asks for an update by writing the requested
+version number to a file. A root-owned systemd unit (`meshcore-home-update`) then double-checks it
+against the official releases before installing anything. A container install (Docker or
+Kubernetes) also shows when an update is available, but is updated by redeploying.
 
 ## Quick start with Docker Compose
 
@@ -384,6 +446,9 @@ Settings, and stored in the database.
 | `COOKIE_SECURE` | `auto` / `true` / `false` | `auto` |
 | `SESSION_DAYS` | Sign-in lifetime | `30` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
+| `MESHCORE_INSTALL_KIND` | `native` enables in-place upgrades from the UI (set by the installer) | `container` |
+| `MESHCORE_STATE_DIR` | Writable state directory for a native install | — |
+| `UPDATE_REPO` | GitHub `owner/repo` checked for new releases; empty disables update checks | this repo |
 | `RELEASE_NOTES_URL` | Where the version number links (`{version}` is substituted); empty for no link | this repo's GitHub releases |
 
 **Map tiles and privacy:** the browser loads map tiles directly from the configured tile server.
@@ -400,7 +465,8 @@ connect to the radio.
 
 The CI workflow (`.github/workflows/ci.yml`) handles forks automatically. On each push to `main` it:
 
-1. Runs the backend tests against PostgreSQL, then lints and builds the frontend.
+1. Runs the backend tests against PostgreSQL, lints and builds the frontend, and shellchecks the
+   installer.
 2. Builds and publishes `ghcr.io/<owner>/<repo>:<commit-sha>` (plus `:latest`) for `linux/amd64`
    and `linux/arm64`.
 3. Commits that image reference into `deploy/k8s/deployment.yaml` as `github-actions[bot]`, with
@@ -410,6 +476,10 @@ To deploy from a fork:
 
 - **Wait for the pin:** push to your fork's `main` and wait for the first `deploy: pin image …`
   commit before adding the fork in Continuous Delivery.
+- **Native releases:** pushing a `vX.Y.Z` tag runs `release-assets.yml`, which attaches
+  `meshcore-home-X.Y.Z.tar.gz`, `install.sh` and `SHA256SUMS` to the GitHub release. Native installs
+  update from those files. Point the installer at your fork with
+  `MESHCORE_HOME_REPO=<owner>/<repo> sudo -E bash install.sh`.
 - **Make the image pullable:** make the GHCR package public (**GitHub → Packages → your package →
   Package settings → Change visibility**), or give the cluster a pull secret:
   ```bash

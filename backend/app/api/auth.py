@@ -49,6 +49,28 @@ class SetupToken:
     @classmethod
     def clear(cls) -> None:
         cls.value = None
+        path = cls._file()
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+    @classmethod
+    def _file(cls):
+        from pathlib import Path
+
+        d = get_settings().state_dir
+        return Path(d) / "setup-token" if d else None
+
+    @classmethod
+    def write_file(cls) -> None:
+        """Native installs: let the installer show the token without digging through logs."""
+        path = cls._file()
+        if path is None or cls.value is None:
+            return
+        try:
+            path.write_text(cls.value + "\n")
+            path.chmod(0o600)
+        except OSError as exc:
+            log.warning("could not write setup token file: %s", exc)
 
 
 def _check_password(v: str) -> str:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for MeshCore Home upgrade requests from the web interface
+
+[Path]
+# Written by the (unprivileged) app when you click "Install update".
+PathChanged=/var/lib/meshcore-home/update-request.json
+Unit=meshcore-home-update.service
+
+[Install]
+WantedBy=multi-user.target

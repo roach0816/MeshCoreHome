@@ -10,13 +10,13 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import db
-from app.api import auth, contacts, inbox, node_map, radio, radio_config
+from app.api import auth, contacts, inbox, node_map, radio, radio_config, system
 from app.api.deps import load_session
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
 from app.security import SESSION_COOKIE
-from app.services import app_settings
+from app.services import app_settings, updates
 
 log = logging.getLogger("meshcore_home")
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
         needs_setup = not await app_settings.setup_complete(s)
     if needs_setup:
         token = auth.SetupToken.ensure()
+        auth.SetupToken.write_file()
         banner = "=" * 64
         log.warning(
             "\n%s\n  MeshCore Home first-run setup\n  Open the web UI and enter this setup token:\n\n      %s\n%s",
@@ -42,12 +43,22 @@ async def lifespan(app: FastAPI):
             banner,
         )
     supervisor.start()
+    update_task = asyncio.create_task(_update_check_loop(), name="update-check")
     try:
         yield
     finally:
+        update_task.cancel()
         await supervisor.stop()
         hub.close_all()
         await db.dispose_engine()
+
+
+async def _update_check_loop() -> None:
+    """Check for new releases shortly after start, then on the checker's own schedule."""
+    await asyncio.sleep(30)
+    while True:
+        await updates.checker.check()
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(
@@ -84,6 +95,7 @@ app.include_router(contacts.router)
 app.include_router(radio.router)
 app.include_router(node_map.router)
 app.include_router(radio_config.router)
+app.include_router(system.router)
 
 
 # ---- health ------------------------------------------------------------------------------

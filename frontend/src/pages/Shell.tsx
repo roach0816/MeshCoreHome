@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Map as MapIcon, MessagesSquare, Settings as SettingsIcon, Users } from "lucide-react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { api, type Me, type Status } from "../lib/api";
-import { useSetupStatus } from "../lib/queries";
+import { useSetupStatus, useUpdateInfo } from "../lib/queries";
 import type { SoundSetting } from "../lib/sound";
 import { useRealtime } from "../lib/realtime";
 import { cx } from "../lib/util";
@@ -18,6 +18,7 @@ const NodeMap = lazy(() => import("./NodeMap").then((m) => ({ default: m.NodeMap
 import { IconButton } from "../components/ui";
 import { Account } from "./Account";
 import { NodeSettings } from "./NodeSettings";
+import { Updates } from "./Updates";
 
 export function useStatus() {
   return useQuery({ queryKey: ["status"], queryFn: () => api<Status>("/api/status"), refetchInterval: 15000 });
@@ -104,6 +105,7 @@ export function Shell({ me }: { me: Me }) {
           <Route path="contacts" element={<Contacts />} />
           <Route path="settings" element={<Settings me={me} />} />
           <Route path="settings/node" element={<NodeSettings />} />
+          <Route path="settings/updates" element={<Updates />} />
           <Route path="account" element={<Account me={me} />} />
           <Route
             path="map"
@@ -124,6 +126,7 @@ export function Shell({ me }: { me: Me }) {
 function UserPanel({ me }: { me: Me }) {
   const qc = useQueryClient();
   const meta = useSetupStatus();
+  const update = useUpdateInfo();
   const { pathname } = useLocation();
   const logout = useMutation({
     mutationFn: () => api("/api/auth/logout", { method: "POST" }),
@@ -158,7 +161,19 @@ function UserPanel({ me }: { me: Me }) {
             {me.username}
           </Link>
           {version &&
-            (meta.data?.release_url ? (
+            (update.data?.update_available && update.data.latest ? (
+              <Link
+                to="/settings/updates"
+                title={`Version ${update.data.latest.version} is available`}
+                className="flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+              >
+                <span className="relative flex size-2" aria-hidden>
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60 motion-reduce:hidden" />
+                  <span className="relative inline-flex size-2 rounded-full bg-accent" />
+                </span>
+                v{version} · Update to v{update.data.latest.version}
+              </Link>
+            ) : meta.data?.release_url ? (
               <a
                 href={meta.data.release_url}
                 target="_blank"

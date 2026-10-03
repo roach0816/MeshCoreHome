@@ -21,6 +21,18 @@
 - Use small resource requests sized for Pi 5 nodes, and probes against real health endpoints
   (`/health/live`, `/health/ready`).
 
+## Native (Debian / Raspberry Pi) install
+- `deploy/native/install.sh` is the installer, upgrader (terminal and web-UI), and uninstaller. It
+  must keep working on Debian 12 (Python 3.11, PostgreSQL 15) and 13 (Python 3.13, PostgreSQL 17),
+  arm64 and amd64. Keep Python code 3.11-compatible (ruff `target-version = "py311"`).
+- Every system-changing step shows what will change and asks Y/n; "n" cancels. Keep that.
+- The web app never gets root: it writes `update-request.json`; the root path unit re-validates
+  the version against official releases and verifies SHA256SUMS. Migrations must stay additive so
+  automatic rollback to the previous release keeps working.
+- Before releasing installer changes, test in systemd-enabled `debian:bookworm` and
+  `debian:trixie` containers: an interactive install (including answering "n"), an unattended
+  `--yes` install, a web-UI upgrade, a broken upgrade (rollback), and `uninstall --purge`.
+
 ## Release workflow
 1. Bump the version: `backend/app/config.py:APP_VERSION`, `backend/pyproject.toml`, and
    `frontend/package.json`.

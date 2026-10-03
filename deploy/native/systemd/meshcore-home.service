@@ -1,0 +1,40 @@
+[Unit]
+Description=MeshCore Home (web inbox for a MeshCore radio)
+Documentation=https://github.com/roach0816/MeshCoreHome
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User=meshcore
+Group=meshcore
+EnvironmentFile=/etc/meshcore-home/meshcore-home.env
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/meshcore-home/current
+# Apply database migrations (serialised by an advisory lock) before starting.
+ExecStartPre=/opt/meshcore-home/current/venv/bin/python -m alembic upgrade head
+# One worker: exactly one process may own the radio connection.
+ExecStart=/opt/meshcore-home/current/venv/bin/python -m uvicorn app.main:app --host ${HOST} --port ${PORT} --workers 1 --proxy-headers --no-server-header
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+
+# Hardening: the app only needs to write its state directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/meshcore-home
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

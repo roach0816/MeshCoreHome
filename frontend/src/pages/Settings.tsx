@@ -14,6 +14,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { playChime, type SoundSetting } from "../lib/sound";
+import { useUpdateInfo } from "../lib/queries";
 import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { radioSummary } from "../components/StatusPill";
@@ -54,6 +55,7 @@ export function Settings({ me }: { me: Me }) {
       </header>
       <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
         <div className="mx-auto max-w-3xl space-y-4">
+          <SoftwareSection />
           <RadioSection />
           <DeviceSection />
           <GapsSection />
@@ -65,6 +67,31 @@ export function Settings({ me }: { me: Me }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function SoftwareSection() {
+  const u = useUpdateInfo();
+  const d = u.data;
+  return (
+    <Section title="Software">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm">
+          MeshCore Home v{d?.current_version ?? "…"}
+          {d?.update_available && d.latest && (
+            <Badge tone="accent" className="ml-2">
+              v{d.latest.version} available
+            </Badge>
+          )}
+        </p>
+        <Link
+          to="/settings/updates"
+          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium hover:bg-surface-2"
+        >
+          <Download className="size-4" aria-hidden /> {d?.update_available ? "Review update" : "Software updates"}
+        </Link>
+      </div>
+    </Section>
   );
 }
 
