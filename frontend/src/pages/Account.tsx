@@ -39,7 +39,7 @@ export function Account({ me }: { me: Me }) {
         </Link>
         <h2 className="flex-1 px-1 py-2 text-base font-semibold">Account</h2>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
+      <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
         <div className="mx-auto max-w-2xl space-y-4">
           <Card className="flex items-center gap-4 p-4 sm:p-5">
             <span

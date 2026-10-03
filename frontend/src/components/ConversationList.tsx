@@ -102,7 +102,7 @@ export function ConversationList() {
       </div>
 
       {actions.element}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1 overflow-y-auto">
         {isPending && <p className="px-4 py-6 text-sm text-muted">Loading conversations…</p>}
         {error && <p className="px-4 py-6 text-sm text-danger">Could not load conversations.</p>}
         {data && list.length === 0 && !q && (

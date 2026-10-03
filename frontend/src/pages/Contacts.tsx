@@ -173,7 +173,7 @@ export function Contacts() {
       </div>
 
       {/* Table */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1 overflow-y-auto">
         <ErrorText error={refresh.error ?? list.error} />
         <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>

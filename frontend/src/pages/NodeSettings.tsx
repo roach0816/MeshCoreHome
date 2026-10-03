@@ -172,7 +172,7 @@ export function NodeSettings() {
           <span className="hidden sm:inline">Reload</span>
         </Button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
+      <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {!connected && c && (
             <div className="rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm" role="status">

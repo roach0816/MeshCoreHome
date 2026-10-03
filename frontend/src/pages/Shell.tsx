@@ -95,7 +95,9 @@ export function Shell({ me }: { me: Me }) {
       </aside>
       <main className={cx("h-full min-w-0 flex-1 overflow-hidden", atRoot && "hidden md:block")}>
         {/* Keyed by path so each page plays a short entrance animation. */}
-        <div key={pathname} className="mc-page-enter h-full">
+        {/* `relative` keeps absolutely positioned descendants (e.g. sr-only labels) inside the
+            page instead of stretching the document and adding a second scrollbar. */}
+        <div key={pathname} className="mc-page-enter relative h-full">
         <Routes>
           <Route index element={<EmptyPane />} />
           <Route path="c/:id" element={<Thread status={status.data} />} />
