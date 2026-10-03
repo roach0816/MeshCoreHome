@@ -6,8 +6,9 @@ ENV_FILE=/etc/meshcore-home/meshcore-home.env
 STATE_DIR=/var/lib/meshcore-home
 cert=$(sed -n 's/^TLS_CERT=//p' "$ENV_FILE" 2>/dev/null | tail -n1)
 host=$(sed -n 's/^HTTPS_HOST=//p' "$ENV_FILE" 2>/dev/null | tail -n1)
+enabled=$(sed -n 's/^HTTPS_ENABLED=//p' "$ENV_FILE" 2>/dev/null | tail -n1)
 systemctl reload nginx 2>/dev/null || true
-[[ -n $cert && -f $cert ]] || exit 0
+[[ $enabled != 0 && -n $cert && -f $cert ]] || exit 0
 not_after=$(openssl x509 -enddate -noout -in "$cert" | cut -d= -f2)
 issuer=$(openssl x509 -issuer -noout -in "$cert" | sed 's/^issuer=//')
 python3 - "$STATE_DIR/tls-status.json" "$host" "$not_after" "$issuer" <<'PY'

@@ -83,25 +83,6 @@ export function Updates() {
                 <dd className="font-medium">v{d.current_version}</dd>
                 <dt className="text-muted">Installed as</dt>
                 <dd>{d.install_kind === "native" ? "Native (Debian / Raspberry Pi)" : "Container (Docker / Kubernetes)"}</dd>
-                {d.install_kind === "native" && (
-                  <>
-                    <dt className="text-muted">HTTPS</dt>
-                    <dd>
-                      {d.tls ? (
-                        <>
-                          {d.tls.host}{" "}
-                          <span className="text-muted">
-                            · certificate valid until {formatDateTime(d.tls.not_after)}, renewed automatically
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-muted">
-                          Not set up (plain HTTP). Add it with <code className="font-mono">sudo meshcore-home https</code>
-                        </span>
-                      )}
-                    </dd>
-                  </>
-                )}
                 <dt className="text-muted">Last checked</dt>
                 <dd>
                   {d.checked_at ? relativeSeconds(d.checked_at) : d.checks_enabled ? "Not yet" : "Update checks are disabled"}

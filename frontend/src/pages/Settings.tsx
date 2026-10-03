@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { playChime, type SoundSetting } from "../lib/sound";
 import { useUpdateInfo } from "../lib/queries";
+import { NetworkSection } from "../components/NetworkSettings";
 import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { radioSummary } from "../components/StatusPill";
@@ -56,6 +57,7 @@ export function Settings({ me }: { me: Me }) {
       <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
         <div className="mx-auto max-w-3xl space-y-4">
           <SoftwareSection />
+          <NetworkSection />
           <RadioSection />
           <DeviceSection />
           <GapsSection />

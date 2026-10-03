@@ -314,5 +314,37 @@ export interface UpdateInfo {
   update_available: boolean;
   can_install: boolean;
   status: UpdateStatus | null;
-  tls: { host: string; not_after: string; issuer?: string } | null;
+}
+
+export interface NetworkSnapshot {
+  app_port: number;
+  bind: string;
+  https_enabled: boolean;
+  hostname: string | null;
+  https_port: number;
+  redirect_http: boolean;
+  email: string | null;
+  staging: boolean;
+  dns_provider: "cloudflare";
+  propagation_seconds: number;
+  token_saved: boolean;
+  https_packages_installed: boolean;
+  auto_renew: boolean;
+  updated_at: number;
+}
+
+export interface NetworkStatus {
+  state: "queued" | "applying" | "installing" | "certificate" | "restarting" | "done" | "failed";
+  message: string;
+  log_tail?: string[];
+  updated_at: number;
+}
+
+export interface NetworkInfo {
+  install_kind: "native" | "container";
+  configurable: boolean;
+  config: NetworkSnapshot | null;
+  certificate: { host: string; not_after: string; issuer?: string } | null;
+  status: NetworkStatus | null;
+  in_progress: boolean;
 }

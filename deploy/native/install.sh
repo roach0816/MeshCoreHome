@@ -19,6 +19,10 @@
 #                        Cloudflare DNS validation (also offered at the end of a fresh install)
 #     --https-disable    remove the HTTPS front end and serve plain HTTP again
 #     --security-updates turn on Debian's automatic security updates (unattended-upgrades)
+#     --apply-config     apply network/HTTPS settings requested from the web UI (run by
+#                        meshcore-home-config.service, never by hand)
+#     --sync-units       install helper systemd units shipped with the running release (run as
+#                        root on every app start)
 #
 # Everything the script changes is listed on screen and confirmed first. Answering "n" to any
 # confirmation cancels the installation.
@@ -54,7 +58,7 @@ API_URL="${MESHCORE_HOME_API:-https://api.github.com}"
 DOWNLOAD_BASE="${MESHCORE_HOME_DOWNLOAD_BASE:-}"
 
 # ---- arguments -----------------------------------------------------------------------------
-WANT_VERSION="" FROM_FILE="" PORT="" ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0
+WANT_VERSION="" FROM_FILE="" PORT="" ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
 HTTPS_HOST="${MESHCORE_HOME_HTTPS_HOST:-}" HTTPS_EMAIL="${MESHCORE_HOME_HTTPS_EMAIL:-}"
 while (($#)); do
   case "$1" in
@@ -69,15 +73,17 @@ while (($#)); do
     --https-disable) MODE=https-disable ;;
     --https-host) HTTPS_HOST="${2:?--https-host needs a value}"; shift ;;
     --security-updates) MODE=security-updates ;;
+    --apply-config) MODE=apply-config; CONFIG_MODE=1; ASSUME_YES=1 ;;
+    --sync-units) MODE=sync-units; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
 done
 
 # ---- terminal UI ---------------------------------------------------------------------------
-if [[ -t 1 && $FROM_REQUEST -eq 0 ]]; then
+if [[ -t 1 && $FROM_REQUEST -eq 0 && $CONFIG_MODE -eq 0 ]]; then
   B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
 else
   B="" D="" R="" G="" Y="" C="" N=""
@@ -98,8 +104,8 @@ ok() { say "  ${G}✓${N} $*"; }
 info() { say "  ${C}•${N} $*"; }
 warn() { say "  ${Y}!${N} $*"; }
 
-status() {  # status STATE MESSAGE — progress for web-UI upgrades (read by the app)
-  ((FROM_REQUEST)) || return 0
+status() {  # status STATE MESSAGE — progress for web-UI requests (read by the app)
+  ((FROM_REQUEST || CONFIG_MODE)) || return 0
   python3 - "$STATUS_FILE" "$1" "$TARGET_VERSION" "$2" "$LOG_FILE" <<'PY' || true
 import json, os, sys, time
 path, state, version, message, logf = sys.argv[1:6]
@@ -219,7 +225,7 @@ ask() {  # ask "Question" DEFAULT — free-text answer (returns default under --
 run() {  # run "Message" cmd... — runs quietly with a spinner, output goes to the log
   local msg="$1"; shift
   log "\$ $*"
-  if [[ ! -t 1 || $FROM_REQUEST -eq 1 ]]; then
+  if [[ ! -t 1 || $FROM_REQUEST -eq 1 || $CONFIG_MODE -eq 1 ]]; then
     "$@" >>"$LOG_FILE" 2>&1 || { tail -n 20 "$LOG_FILE" | sed 's/^/    /' >&2; die "$msg failed"; }
     ok "$msg"; return
   fi
@@ -557,7 +563,8 @@ EOF
 
 install_units() {  # from the release being activated
   local src="$PREFIX/releases/$TARGET_VERSION/deploy/native/systemd" u
-  for u in "$SERVICE.service" "$SERVICE-update.service" "$SERVICE-update.path"; do
+  for u in "$SERVICE.service" "${HELPER_UNITS[@]}"; do
+    [[ -f $src/$u ]] || continue
     install -m 644 "$src/$u" "$UNIT_DIR/$u"
   done
   systemctl daemon-reload
@@ -571,8 +578,8 @@ activate() {  # switch current -> new release and (re)start, rolling back on fai
   status restarting "Restarting on v$TARGET_VERSION"
   ln -sfn "$new" "$PREFIX/current.new" && mv -T "$PREFIX/current.new" "$PREFIX/current"
   install_units
-  systemctl enable "$SERVICE.service" "$SERVICE-update.path" >>"$LOG_FILE" 2>&1
-  systemctl start "$SERVICE-update.path" >>"$LOG_FILE" 2>&1 || true
+  systemctl enable "$SERVICE.service" "$SERVICE-update.path" "$SERVICE-config.path" >>"$LOG_FILE" 2>&1
+  systemctl start "$SERVICE-update.path" "$SERVICE-config.path" >>"$LOG_FILE" 2>&1 || true
   if ! systemctl restart "$SERVICE.service" >>"$LOG_FILE" 2>&1; then
     warn "$SERVICE failed to start"
   elif run_check "Started; waiting for v$TARGET_VERSION to become ready" wait_healthy "$PORT" "$TARGET_VERSION" 120; then
@@ -633,16 +640,15 @@ finish() {
   local port; port=$(env_get PORT); port=${port:-$DEFAULT_PORT}
   status "done" "Upgraded to v$TARGET_VERSION"
   printf '\n  %s%s✓ %s v%s is running.%s\n\n' "$G" "$B" "$APP_NAME" "$TARGET_VERSION" "$N"
-  local https_host; https_host=$(env_get HTTPS_HOST)
-  if [[ -n $https_host ]]; then
-    printf '  Open it from a browser on your network:\n    %shttps://%s%s\n' "$B" "$https_host" "$N"
+  if https_enabled; then
+    printf '  Open it from a browser on your network:\n    %s%s%s\n' "$B" "$(public_url)" "$N"
     printf '  %sMake sure %s resolves to this Pi on your network (local DNS or router), e.g. %s%s\n' \
-      "$D" "$https_host" "$(lan_addresses | head -n1)" "$N"
+      "$D" "$(env_get HTTPS_HOST)" "$(lan_addresses | head -n1)" "$N"
   else
     printf '  Open it from a browser on your network:\n'
     local ip; for ip in $(lan_addresses); do printf '    %shttp://%s:%s%s\n' "$B" "$ip" "$port" "$N"; done
     printf '    %shttp://%s.local:%s%s\n' "$D" "$(hostname)" "$port" "$N"
-    printf '  %sPlain HTTP. Add a trusted HTTPS certificate any time: sudo meshcore-home https%s\n' "$D" "$N"
+    printf '  %sPlain HTTP. Add HTTPS in Settings → Network & HTTPS, or: sudo meshcore-home https%s\n' "$D" "$N"
   fi
   if [[ -f $STATE_DIR/setup-token ]]; then
     printf '\n  First-run setup token (the wizard asks for it): %s%s%s\n' "$B$Y" "$(cat "$STATE_DIR/setup-token")" "$N"
@@ -665,8 +671,9 @@ uninstall() {
   fi
   printf '  %sSystem packages (PostgreSQL, Python) are left installed.%s\n' "$D" "$N"
   confirm "Uninstall $APP_NAME?"
-  systemctl disable --now "$SERVICE-update.path" "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
-  rm -f "$UNIT_DIR/$SERVICE.service" "$UNIT_DIR/$SERVICE-update.service" "$UNIT_DIR/$SERVICE-update.path" "$CLI_LINK"
+  systemctl disable --now "$SERVICE-update.path" "$SERVICE-config.path" "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
+  rm -f "$UNIT_DIR/$SERVICE.service" "$CLI_LINK"
+  local u; for u in "${HELPER_UNITS[@]}"; do rm -f "$UNIT_DIR/$u"; done
   systemctl daemon-reload
   rm -rf "$PREFIX"
   if [[ -f $NGINX_SITE || -L /etc/nginx/sites-enabled/meshcore-home ]]; then
@@ -683,7 +690,18 @@ uninstall() {
   printf '\n  %s✓ %s has been removed.%s\n\n' "$G" "$APP_NAME" "$N"
 }
 
-# ---- optional HTTPS (nginx + Let's Encrypt via Cloudflare DNS-01) ---------------------------
+# ---- network & HTTPS (shared by the terminal wizard, `meshcore-home https` and the web UI) ------
+# Configuration lives in the env file (non-secret) and, for the Cloudflare token, in a root-only
+# certbot credentials file. The web UI never gets root: it writes $CONFIG_REQUEST, which the
+# meshcore-home-config path unit hands to `install.sh --apply-config`.
+CONFIG_REQUEST="$STATE_DIR/config-request.json"
+CONFIG_STATUS="$STATE_DIR/config-status.json"
+NETWORK_SNAPSHOT="$STATE_DIR/network.json"
+CONF_BACKUP="$CONF_DIR/.previous"
+DEFAULT_HTTPS_PORT=443
+DEFAULT_PROPAGATION=30
+HELPER_UNITS=("$SERVICE-update.service" "$SERVICE-update.path" "$SERVICE-config.service" "$SERVICE-config.path")
+
 env_set() {  # env_set KEY VALUE — add or replace a line in the env file
   if grep -q "^$1=" "$ENV_FILE"; then
     sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"
@@ -703,13 +721,296 @@ run_quiet() {  # like run(), but returns non-zero instead of exiting
   warn "$msg — failed"; return 1
 }
 
-https_setup() {  # returns 1 (without exiting) if HTTPS could not be set up; the app stays on HTTP
-  local port; port=$(env_get PORT); port=${port:-$DEFAULT_PORT}
+https_enabled() {  # older installs (v0.6.1–0.6.3) only set HTTPS_HOST
+  local e; e=$(env_get HTTPS_ENABLED)
+  if [[ -n $e ]]; then [[ $e == 1 ]]; else [[ -n $(env_get HTTPS_HOST) && -f $NGINX_SITE ]]; fi
+}
+
+https_packages_installed() { local m; mapfile -t m < <(missing_packages "${HTTPS_PACKAGES[@]}"); ((${#m[@]} == 0)); }
+
+write_network_snapshot() {  # non-secret view of the configuration for the app (world-readable)
+  local enabled=0 renew="" pkgs=0
+  https_enabled && enabled=1
+  https_packages_installed && pkgs=1
+  renew=$(systemctl is-enabled certbot.timer 2>/dev/null || true)
+  python3 - "$NETWORK_SNAPSHOT" "$(env_get PORT)" "$(env_get HOST)" "$enabled" "$(env_get HTTPS_HOST)" \
+    "$(env_get HTTPS_PORT)" "$(env_get HTTPS_REDIRECT)" "$(env_get CERTBOT_EMAIL)" "$(env_get CERTBOT_STAGING)" \
+    "$(env_get CF_PROPAGATION)" "$([[ -f $CF_CREDENTIALS ]] && echo 1 || echo 0)" "$pkgs" "$renew" <<'PY' || true
+import json, os, sys, time
+(path, port, host, enabled, https_host, https_port, redirect, email, staging, prop, token, pkgs, renew) = sys.argv[1:14]
+def num(v, d):
+    try:
+        return int(v)
+    except ValueError:
+        return d
+data = {
+    "app_port": num(port, 8080),
+    "bind": host or "0.0.0.0",
+    "https_enabled": enabled == "1",
+    "hostname": https_host or None,
+    "https_port": num(https_port, 443),
+    "redirect_http": redirect != "0",
+    "email": email or None,
+    "staging": staging == "1",
+    "dns_provider": "cloudflare",
+    "propagation_seconds": num(prop, 30),
+    "token_saved": token == "1",
+    "https_packages_installed": pkgs == "1",
+    "auto_renew": renew == "enabled",
+    "updated_at": time.time(),
+}
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f)
+os.chmod(tmp, 0o644)
+os.replace(tmp, path)
+PY
+}
+
+backup_network_config() {
+  install -d -m 700 "$CONF_BACKUP"
+  rm -f "$CONF_BACKUP"/*
+  cp -p "$ENV_FILE" "$CONF_BACKUP/env"
+  [[ -f $NGINX_SITE ]] && cp -p "$NGINX_SITE" "$CONF_BACKUP/nginx-site"
+  [[ -f $CF_CREDENTIALS ]] && cp -p "$CF_CREDENTIALS" "$CONF_BACKUP/cf-credentials"
+  return 0
+}
+
+restore_network_config() {  # put the previous env file and nginx site back, and restart both
+  warn "Restoring the previous network configuration"
+  cp -p "$CONF_BACKUP/env" "$ENV_FILE"
+  # A failed attempt with a new token must not lose the token that worked before.
+  if [[ -f $CONF_BACKUP/cf-credentials ]]; then cp -p "$CONF_BACKUP/cf-credentials" "$CF_CREDENTIALS"; else rm -f "$CF_CREDENTIALS"; fi
+  if [[ -f $CONF_BACKUP/nginx-site ]]; then
+    cp -p "$CONF_BACKUP/nginx-site" "$NGINX_SITE"
+    ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+  else
+    rm -f "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+  fi
+  systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
+  systemctl restart "$SERVICE" >>"$LOG_FILE" 2>&1 || true
+  wait_healthy "$(env_get PORT)" "" 60 || true
+}
+
+obtain_certificate() {  # obtain_certificate HOST EMAIL STAGING(0/1) PROPAGATION FORCE(0/1)
+  local host=$1 email=$2 staging=$3 prop=$4 force=$5
+  if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+    # Testing only: a self-signed certificate instead of Let's Encrypt (browsers will warn).
+    warn "MESHCORE_HOME_TLS_SELF_SIGNED is set: using a self-signed TEST certificate"
+    install -d -m 755 "$CONF_DIR/tls-test"
+    TLS_CERT_PATH="$CONF_DIR/tls-test/fullchain.pem" TLS_KEY_PATH="$CONF_DIR/tls-test/privkey.pem"
+    run_quiet "Creating a self-signed test certificate" openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+      -subj "/CN=$host" -addext "subjectAltName=DNS:$host" -keyout "$TLS_KEY_PATH" -out "$TLS_CERT_PATH" || return 1
+    chmod 600 "$TLS_KEY_PATH"
+    return 0
+  fi
+  local -a args=(certonly --non-interactive --agree-tos --dns-cloudflare
+    --dns-cloudflare-credentials "$CF_CREDENTIALS" --dns-cloudflare-propagation-seconds "$prop"
+    -d "$host" --cert-name "$host" --deploy-hook "$PREFIX/current/deploy/native/tls-hook")
+  if [[ -n $email ]]; then args+=(-m "$email"); else args+=(--register-unsafely-without-email); fi
+  if [[ $staging == 1 ]]; then args+=(--test-cert); fi
+  if [[ $force == 1 ]]; then args+=(--force-renewal --break-my-certs); else args+=(--keep-until-expiring); fi
+  if ! run_quiet "Requesting a certificate from Let's Encrypt (the DNS check takes ~${prop}s)" certbot "${args[@]}"; then
+    tail -n 8 "$LOG_FILE" | sed 's/^/    /' >&2
+    warn "Could not obtain a certificate. Check the token's permissions and that $host is in that Cloudflare zone."
+    return 1
+  fi
+  TLS_CERT_PATH="/etc/letsencrypt/live/$host/fullchain.pem" TLS_KEY_PATH="/etc/letsencrypt/live/$host/privkey.pem"
+}
+
+write_nginx_site() {  # write_nginx_site HOST HTTPS_PORT REDIRECT(0/1) APP_PORT CERT KEY
+  local host=$1 hport=$2 redirect=$3 aport=$4 cert=$5 key=$6 target="https://\$host"
+  [[ $hport != 443 ]] && target="https://\$host:$hport"
+  {
+    printf '# MeshCore Home — HTTPS front end. Managed by install.sh (Settings → Network & HTTPS).\n'
+    printf 'map $http_upgrade $meshcore_connection_upgrade {\n    default upgrade;\n    %s      close;\n}\n' "''"
+    if [[ $redirect == 1 ]]; then
+      printf 'server {\n    listen 80;\n    listen [::]:80;\n    server_name %s;\n' "$host"
+      printf '    location / { return 301 %s$request_uri; }\n}\n' "$target"
+    fi
+    cat <<NGINX
+server {
+    listen $hport ssl;
+    listen [::]:$hport ssl;
+    http2 on;
+    server_name $host;
+
+    ssl_certificate     $cert;
+    ssl_certificate_key $key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:meshcore_ssl:5m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:$aport;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host \$http_host;
+        # WebSocket (live updates)
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$meshcore_connection_upgrade;
+        proxy_read_timeout 1h;
+    }
+}
+NGINX
+  } >"$NGINX_SITE"
+  # nginx before 1.25 (Debian 12) has no "http2 on;" directive: use the older listen flag.
+  if ! grep -qE 'nginx/1\.(2[5-9]|[3-9][0-9])' <<<"$(nginx -v 2>&1)"; then
+    sed -i -e '/^    http2 on;$/d' -e "s/listen $hport ssl;/listen $hport ssl http2;/" \
+      -e "s/listen \[::\]:$hport ssl;/listen [::]:$hport ssl http2;/" "$NGINX_SITE"
+  fi
+}
+
+validate_network_inputs() {  # validates NEW_* values; prints a reason and returns 1 if invalid
+  local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' p
+  for p in "$NEW_PORT" "$NEW_HTTPS_PORT"; do
+    [[ $p =~ ^[0-9]+$ ]] && ((p >= 1 && p <= 65535)) || { warn "Invalid port: $p"; return 1; }
+  done
+  [[ $NEW_PROPAGATION =~ ^[0-9]+$ ]] && ((NEW_PROPAGATION >= 10 && NEW_PROPAGATION <= 600)) ||
+    { warn "DNS propagation wait must be 10–600 seconds"; return 1; }
+  if [[ $NEW_HTTPS == 1 ]]; then
+    [[ $NEW_HOST =~ $fqdn_re ]] || { warn "Invalid hostname: $NEW_HOST"; return 1; }
+    [[ -z $NEW_EMAIL || $NEW_EMAIL =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { warn "Invalid email: $NEW_EMAIL"; return 1; }
+    ((NEW_PORT != NEW_HTTPS_PORT)) || { warn "The app port and HTTPS port must differ"; return 1; }
+    if [[ $NEW_REDIRECT == 1 ]] && ((NEW_PORT == 80 || NEW_HTTPS_PORT == 80)); then
+      warn "Port 80 is used for the HTTP→HTTPS redirect; pick other ports or turn the redirect off"; return 1
+    fi
+  fi
+  # Ports must be free, or already held by the right process.
+  local cur_port; cur_port=$(env_get PORT)
+  if [[ $NEW_PORT != "$cur_port" && -n $(port_owner "$NEW_PORT") ]]; then
+    warn "Port $NEW_PORT is already in use by '$(port_owner "$NEW_PORT")'"; return 1
+  fi
+  if [[ $NEW_HTTPS == 1 ]]; then
+    local owner check=("$NEW_HTTPS_PORT")
+    [[ $NEW_REDIRECT == 1 ]] && check+=(80)
+    for p in "${check[@]}"; do
+      owner=$(port_owner "$p")
+      [[ -z $owner || $owner == nginx ]] || { warn "Port $p is already in use by '$owner'"; return 1; }
+    done
+  fi
+  return 0
+}
+
+apply_network_config() {
+  # Inputs: NEW_PORT NEW_HTTPS(0/1) NEW_HOST NEW_HTTPS_PORT NEW_REDIRECT(0/1) NEW_EMAIL NEW_STAGING(0/1)
+  #         NEW_PROPAGATION NEW_TOKEN (optional; empty keeps the saved one)
+  # Returns 1 (after restoring the previous configuration) if anything fails.
+  validate_network_inputs || return 1
+  local old_port old_host old_https_host old_staging restart=0
+  old_port=$(env_get PORT); old_host=$(env_get HOST)
+  old_https_host=$(env_get HTTPS_HOST); old_staging=$(env_get CERTBOT_STAGING)
+  backup_network_config
+
+  if [[ $NEW_HTTPS == 1 ]]; then
+    if ! https_packages_installed; then
+      local missing; mapfile -t missing < <(missing_packages "${HTTPS_PACKAGES[@]}")
+      status installing "Installing ${missing[*]}"
+      run_quiet "Refreshing package lists" apt-get update || return 1
+      run_quiet "Installing ${missing[*]}" env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y --no-install-recommends "${missing[@]}" || return 1
+    fi
+    if [[ -n $NEW_TOKEN ]]; then
+      install -d -m 700 "$(dirname "$CF_CREDENTIALS")"
+      (umask 077; printf '# Cloudflare API token for certbot (MeshCore Home)\ndns_cloudflare_api_token = %s\n' "$NEW_TOKEN" >"$CF_CREDENTIALS")
+      ok "Saved the Cloudflare API token (root-only)"
+    fi
+    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} && ! -f $CF_CREDENTIALS ]]; then
+      warn "No Cloudflare API token is saved; enter one to set up HTTPS"; return 1
+    fi
+    TLS_CERT_PATH="/etc/letsencrypt/live/$NEW_HOST/fullchain.pem" TLS_KEY_PATH="/etc/letsencrypt/live/$NEW_HOST/privkey.pem"
+    local force=0
+    [[ -f $TLS_CERT_PATH && ${old_staging:-0} != "$NEW_STAGING" ]] && force=1
+    if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} || ! -f $TLS_CERT_PATH || $force == 1 || -n $NEW_TOKEN ]]; then
+      status certificate "Requesting a certificate for $NEW_HOST"
+      obtain_certificate "$NEW_HOST" "$NEW_EMAIL" "$NEW_STAGING" "$NEW_PROPAGATION" "$force" ||
+        { restore_network_config; return 1; }
+    else
+      ok "Using the existing certificate for $NEW_HOST"
+    fi
+    write_nginx_site "$NEW_HOST" "$NEW_HTTPS_PORT" "$NEW_REDIRECT" "$NEW_PORT" "$TLS_CERT_PATH" "$TLS_KEY_PATH"
+    ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+    if ! nginx -t >>"$LOG_FILE" 2>&1; then
+      warn "nginx rejected the configuration (see $LOG_FILE)"; restore_network_config; return 1
+    fi
+    systemctl enable nginx >>"$LOG_FILE" 2>&1 || true
+    run_quiet "Reloading nginx" systemctl reload-or-restart nginx || { restore_network_config; return 1; }
+    env_set HOST 127.0.0.1
+    env_set HTTPS_ENABLED 1
+    env_set HTTPS_HOST "$NEW_HOST"
+    env_set TLS_CERT "$TLS_CERT_PATH"
+  else
+    rm -f /etc/nginx/sites-enabled/meshcore-home "$NGINX_SITE"
+    command -v nginx >/dev/null && { systemctl reload nginx >>"$LOG_FILE" 2>&1 || true; }
+    env_set HOST 0.0.0.0
+    env_set HTTPS_ENABLED 0
+    rm -f "$STATE_DIR/tls-status.json"
+  fi
+  env_set PORT "$NEW_PORT"
+  env_set HTTPS_PORT "$NEW_HTTPS_PORT"
+  env_set HTTPS_REDIRECT "$NEW_REDIRECT"
+  env_set CERTBOT_EMAIL "$NEW_EMAIL"
+  env_set CERTBOT_STAGING "$NEW_STAGING"
+  env_set CF_PROPAGATION "$NEW_PROPAGATION"
+
+  [[ $NEW_PORT != "$old_port" || $(env_get HOST) != "$old_host" ]] && restart=1
+  if ((restart)); then
+    status restarting "Restarting $APP_NAME"
+    systemctl restart "$SERVICE" >>"$LOG_FILE" 2>&1 || true
+    if ! wait_healthy "$NEW_PORT" "" 60; then
+      warn "$APP_NAME did not come back with the new settings"; restore_network_config; return 1
+    fi
+    ok "$APP_NAME restarted on port $NEW_PORT"
+  fi
+  if [[ $NEW_HTTPS == 1 ]]; then
+    bash "$PREFIX/current/deploy/native/tls-hook" >>"$LOG_FILE" 2>&1 || true
+    local -a k=()
+    [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]] && k=(-k)
+    if curl -fsS "${k[@]}" --max-time 10 --resolve "$NEW_HOST:$NEW_HTTPS_PORT:127.0.0.1" \
+      "https://$NEW_HOST:$NEW_HTTPS_PORT/health/ready" >/dev/null 2>&1; then
+      ok "HTTPS is working: $(public_url)"
+    else
+      warn "nginx is configured, but $(public_url) did not answer locally yet (see $LOG_FILE)"
+    fi
+  fi
+  [[ -n $old_https_host && $old_https_host != "$NEW_HOST" ]] && log "hostname changed from $old_https_host to $NEW_HOST"
+  write_network_snapshot
+  return 0
+}
+
+public_url() {  # the address people should open
+  if https_enabled; then
+    local hp; hp=$(env_get HTTPS_PORT); hp=${hp:-443}
+    if [[ $hp == 443 ]]; then printf 'https://%s' "$(env_get HTTPS_HOST)"; else printf 'https://%s:%s' "$(env_get HTTPS_HOST)" "$hp"; fi
+  else
+    printf 'http://%s:%s' "$(lan_addresses | head -n1)" "$(env_get PORT)"
+  fi
+}
+
+load_current_network() {  # NEW_* defaults = current configuration
+  NEW_PORT=$(env_get PORT); NEW_PORT=${NEW_PORT:-$DEFAULT_PORT}
+  NEW_HTTPS=0; https_enabled && NEW_HTTPS=1
+  NEW_HOST=$(env_get HTTPS_HOST)
+  NEW_HTTPS_PORT=$(env_get HTTPS_PORT); NEW_HTTPS_PORT=${NEW_HTTPS_PORT:-$DEFAULT_HTTPS_PORT}
+  NEW_REDIRECT=$(env_get HTTPS_REDIRECT); NEW_REDIRECT=${NEW_REDIRECT:-1}
+  NEW_EMAIL=$(env_get CERTBOT_EMAIL)
+  NEW_STAGING=$(env_get CERTBOT_STAGING); NEW_STAGING=${NEW_STAGING:-0}
+  NEW_PROPAGATION=$(env_get CF_PROPAGATION); NEW_PROPAGATION=${NEW_PROPAGATION:-$DEFAULT_PROPAGATION}
+  NEW_TOKEN=""
+}
+
+https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up — the app stays as it was
+  load_current_network
   printf '\n  HTTPS puts nginx in front of %s with a trusted Let'"'"'s Encrypt certificate.\n' "$APP_NAME"
   printf '  The certificate is validated through %sCloudflare DNS%s, so the Pi does not need to be\n' "$B" "$N"
   printf '  reachable from the internet. You need a domain whose DNS is managed by Cloudflare.\n'
+  printf '  %s(You can also change all of this later in the web interface: Settings → Network & HTTPS.)%s\n' "$D" "$N"
 
   local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+  HTTPS_HOST=${HTTPS_HOST:-$NEW_HOST}
   while true; do
     HTTPS_HOST=${HTTPS_HOST:-$(ask "Hostname for the app (e.g. meshcore.example.com)?" "")}
     HTTPS_HOST=${HTTPS_HOST,,}
@@ -717,17 +1018,7 @@ https_setup() {  # returns 1 (without exiting) if HTTPS could not be set up; the
     if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then warn "Invalid or missing hostname for HTTPS"; return 1; fi
     warn "Enter a full hostname such as meshcore.example.com"; HTTPS_HOST=""
   done
-  HTTPS_EMAIL=${HTTPS_EMAIL:-$(ask "Email for Let's Encrypt expiry notices (optional)?" "")}
-
-  # Ports 80/443 must be free or already served by nginx.
-  local p owner
-  for p in 80 443; do
-    owner=$(port_owner "$p")
-    if [[ -n $owner && $owner != nginx ]]; then
-      warn "Port $p is already used by '$owner'; HTTPS needs ports 80 and 443. Nothing was changed."
-      return 1
-    fi
-  done
+  HTTPS_EMAIL=${HTTPS_EMAIL:-${NEW_EMAIL:-$(ask "Email for Let's Encrypt expiry notices (optional)?" "")}}
 
   local token=""
   if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
@@ -735,7 +1026,7 @@ https_setup() {  # returns 1 (without exiting) if HTTPS could not be set up; the
     printf '  the %s"Edit zone DNS"%s template, limited to the zone that contains %s.\n' "$B" "$N" "$HTTPS_HOST"
     printf '  It is stored only in %s (root-only) and used for renewals.\n' "$CF_CREDENTIALS"
     if [[ -f $CF_CREDENTIALS ]] && ask_yn "Reuse the Cloudflare token saved earlier?" y; then
-      token="(saved)"
+      token=""
     else
       token=${MESHCORE_HOME_CF_TOKEN:-$(ask_secret "Cloudflare API token (input hidden):")}
       [[ -n $token ]] || { warn "No Cloudflare token entered; HTTPS not set up."; return 1; }
@@ -752,123 +1043,108 @@ https_setup() {  # returns 1 (without exiting) if HTTPS could not be set up; the
 
   printf '\n  %sThese changes will be made for HTTPS:%s\n' "$B" "$N"
   printf '    • Obtain a Let'"'"'s Encrypt certificate for %s%s%s (renewed automatically by certbot.timer)\n' "$B" "$HTTPS_HOST" "$N"
-  printf '    • Add an nginx site on ports 80 and 443 for %s (port 80 redirects to HTTPS)\n' "$HTTPS_HOST"
-  printf '    • Make %s listen on 127.0.0.1:%s only, so it is reached through nginx\n' "$APP_NAME" "$port"
+  printf '    • Add an nginx site on ports 80 and %s for %s (port 80 redirects to HTTPS)\n' "$NEW_HTTPS_PORT" "$HTTPS_HOST"
+  printf '    • Make %s listen on 127.0.0.1:%s only, so it is reached through nginx\n' "$APP_NAME" "$NEW_PORT"
   ask_yn "Set up HTTPS?" y || { warn "HTTPS skipped; $APP_NAME stays on plain HTTP."; return 1; }
 
-  local cert key
-  if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
-    # Testing only: a self-signed certificate instead of Let's Encrypt (browsers will warn).
-    warn "MESHCORE_HOME_TLS_SELF_SIGNED is set: using a self-signed TEST certificate"
-    install -d -m 755 "$CONF_DIR/tls-test"
-    cert="$CONF_DIR/tls-test/fullchain.pem" key="$CONF_DIR/tls-test/privkey.pem"
-    run "Creating a self-signed test certificate" openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
-      -subj "/CN=$HTTPS_HOST" -addext "subjectAltName=DNS:$HTTPS_HOST" -keyout "$key" -out "$cert"
-    chmod 600 "$key"
-  else
-    if [[ $token != "(saved)" ]]; then
-      install -d -m 700 "$(dirname "$CF_CREDENTIALS")"
-      (umask 077; printf '# Cloudflare API token for certbot (MeshCore Home)\ndns_cloudflare_api_token = %s\n' "$token" >"$CF_CREDENTIALS")
-    fi
-    local -a certbot_args=(certonly --non-interactive --agree-tos --dns-cloudflare
-      --dns-cloudflare-credentials "$CF_CREDENTIALS" --dns-cloudflare-propagation-seconds 30
-      -d "$HTTPS_HOST" --cert-name "$HTTPS_HOST" --keep-until-expiring
-      --deploy-hook "$PREFIX/current/deploy/native/tls-hook")
-    if [[ -n $HTTPS_EMAIL ]]; then certbot_args+=(-m "$HTTPS_EMAIL"); else certbot_args+=(--register-unsafely-without-email); fi
-    if [[ -n ${MESHCORE_HOME_CERTBOT_STAGING:-} ]]; then certbot_args+=(--test-cert); fi
-    if ! run_quiet "Requesting a certificate from Let's Encrypt (the DNS check takes ~30s)" certbot "${certbot_args[@]}"; then
-      tail -n 8 "$LOG_FILE" | sed 's/^/    /' >&2
-      warn "Could not obtain a certificate. Check the token's permissions and that $HTTPS_HOST is in that Cloudflare zone."
-      warn "$APP_NAME stays on plain HTTP. Try again any time with: sudo meshcore-home https"
-      return 1
-    fi
-    cert="/etc/letsencrypt/live/$HTTPS_HOST/fullchain.pem" key="/etc/letsencrypt/live/$HTTPS_HOST/privkey.pem"
-  fi
-
-  cat >"$NGINX_SITE" <<NGINX
-# MeshCore Home — HTTPS front end. Managed by install.sh (meshcore-home https).
-map \$http_upgrade \$meshcore_connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $HTTPS_HOST;
-    location / { return 301 https://\$host\$request_uri; }
-}
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name $HTTPS_HOST;
-
-    ssl_certificate     $cert;
-    ssl_certificate_key $key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:meshcore_ssl:5m;
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    client_max_body_size 2m;
-
-    location / {
-        proxy_pass http://127.0.0.1:$port;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-Host \$host;
-        # WebSocket (live updates)
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$meshcore_connection_upgrade;
-        proxy_read_timeout 1h;
-    }
-}
-NGINX
-  # nginx before 1.25 (Debian 12) has no "http2 on;" directive: use the older listen flag.
-  if ! grep -qE 'nginx/1\.(2[5-9]|[3-9][0-9])' <<<"$(nginx -v 2>&1)"; then
-    sed -i -e '/^    http2 on;$/d' -e 's/listen 443 ssl;/listen 443 ssl http2;/' \
-      -e 's/listen \[::\]:443 ssl;/listen [::]:443 ssl http2;/' "$NGINX_SITE"
-  fi
-  ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
-  if ! nginx -t >>"$LOG_FILE" 2>&1; then
-    rm -f /etc/nginx/sites-enabled/meshcore-home
-    warn "nginx rejected the configuration (see $LOG_FILE); HTTPS not enabled."
+  NEW_HTTPS=1 NEW_HOST=$HTTPS_HOST NEW_EMAIL=$HTTPS_EMAIL NEW_TOKEN=$token
+  if ! apply_network_config; then
+    warn "HTTPS was not set up; $APP_NAME is unchanged. Try again any time with: sudo meshcore-home https"
     return 1
   fi
-  systemctl enable nginx >>"$LOG_FILE" 2>&1 || true
-  run "Starting nginx" systemctl reload-or-restart nginx
-
-  env_set HOST 127.0.0.1
-  env_set HTTPS_HOST "$HTTPS_HOST"
-  env_set TLS_CERT "$cert"
-  run "Restarting $APP_NAME behind nginx" systemctl restart "$SERVICE"
-  wait_healthy "$port" "" 60 || { warn "$APP_NAME did not come back after switching to HTTPS"; return 1; }
-  bash "$PREFIX/current/deploy/native/tls-hook" >>"$LOG_FILE" 2>&1 || true
-
-  local -a k=()
-  if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then k=(-k); fi
-  if curl -fsS "${k[@]}" --max-time 10 --resolve "$HTTPS_HOST:443:127.0.0.1" "https://$HTTPS_HOST/health/ready" >/dev/null 2>&1; then
-    ok "HTTPS is working: https://$HTTPS_HOST"
-  else
-    warn "nginx is configured, but https://$HTTPS_HOST did not answer locally yet (see $LOG_FILE)"
-  fi
-  return 0
 }
 
 https_disable() {
-  if [[ ! -f $NGINX_SITE && ! -L /etc/nginx/sites-enabled/meshcore-home ]]; then ok "HTTPS is not enabled"; return; fi
+  if ! https_enabled; then ok "HTTPS is not enabled"; return; fi
   printf '\n  %sThis will%s remove the nginx site for %s and make %s listen on all\n' "$B" "$N" "$(env_get HTTPS_HOST)" "$APP_NAME"
   printf '  interfaces over plain HTTP again. The certificate and saved Cloudflare token are kept.\n'
   confirm "Disable HTTPS?"
-  rm -f /etc/nginx/sites-enabled/meshcore-home "$NGINX_SITE"
-  systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
-  env_set HOST 0.0.0.0
-  sed -i '/^HTTPS_HOST=/d;/^TLS_CERT=/d' "$ENV_FILE"
-  rm -f "$STATE_DIR/tls-status.json"
-  run "Restarting $APP_NAME on plain HTTP" systemctl restart "$SERVICE"
-  local port; port=$(env_get PORT); port=${port:-$DEFAULT_PORT}
-  wait_healthy "$port" "" 60 || warn "$APP_NAME is slow to come back; check: meshcore-home status"
-  ok "HTTPS disabled — $APP_NAME is on http://$(lan_addresses | head -n1):$port"
+  load_current_network
+  NEW_HTTPS=0
+  apply_network_config || die "Could not disable HTTPS; the previous configuration was restored"
+  ok "HTTPS disabled — $APP_NAME is on $(public_url)"
+}
+
+apply_config_request() {  # --apply-config: run by meshcore-home-config.service for the web UI
+  [[ -f $CONFIG_REQUEST ]] || { log "no config request; nothing to do"; return 0; }
+  local parsed
+  # Parse and validate with Python, then delete the request at once (it may hold the token).
+  parsed=$(python3 - "$CONFIG_REQUEST" <<'PY'
+import json, re, shlex, sys
+try:
+    r = json.load(open(sys.argv[1]))
+except Exception:
+    print("ACTION=invalid"); sys.exit(0)
+def s(k, default=""):
+    v = r.get(k, default)
+    return default if v is None else str(v)
+def flag(k, default):
+    v = r.get(k, default)
+    return "1" if v in (True, 1, "1") else "0"
+action = s("action", "apply")
+if action not in ("apply", "renew", "refresh"):
+    action = "invalid"
+token = s("cf_token")
+if token and not re.fullmatch(r"[A-Za-z0-9_\-]{20,200}", token):
+    action = "invalid"
+out = {
+    "ACTION": action,
+    "NEW_PORT": s("app_port"), "NEW_HTTPS": flag("https_enabled", False), "NEW_HOST": s("hostname").lower(),
+    "NEW_HTTPS_PORT": s("https_port", "443"), "NEW_REDIRECT": flag("redirect_http", True),
+    "NEW_EMAIL": s("email"), "NEW_STAGING": flag("staging", False), "NEW_PROPAGATION": s("propagation_seconds", "30"),
+    "NEW_TOKEN": token,
+}
+for k, v in out.items():
+    if re.search(r"[\x00-\x1f]", v):
+        print("ACTION=invalid"); sys.exit(0)
+    print(f"{k}={shlex.quote(v)}")
+PY
+)
+  rm -f "$CONFIG_REQUEST"
+  eval "$parsed"
+  STATUS_FILE=$CONFIG_STATUS
+  case "${ACTION:-invalid}" in
+    refresh) write_network_snapshot; return 0 ;;
+    renew)
+      if ! https_enabled; then status failed "HTTPS is not enabled"; return 1; fi
+      status certificate "Renewing the certificate for $(env_get HTTPS_HOST)"
+      if run_quiet "Renewing the certificate" certbot renew --cert-name "$(env_get HTTPS_HOST)" --force-renewal; then
+        bash "$PREFIX/current/deploy/native/tls-hook" >>"$LOG_FILE" 2>&1 || true
+        write_network_snapshot
+        status "done" "Certificate renewed"
+      else
+        status failed "Certificate renewal failed — see the installer log"
+        return 1
+      fi ;;
+    apply)
+      status applying "Applying network settings"
+      if apply_network_config; then
+        status "done" "Settings applied — $APP_NAME is on $(public_url)"
+      else
+        write_network_snapshot
+        status failed "Settings were not applied; the previous configuration is still in place"
+        return 1
+      fi ;;
+    *) status failed "Ignored an invalid settings request"; return 1 ;;
+  esac
+}
+
+sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartPre=+) on every start
+  # Installs helper units that ship with the running release (so a web upgrade from an older
+  # version gains new ones), then refreshes the snapshot the app shows. Never fails the start.
+  local src="$PREFIX/current/deploy/native/systemd" u changed=0
+  for u in "${HELPER_UNITS[@]}"; do
+    [[ -f $src/$u ]] || continue
+    if ! cmp -s "$src/$u" "$UNIT_DIR/$u"; then install -m 644 "$src/$u" "$UNIT_DIR/$u"; changed=1; fi
+  done
+  ((changed)) && systemctl daemon-reload || true
+  for u in "${HELPER_UNITS[@]}"; do
+    [[ $u == *.path && -f $UNIT_DIR/$u ]] || continue
+    systemctl is-enabled --quiet "$u" 2>/dev/null || systemctl enable --quiet "$u" 2>/dev/null || true
+    systemctl is-active --quiet "$u" 2>/dev/null || systemctl start --no-block "$u" 2>/dev/null || true
+  done
+  write_network_snapshot
+  return 0
 }
 
 # ---- optional automatic OS security updates (Debian's unattended-upgrades) -------------------
@@ -910,6 +1186,8 @@ read_request() {  # web-UI upgrade: take the version from the request file writt
   rm -f "$req"
   valid_version "$v" || { TARGET_VERSION=""; die "Ignoring invalid update request"; }
   WANT_VERSION=$v
+  # One privileged change at a time (shared with web-UI network settings).
+  exec 9>/run/meshcore-home-admin.lock; flock -w 900 9 || true
   # Mirror overrides live in the root-owned env file (never in the app-writable request).
   API_URL=$(env_get MESHCORE_HOME_API); API_URL=${API_URL:-https://api.github.com}
   DOWNLOAD_BASE=$(env_get MESHCORE_HOME_DOWNLOAD_BASE)
@@ -925,6 +1203,15 @@ main() {
   log "---- $APP_NAME installer started (args: mode=${MODE:-auto}) ----"
 
   if [[ $MODE == uninstall ]]; then uninstall; return; fi
+  if [[ $MODE == sync-units ]]; then sync_units; return 0; fi
+  if [[ $MODE == apply-config ]]; then
+    [[ -n $(installed_version) ]] || exit 1
+    TARGET_VERSION=$(installed_version)
+    # One privileged change at a time (shared with web-UI upgrades).
+    exec 9>/run/meshcore-home-admin.lock; flock -w 900 9 || exit 1
+    apply_config_request || exit 1
+    return 0
+  fi
   if [[ $MODE == security-updates ]]; then
     security_updates_setup || exit 1
     return

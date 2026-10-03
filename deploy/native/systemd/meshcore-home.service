@@ -12,6 +12,9 @@ Group=meshcore
 EnvironmentFile=/etc/meshcore-home/meshcore-home.env
 Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WorkingDirectory=/opt/meshcore-home/current
+# As root ("+"): install any helper units shipped with this release (so upgrades from older
+# versions gain them) and refresh the non-secret network snapshot. Never fails the start.
+ExecStartPre=+/opt/meshcore-home/current/deploy/native/install.sh --sync-units
 # Apply database migrations (serialised by an advisory lock) before starting.
 ExecStartPre=/opt/meshcore-home/current/venv/bin/python -m alembic upgrade head
 # One worker: exactly one process may own the radio connection.

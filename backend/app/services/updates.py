@@ -171,18 +171,6 @@ def read_status() -> dict[str, Any] | None:
         return None
 
 
-def read_tls() -> dict[str, Any] | None:
-    """HTTPS certificate info recorded by the root-owned certbot deploy hook (native installs)."""
-    p = _state_path("tls-status.json")
-    if p is None or not p.is_file():
-        return None
-    try:
-        data = json.loads(p.read_text())
-        return data if isinstance(data, dict) else None
-    except (OSError, ValueError):
-        return None
-
-
 def write_request(version: str, requested_by: str) -> None:
     p = _state_path(REQUEST_FILE)
     if p is None:

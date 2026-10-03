@@ -14,7 +14,7 @@ export function Dialog({
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -57,7 +57,7 @@ export function Dialog({
       onClick={(e) => {
         if (e.target === ref.current) onClose(); // backdrop click
       }}
-      className={`mc-dialog m-auto w-[calc(100%-2rem)] ${size === "sm" ? "max-w-sm" : "max-w-lg"} rounded-2xl border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-[2px]`}
+      className={`mc-dialog m-auto w-[calc(100%-2rem)] ${size === "sm" ? "max-w-sm" : size === "lg" ? "max-w-2xl" : "max-w-lg"} rounded-2xl border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-black/40 backdrop:backdrop-blur-[2px]`}
     >
       <div className="flex max-h-[85dvh] flex-col">
         <header className="flex items-center justify-between gap-2 border-b border-line py-1.5 pl-5 pr-2">

@@ -148,8 +148,23 @@ Without this step, the Pi serves **plain HTTP** on port 8080. Passwords and sess
 cross your network unencrypted, and some browser features are unavailable (the copy buttons, "Use
 this device's location").
 
-HTTPS is offered as the last step of the installer, or later with `sudo meshcore-home https`. It
-uses:
+HTTPS is offered as the last step of the installer. You can also turn it on, change it, or turn it
+off later in **Settings → Network & HTTPS** in the web interface, or with `sudo meshcore-home https`.
+The Settings card shows the address, HTTPS status, certificate expiry, and app port. **Configure…**
+opens a dialog for:
+
+- the app port;
+- HTTPS on/off, the hostname, the HTTPS port, and the HTTP→HTTPS redirect;
+- the Let's Encrypt email, Cloudflare DNS validation, the API token, the DNS wait, and a staging
+  option for testing;
+- **Renew now**.
+
+Before anything changes, the dialog lists exactly what will happen. The change is applied by a
+root-only helper (`meshcore-home-config`); the web app itself never runs as root. If the app doesn't
+come back afterwards, the previous configuration, including a previously saved token, is restored
+automatically.
+
+HTTPS uses:
 
 - **nginx** in front of the app on ports 80/443. Port 80 redirects to HTTPS, and the app then
   listens on `127.0.0.1` only.
@@ -167,9 +182,7 @@ You need:
    or given to the app.
 3. A local DNS record (router, Pi-hole, etc.) pointing the hostname at the Pi's LAN address.
 
-If the certificate can't be obtained, nothing changes: the app stays on HTTP, and you can retry
-with `sudo meshcore-home https`. **Settings → Software updates** shows the hostname and when the
-certificate expires.
+If the certificate can't be obtained, nothing changes: the app stays as it was, and you can retry.
 
 ### Updates
 
