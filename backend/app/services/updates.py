@@ -55,13 +55,16 @@ class ReleaseInfo:
 class UpdateChecker:
     def __init__(self) -> None:
         self._latest: ReleaseInfo | None = None
+        # Release notes for the installed version (shown even when it is up to date).
+        self._installed: ReleaseInfo | None = None
         self._checked_at: float = 0
         self._error: str | None = None
         self._lock = asyncio.Lock()
 
-    async def _fetch(self) -> ReleaseInfo:
+    async def _fetch(self, which: str = "latest") -> ReleaseInfo:
+        """which: "latest", or "tags/vX.Y.Z" for a specific release."""
         s = get_settings()
-        url = f"{s.update_api_url.rstrip('/')}/repos/{s.update_repo}/releases/latest"
+        url = f"{s.update_api_url.rstrip('/')}/repos/{s.update_repo}/releases/{which}"
         async with httpx.AsyncClient(
             timeout=10,
             headers={"Accept": "application/vnd.github+json", "User-Agent": f"MeshCoreHome/{APP_VERSION}"},
@@ -96,7 +99,20 @@ class UpdateChecker:
             except Exception as exc:  # noqa: BLE001 - offline Pi, rate limit, DNS block...
                 self._error = f"{type(exc).__name__}: {str(exc)[:160]}"
                 log.info("update check failed: %s", self._error)
+            await self._load_installed()
             self._checked_at = time.time()
+
+    async def _load_installed(self) -> None:
+        """Notes for the running version: reuse the latest release if it matches, else fetch once."""
+        if self._installed is not None and self._installed.version == APP_VERSION:
+            return
+        if self._latest is not None and self._latest.version == APP_VERSION:
+            self._installed = self._latest
+            return
+        try:
+            self._installed = await self._fetch(f"tags/v{APP_VERSION}")
+        except Exception as exc:  # noqa: BLE001 - e.g. a development build with no release
+            log.debug("no release notes for v%s: %s", APP_VERSION, exc)
 
     def summary(self) -> dict[str, Any]:
         s = get_settings()
@@ -116,6 +132,14 @@ class UpdateChecker:
                 "notes": latest.notes,
                 "published_at": latest.published_at,
                 "has_native_package": latest.has_native_package,
+            },
+            "installed": None
+            if self._installed is None
+            else {
+                "version": self._installed.version,
+                "url": self._installed.url,
+                "notes": self._installed.notes,
+                "published_at": self._installed.published_at,
             },
             "update_available": available,
             "can_install": available

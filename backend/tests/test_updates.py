@@ -25,8 +25,13 @@ def _bump(v: str) -> str:
 def fake_release(monkeypatch):
     newer = _bump(APP_VERSION)
 
-    async def fetch(self):
-        return ReleaseInfo(newer, f"https://example.invalid/v{newer}", "Release notes", None, True)
+    async def fetch(self, which="latest"):
+        if which == "latest":
+            return ReleaseInfo(newer, f"https://example.invalid/v{newer}", "Release notes", None, True)
+        assert which == f"tags/v{APP_VERSION}"
+        return ReleaseInfo(
+            APP_VERSION, f"https://example.invalid/v{APP_VERSION}", "Installed notes", None, True
+        )
 
     monkeypatch.setattr(updates.UpdateChecker, "_fetch", fetch)
     updates.checker._checked_at = 0
@@ -102,3 +107,29 @@ async def test_tls_status_reported(client, native):
     )
     tls = (await client.get("/api/system/update")).json()["tls"]
     assert tls["host"] == "meshcore.example.com" and tls["not_after"].startswith("2027")
+
+
+async def test_installed_release_notes_when_up_to_date(client, monkeypatch):
+    calls = []
+
+    async def fetch(self, which="latest"):
+        calls.append(which)
+        return ReleaseInfo(
+            APP_VERSION, f"https://example.invalid/v{APP_VERSION}", "What's new here", None, True
+        )
+
+    monkeypatch.setattr(updates.UpdateChecker, "_fetch", fetch)
+    updates.checker.__init__()
+    await do_setup(client, mode="none")
+    info = (await client.get("/api/system/update")).json()
+    assert info["update_available"] is False
+    assert info["installed"]["version"] == APP_VERSION and info["installed"]["notes"] == "What's new here"
+    assert calls == ["latest"]  # latest == installed, so no second request
+    updates.checker.__init__()
+
+
+async def test_installed_notes_fetched_separately_when_update_available(client, fake_release):
+    await do_setup(client, mode="none")
+    info = (await client.get("/api/system/update")).json()
+    assert info["latest"]["version"] == fake_release
+    assert info["installed"]["notes"] == "Installed notes"

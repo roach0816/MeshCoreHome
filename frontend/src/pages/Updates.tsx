@@ -6,6 +6,7 @@ import { api, type UpdateInfo, type UpdateState, type UpdateStatus } from "../li
 import { useUpdateInfo } from "../lib/queries";
 import { Badge, Button, Card, ErrorText } from "../components/ui";
 import { Dialog } from "../components/Dialog";
+import { MarkdownLite } from "../components/MarkdownLite";
 import { cx, formatDateTime, relativeSeconds } from "../lib/util";
 
 const ACTIVE: UpdateState[] = ["queued", "downloading", "installing", "migrating", "restarting"];
@@ -153,12 +154,32 @@ export function Updates() {
           )}
 
           {d && !watching && !d.update_available && d.checked_at && !d.error && (
-            <Card className="flex items-center gap-3 p-4 sm:p-5">
-              <CheckCircle2 className="size-6 shrink-0 text-ok" aria-hidden />
-              <p className="text-sm">
-                You're up to date. v{d.current_version} is the latest release.
-              </p>
+            <Card className="flex items-start gap-3 p-4 sm:p-5">
+              <CheckCircle2 className="mt-0.5 size-6 shrink-0 text-ok" aria-hidden />
+              <div className="space-y-1 text-sm">
+                <p>You're up to date. v{d.current_version} is the latest release.</p>
+                <p className="text-muted">
+                  {d.install_kind === "native"
+                    ? "When a new version is released, an Install button appears here — this installation can update itself."
+                    : "This installation runs in a container (Docker / Kubernetes), so new versions arrive by redeploying — with Rancher Continuous Delivery that happens automatically."}
+                </p>
+              </div>
             </Card>
+          )}
+
+          {d?.installed && !watching && (
+            <Section
+              title={`What's new in v${d.installed.version}`}
+              aside={<Badge>{d.update_available ? "Installed" : "Current"}</Badge>}
+            >
+              <p className="text-sm text-muted">
+                Released {d.installed.published_at ? formatDateTime(d.installed.published_at) : "—"} ·{" "}
+                <a href={d.installed.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-accent underline">
+                  View on GitHub <ExternalLink className="size-3.5" aria-hidden />
+                </a>
+              </p>
+              <ReleaseNotes text={d.installed.notes} />
+            </Section>
           )}
 
           {d?.status && !watching && (d.status.state === "failed" || d.status.state === "rolled_back") && (
@@ -213,15 +234,15 @@ function ReleaseNotes({ text }: { text: string }) {
   const long = notes.split("\n").length > 14 || notes.length > 1200;
   return (
     <div>
-      {/* Release notes are shown as plain text (never rendered as HTML). */}
-      <pre
+      {/* Release notes: lightweight Markdown built as React elements, never interpreted as HTML. */}
+      <div
         className={cx(
-          "whitespace-pre-wrap break-words rounded-lg bg-surface-2 px-3 py-2 font-sans text-sm leading-relaxed",
-          long && !open && "max-h-64 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]",
+          "break-words rounded-lg bg-surface-2 px-4 py-3",
+          long && !open && "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]",
         )}
       >
-        {notes}
-      </pre>
+        <MarkdownLite text={notes} />
+      </div>
       {long && (
         <button onClick={() => setOpen(!open)} className="mt-1 text-xs text-accent underline">
           {open ? "Show less" : "Show all release notes"}

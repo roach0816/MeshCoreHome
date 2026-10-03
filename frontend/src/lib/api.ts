@@ -310,6 +310,7 @@ export interface UpdateInfo {
   checked_at: number | null;
   error: string | null;
   latest: { version: string; url: string; notes: string; published_at: string | null; has_native_package: boolean } | null;
+  installed: { version: string; url: string; notes: string; published_at: string | null } | null;
   update_available: boolean;
   can_install: boolean;
   status: UpdateStatus | null;
