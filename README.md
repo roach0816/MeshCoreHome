@@ -156,7 +156,7 @@ up where a failed attempt stopped, and repairs a broken install.
 Manage it with the `meshcore-home` command:
 
 ```text
-meshcore-home status         version, service state, web address
+sudo meshcore-home status    diagnostic report (start here when something is wrong)
 sudo meshcore-home https     set up HTTPS (or `https --disable` to go back to plain HTTP)
 sudo meshcore-home security-updates   turn on automatic OS security updates
 meshcore-home logs [-f]      application log
@@ -164,6 +164,23 @@ sudo meshcore-home update    upgrade to the latest release (same wizard, with a 
 sudo meshcore-home backup    back up the database now
 sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
 ```
+
+`meshcore-home status` checks every part of the installation and marks each line ✓ (fine),
+• (information), ! (warning) or ✗ (problem), with a suggested fix for each problem:
+
+- **App:** version, service (including crash loops), web health, and whether the app is responding.
+- **Radio:** connection state and last error. If the radio is disconnected, it also tests whether
+  the gateway's address and port can be reached, which tells a network problem apart from a
+  firmware or handshake problem. Collection gaps are listed too.
+- **Database:** PostgreSQL and the archive size.
+- **Network & HTTPS:** the address, nginx, certificate expiry, and automatic renewal.
+- **Updates:** the latest release, the last upgrade's result, and OS security updates.
+- **System:** disk, memory, clock synchronization, temperature, and Raspberry Pi under-voltage.
+- **Recent log problems:** the last 24 hours, with repeated lines grouped.
+
+The report contains no passwords, keys, or tokens, so you can paste it when asking for help (it
+does include network addresses). It exits with status 1 when it finds a problem, so scripts and
+monitoring can use it too.
 
 ### HTTPS on the Pi
 
@@ -464,6 +481,9 @@ If you used the simulated radio first, use **Settings → Data → Delete simula
 sample conversations. This option is available once the mode is no longer *Simulated*.
 
 ### Troubleshooting
+
+On a Raspberry Pi or Debian install, start with `sudo meshcore-home status` (see above). It
+checks the radio connection and the rest of the installation, and suggests what to do next.
 
 | Symptom | Likely cause |
 | --- | --- |

@@ -17,7 +17,7 @@ from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
 from app.security import SESSION_COOKIE
-from app.services import app_settings, updates
+from app.services import app_settings, diagnostics, updates
 
 log = logging.getLogger("meshcore_home")
 
@@ -45,10 +45,12 @@ async def lifespan(app: FastAPI):
         )
     supervisor.start()
     update_task = asyncio.create_task(_update_check_loop(), name="update-check")
+    diag_task = asyncio.create_task(diagnostics.loop(), name="diagnostics")
     try:
         yield
     finally:
         update_task.cancel()
+        diag_task.cancel()
         await supervisor.stop()
         hub.close_all()
         await db.dispose_engine()

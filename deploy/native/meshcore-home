@@ -2,7 +2,6 @@
 # meshcore-home — manage a native MeshCore Home install.
 set -euo pipefail
 PREFIX=/opt/meshcore-home
-ENV_FILE=/etc/meshcore-home/meshcore-home.env
 STATE_DIR=/var/lib/meshcore-home
 SERVICE=meshcore-home
 INSTALLER=$PREFIX/current/deploy/native/install.sh
@@ -13,7 +12,7 @@ usage() {
   cat <<USAGE
 Usage: meshcore-home <command>
 
-  status         Show version, service state and web address
+  status         Diagnostic report: service, web, radio, database, HTTPS, updates, system, log problems
   logs [-f]      Show (or follow) the application log
   update         Upgrade to the latest release (interactive)
   restart        Restart the application
@@ -30,13 +29,10 @@ cmd=${1:-status}; shift || true
 case "$cmd" in
   version) cat "$PREFIX/current/VERSION" ;;
   status)
-    v=$(cat "$PREFIX/current/VERSION" 2>/dev/null || echo "?")
-    state=$(systemctl is-active "$SERVICE" 2>/dev/null || true)
-    port=$(sed -n 's/^PORT=//p' "$ENV_FILE" 2>/dev/null | tail -n1); port=${port:-8080}
-    echo "MeshCore Home v$v — service: $state"
-    for ip in $(hostname -I 2>/dev/null); do [[ $ip == *.* ]] && echo "  http://$ip:$port"; done
-    if st=$(cat "$STATE_DIR/update-status.json" 2>/dev/null); then echo "  last update: $st" | cut -c1-160; fi
-    ;;
+    # A full diagnostic report (service, web, radio, database, HTTPS, updates, system, recent
+    # log problems). Needs root to read the configuration and the app's health snapshot.
+    need_root "$cmd" "$@"
+    exec python3 "$PREFIX/current/deploy/native/status.py" "$@" ;;
   logs) exec journalctl -u "$SERVICE" --no-pager -n 200 "$@" ;;
   restart) need_root "$cmd" "$@"; systemctl restart "$SERVICE"; systemctl --no-pager status "$SERVICE" | head -n 5 ;;
   update|upgrade) need_root "$cmd" "$@"; exec bash "$INSTALLER" --upgrade "$@" ;;
