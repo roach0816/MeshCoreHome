@@ -348,3 +348,21 @@ export interface NetworkInfo {
   status: NetworkStatus | null;
   in_progress: boolean;
 }
+
+export type ApiKeyScope = "read" | "write";
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  scope: ApiKeyScope;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  expired: boolean;
+}
+
+export interface ApiKeyCreated {
+  key: string;
+  api_key: ApiKey;
+}

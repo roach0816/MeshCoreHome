@@ -17,6 +17,8 @@ REQUESTED_WITH_HEADER = "x-requested-with"
 REQUESTED_WITH_VALUE = "meshcore-home"
 
 MIN_PASSWORD_LENGTH = 10
+# API keys: "mch_" + 256 random bits. Only a SHA-256 digest is stored.
+API_KEY_PREFIX = "mch_"
 
 _hasher = PasswordHasher()
 
@@ -34,6 +36,10 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 def new_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def new_api_key() -> str:
+    return API_KEY_PREFIX + secrets.token_urlsafe(32)
 
 
 def token_digest(token: str) -> str:
@@ -72,3 +78,4 @@ class RateLimiter:
 login_failures = RateLimiter(limit=5, window_seconds=60)
 setup_failures = RateLimiter(limit=5, window_seconds=60)
 send_limiter = RateLimiter(limit=20, window_seconds=60)
+api_key_failures = RateLimiter(limit=20, window_seconds=60)

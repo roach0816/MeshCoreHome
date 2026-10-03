@@ -11,6 +11,7 @@
 #     --from-file PATH   install from a local meshcore-home-X.Y.Z.tar.gz (offline / testing)
 #     --port N           HTTP port for a fresh install (default 8080)
 #     --yes              answer "yes" to every prompt (unattended)
+#     --plain            plain line-by-line output instead of the full-screen dashboard
 #     --upgrade          upgrade an existing install (also chosen automatically when one exists)
 #     --from-request     web-UI upgrade: read the requested version from the state directory and
 #                        report progress there (run by meshcore-home-update.service, never by hand)
@@ -58,7 +59,7 @@ API_URL="${MESHCORE_HOME_API:-https://api.github.com}"
 DOWNLOAD_BASE="${MESHCORE_HOME_DOWNLOAD_BASE:-}"
 
 # ---- arguments -----------------------------------------------------------------------------
-WANT_VERSION="" FROM_FILE="" PORT="" ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
+WANT_VERSION="" FROM_FILE="" PORT="" PLAIN=0 ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
 HTTPS_HOST="${MESHCORE_HOME_HTTPS_HOST:-}" HTTPS_EMAIL="${MESHCORE_HOME_HTTPS_EMAIL:-}"
 while (($#)); do
   case "$1" in
@@ -66,6 +67,7 @@ while (($#)); do
     --from-file) FROM_FILE="${2:?--from-file needs a path}"; shift ;;
     --port) PORT="${2:?--port needs a value}"; shift ;;
     --yes|-y) ASSUME_YES=1 ;;
+    --plain) PLAIN=1 ;;
     --upgrade) MODE=upgrade ;;
     --from-request) MODE=upgrade; FROM_REQUEST=1; ASSUME_YES=1 ;;
     --uninstall) MODE=uninstall ;;
@@ -76,34 +78,366 @@ while (($#)); do
     --apply-config) MODE=apply-config; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --sync-units) MODE=sync-units; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
 done
 
 # ---- terminal UI ---------------------------------------------------------------------------
+# An interactive terminal gets a full-screen dashboard (on the alternate screen, like `less` or
+# `top`): the checklist of steps, what is happening now, and one overall progress bar, all redrawn
+# in place. Explanations and questions appear in a panel on the same screen. When it ends, a short
+# summary is printed to the normal terminal so it stays in the scrollback.
+# Everything else (web-UI runs, pipes, --plain, small or "dumb" terminals) gets plain line output.
 if [[ -t 1 && $FROM_REQUEST -eq 0 && $CONFIG_MODE -eq 0 ]]; then
   B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' C=$'\e[36m' N=$'\e[0m'
 else
   B="" D="" R="" G="" Y="" C="" N=""
 fi
 TTY_IN=/dev/tty
-STEP=0 STEPS=0 STEP_TITLES=()
 STATUS_FILE="$STATE_DIR/update-status.json"
 TARGET_VERSION=""
+STEP=0 STEPS=0 STEP_TITLES=() STEP_STATE=() STEP_NOTE=() STEP_WEIGHTS=()
+RECENT=() WARNINGS=() PANEL=() REPLY_TEXT=""
+ACTIVITY="" ACT_PCT=-1 ACT_SINCE=0 BUSY=0 SPIN_I=0 ALL_DONE=0
+UI_TITLE="Installer" PROMPT_Q="" PROMPT_ERR="" PROMPT_ROW=1 PROMPT_COL=1
+ROWS=24 COLS=80 TUI=0 TUI_ON=0 TUI_RESIZED=0 TUI_LAST=0 STTY_SAVED=""
 
-# Locale-independent (byte-safe) drawing helpers: minimal systems often have no UTF-8 locale,
-# where bash string slicing and `tr` work on bytes and would split multibyte characters.
+# Character counts below assume a UTF-8 locale; minimal systems often have none configured,
+# but glibc always provides C.UTF-8. Only character handling changes (messages stay as they are).
+if [[ $(locale charmap 2>/dev/null || true) != UTF-8 && $'\n'"$(locale -a 2>/dev/null || true)"$'\n' == *$'\n'C.[uU][tT][fF]8$'\n'* ]]; then
+  if [[ -n ${LC_ALL:-} ]]; then export LC_ALL=C.UTF-8; else export LC_CTYPE=C.UTF-8; fi
+fi
+
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 repeat() { local i out=""; for ((i = 0; i < $2; i++)); do out+="$1"; done; printf '%s' "$out"; }
+repv() {  # repv VAR CHAR N — like repeat, into VAR without a subshell (the dashboard redraws often)
+  local -n _rep=$1
+  printf -v _rep '%*s' "$3" ''
+  _rep=${_rep// /$2}
+}
 
-log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG_FILE"; }
+tui_size() {
+  local r c
+  if read -r r c < <(stty size <"$TTY_IN" 2>/dev/null) && [[ $r =~ ^[0-9]+$ && $c =~ ^[0-9]+$ ]] && ((r > 0 && c > 0)); then
+    ROWS=$r COLS=$c
+  fi
+}
+
+if [[ -t 1 && $FROM_REQUEST -eq 0 && $CONFIG_MODE -eq 0 && $PLAIN -eq 0 && ${TERM:-dumb} != dumb ]] &&
+  { : <"$TTY_IN"; } 2>/dev/null; then
+  tui_size
+  ((ROWS >= 20 && COLS >= 64)) && TUI=1
+fi
+
+log() { strip_ansi "$*"; printf '%s %s\n' "$(date '+%F %T')" "$STRIPPED" >>"$LOG_FILE"; }
 say() { printf '%s\n' "$*"; log "$*"; }
-ok() { say "  ${G}✓${N} $*"; }
-info() { say "  ${C}•${N} $*"; }
-warn() { say "  ${Y}!${N} $*"; }
+remember() {  # remember LINE — shown under the current step on the dashboard (last three kept)
+  RECENT+=("$1")
+  ((${#RECENT[@]} <= 3)) || RECENT=("${RECENT[@]: -3}")
+  tui_draw
+}
+ok() { if ((TUI_ON)); then log "  ok: $*"; remember "${G}✓${N} $*"; else say "  ${G}✓${N} $*"; fi; }
+info() { if ((TUI_ON)); then log "  $*"; remember "${C}•${N} $*"; else say "  ${C}•${N} $*"; fi; }
+warn() {
+  if ((TUI_ON)); then log "  warning: $*"; WARNINGS+=("$*"); remember "${Y}!${N} $*"; else say "  ${Y}!${N} $*"; fi
+}
+note() {  # note TEXT — explanation shown with the next question (plain output: printed now)
+  log "  $*"
+  if ((TUI_ON)); then PANEL+=("$*"); else printf '  %s\n' "$*"; fi
+}
+note_row() {  # note_row TEXT — like note, but a table row: kept on one line (cut to fit), never wrapped
+  log "  $*"
+  if ((TUI_ON)); then PANEL+=($'\x01'"$*"); else printf '  %s\n' "$*"; fi
+}
+activity() {  # activity TEXT [PERCENT] — what is happening now (shown above the progress bar)
+  ACTIVITY=$1 ACT_PCT=${2:--1} ACT_SINCE=$SECONDS
+  tui_draw
+}
+step_note() { STEP_NOTE[STEP - 1]=$1; tui_draw; }  # short result shown beside the current step
+step_skip() {  # step_skip [NOTE] — mark the current step as skipped
+  STEP_STATE[STEP - 1]=skipped
+  [[ -z ${1:-} ]] || STEP_NOTE[STEP - 1]=$1
+  tui_draw
+}
 
+# ---- drawing ---------------------------------------------------------------------------------
+VL=0 FIT="" STRIPPED=""
+# Only our own colour codes appear on screen: ESC [ one or two digits m.
+strip_ansi() { STRIPPED=${1//$'\e['[0-9]m/}; STRIPPED=${STRIPPED//$'\e['[0-9][0-9]m/}; }
+vis_len() { strip_ansi "$1"; VL=${#STRIPPED}; }
+fit() {  # fit TEXT WIDTH — sets FIT to TEXT cut to WIDTH visible columns
+  vis_len "$1"
+  if ((VL <= $2)); then FIT=$1; return; fi
+  strip_ansi "$1"
+  FIT="${STRIPPED:0:$(($2 - 1))}…"
+}
+pad_to() {  # pad_to TEXT WIDTH — sets FIT to TEXT padded with spaces to WIDTH visible columns
+  vis_len "$1"
+  FIT=$1
+  local pad
+  ((VL >= $2)) || { repv pad ' ' $(($2 - VL)); FIT+=$pad; }
+}
+WRAPPED=()
+wrap() {  # wrap TEXT WIDTH — appends the wrapped lines of TEXT to WRAPPED (hanging indent)
+  vis_len "$1"
+  if ((VL <= $2)); then WRAPPED+=("$1"); return; fi
+  # Wrap the plain text at spaces, keeping runs of spaces (aligned columns) intact.
+  strip_ansi "$1"
+  local s=$STRIPPED lead="" indent head cut
+  [[ $s =~ ^(\ *(• )?) ]] && lead=${BASH_REMATCH[1]}
+  repv indent ' ' ${#lead}
+  while ((${#s} > $2)); do
+    head=${s:0:$(($2 + 1))}
+    cut=${head% *}
+    ((${#cut} > ${#indent})) || cut=${s:0:$2}  # one long word: hard break
+    WRAPPED+=("${cut%"${cut##*[! ]}"}")
+    s=${s:${#cut}}
+    s="$indent${s#"${s%%[! ]*}"}"
+  done
+  [[ -z ${s// /} ]] || WRAPPED+=("$s")  # nothing left when the text ended exactly at the edge
+}
+
+title_col() {  # the column where step notes start: just past the longest step title
+  local t; TITLE_COL=0
+  for t in "${STEP_TITLES[@]}"; do ((${#t} > TITLE_COL)) && TITLE_COL=${#t}; done
+  TITLE_COL=$((TITLE_COL + 9))
+}
+TITLE_COL=46
+
+progress_pct() {  # overall progress across the weighted steps, 0-100
+  local i w total=0 before=0 cur=0
+  ((ALL_DONE)) && { PCT=100; return; }
+  for ((i = 0; i < STEPS; i++)); do
+    w=${STEP_WEIGHTS[i]:-1}; total=$((total + w))
+    ((i < STEP - 1)) && before=$((before + w))
+  done
+  ((STEP > 0)) && cur=${STEP_WEIGHTS[STEP - 1]:-1}
+  ((total > 0)) || { PCT=0; return; }
+  local frac=$ACT_PCT; ((frac < 0)) && frac=0; ((frac > 100)) && frac=100
+  PCT=$(((before * 100 + cur * frac) / total))
+}
+
+tui_draw() {  # redraw the whole screen in place (cheap: a couple of kilobytes)
+  ((TUI_ON)) || return 0
+  if ((TUI_RESIZED)); then TUI_RESIZED=0; tui_size; fi
+  local w=$COLS h=$ROWS i line icon title body_rows
+  local -a body=()
+  body_rows=$((h - 6))
+
+  if [[ -n $PROMPT_Q ]]; then
+    # Question panel: the step, its explanation, then the question with the cursor after it.
+    if ((STEPS > 1)); then
+      body+=("  ${C}${B}Step $STEP of $STEPS${N}${B} · ${STEP_TITLES[STEP - 1]}${N}" "")
+    elif ((STEPS == 1)); then
+      body+=("  ${B}${STEP_TITLES[0]}${N}" "")
+    fi
+    WRAPPED=()
+    for line in "${PANEL[@]}"; do
+      if [[ $line == $'\x01'* ]]; then fit "  ${line:1}" $((w - 2)); WRAPPED+=("$FIT"); else wrap "  $line" $((w - 2)); fi
+    done
+    local room=$((body_rows - ${#body[@]} - 3))
+    if ((${#WRAPPED[@]} > room)); then
+      local more=$((${#WRAPPED[@]} - room + 1))
+      WRAPPED=("${WRAPPED[@]:0:$((room - 1))}" "  ${D}… $more more line(s) in $LOG_FILE${N}")
+    fi
+    body+=("${WRAPPED[@]}")
+    ((${#PANEL[@]})) && body+=("")
+    [[ -z $PROMPT_ERR ]] || body+=("  ${Y}${PROMPT_ERR}${N}")
+    fit "  ${B}${PROMPT_Q}${N} " $((w - 12))
+    body+=("$FIT")
+    vis_len "$FIT"
+    PROMPT_ROW=$((2 + ${#body[@]})) PROMPT_COL=$((VL + 1))
+  else
+    local show_recent=1 extra=${#RECENT[@]}
+    ((STEPS + extra <= body_rows)) || show_recent=0
+    for ((i = 0; i < STEPS; i++)); do
+      case ${STEP_STATE[i]} in
+        done) icon="${G}✓${N}" title=${STEP_TITLES[i]} ;;
+        active) icon="${C}${SPIN[SPIN_I % 10]}${N}" title="${B}${STEP_TITLES[i]}${N}" ;;
+        skipped) icon="${D}–${N}" title="${D}${STEP_TITLES[i]}${N}" ;;
+        failed) icon="${R}✗${N}" title="${R}${STEP_TITLES[i]}${N}" ;;
+        *) icon="${D}○${N}" title="${D}${STEP_TITLES[i]}${N}" ;;
+      esac
+      pad_to "   $icon  $title" "$TITLE_COL"
+      line=$FIT
+      [[ -z ${STEP_NOTE[i]:-} ]] || line+="${D}${STEP_NOTE[i]}${N}"
+      fit "$line" "$w"; body+=("$FIT")
+      if ((show_recent)) && [[ ${STEP_STATE[i]} == active ]]; then
+        for line in "${RECENT[@]}"; do fit "        $line" "$w"; body+=("$FIT"); done
+      fi
+    done
+  fi
+
+  # Footer: activity, the progress bar, the log location.
+  progress_pct
+  local bw=$((w - 30)); ((bw > 50)) && bw=50
+  local filled=$((PCT * bw / 100)) act=$ACTIVITY
+  ((ACT_PCT >= 0 && ACT_PCT < 100 && STEPS > 0)) && act+=" ${D}${ACT_PCT}%${N}"
+  if ((BUSY)); then act="${C}${SPIN[SPIN_I % 10]}${N} $act ${D}($((SECONDS - ACT_SINCE))s)${N}"; fi
+  local steptxt=""; ((STEPS > 1 && STEP > 0)) && steptxt="Step $STEP of $STEPS"
+  fit "  $act" "$w"; local f1=$FIT
+  local f2 full empty
+  repv full █ "$filled"; repv empty ░ $((bw - filled))
+  printf -v f2 '  %s%s%s%s%s %3d%%  %s%s%s' "$G" "$full" "$D" "$empty" "$N" "$PCT" "$D" "$steptxt" "$N"
+  fit "  ${D}Full log: $LOG_FILE${N}" "$w"; local f3=$FIT
+
+  local header right=""
+  [[ -z $TARGET_VERSION ]] || right="v$TARGET_VERSION"
+  pad_to " ${B}${APP_NAME}${N} ${D}·${N} $UI_TITLE" $((w - ${#right} - 1))
+  header="$FIT$right"
+  local rule; repv rule ─ "$w"; rule="${D}${rule}${N}"
+
+  local out=$'\e[H'"$header"$'\e[K\n'"$rule"$'\e[K\n'
+  for ((i = 0; i < body_rows; i++)); do out+="${body[i]:-}"$'\e[K\n'; done
+  out+="$rule"$'\e[K\n'"$f1"$'\e[K\n'"$f2"$'\e[K\n'"$f3"$'\e[K\e[J'
+  printf '%s' "$out" >&8
+  TUI_LAST=${EPOCHREALTIME/./}
+}
+tui_tick() {  # redraw at most ~12 times a second (for fast progress sources such as apt)
+  ((TUI_ON)) || return 0
+  local now=${EPOCHREALTIME/./}
+  ((now - TUI_LAST < 80000)) || { SPIN_I=$((SPIN_I + 1)); tui_draw; }
+}
+
+tui_start() {  # tui_start TITLE — enter the full-screen dashboard (if this terminal can show it)
+  UI_TITLE=$1
+  ((TUI && !TUI_ON)) || return 0
+  exec 8>&1
+  STTY_SAVED=$(stty -g <"$TTY_IN" 2>/dev/null || true)
+  stty -echo <"$TTY_IN" 2>/dev/null || true  # stray keypresses would scribble over the screen
+  TUI_ON=1
+  trap 'TUI_RESIZED=1' WINCH
+  printf '\e[?1049h\e[?25l\e[H\e[2J' >&8
+  tui_draw
+}
+
+tui_end() {  # leave the dashboard and print a short summary to the normal terminal
+  ((TUI_ON)) || return 0
+  TUI_ON=0
+  trap - WINCH
+  printf '\e[?25h\e[?1049l' >&8
+  [[ -z $STTY_SAVED ]] || stty "$STTY_SAVED" <"$TTY_IN" 2>/dev/null || true
+  local i icon last=-1
+  printf '\n  %s%s%s · %s%s\n' "$B" "$APP_NAME" "$N" "$UI_TITLE" "${TARGET_VERSION:+  ${D}v$TARGET_VERSION${N}}"
+  for ((i = 0; i < STEPS; i++)); do
+    case ${STEP_STATE[i]} in
+      done) icon="${G}✓${N}" ;;
+      skipped) icon="${D}–${N}" ;;
+      failed) icon="${R}✗${N}" ;;
+      active) icon="${Y}•${N}" ;;
+      *) continue ;;
+    esac
+    last=$i
+    pad_to "    $icon ${STEP_TITLES[i]}" "$TITLE_COL"
+    printf '%s%s%s%s\n' "$FIT" "$D" "${STEP_NOTE[i]:-}" "$N"
+  done
+  # The last step's own messages (e.g. why it stopped) are worth keeping on screen.
+  local shown=""
+  if ((last >= 0)) && [[ ${STEP_STATE[last]} != "done" ]]; then
+    for i in "${RECENT[@]}"; do printf '        %s\n' "$i"; shown+="$i"$'\n'; done
+  fi
+  for i in "${WARNINGS[@]}"; do
+    [[ $shown == *"$i"* ]] || printf '  %s!%s %s\n' "$Y" "$N" "$i"
+  done
+}
+
+wait_busy() {  # wait_busy PID [PROBE] — animate until PID exits; returns its exit status
+  local pid=$1 probe=${2:-} t=0
+  BUSY=1
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ -n $probe ]] && ((t % 8 == 0)); then "$probe" || true; fi
+    t=$((t + 1)) SPIN_I=$((SPIN_I + 1))
+    tui_draw
+    sleep 0.12
+  done
+  BUSY=0
+  wait "$pid"
+}
+
+# ---- questions -------------------------------------------------------------------------------
+ask_line() {  # ask_line QUESTION SECRET(0/1) [ERROR] — reads one line from the terminal into REPLY_TEXT
+  REPLY_TEXT=""
+  if ((!TUI_ON)); then
+    [[ -z ${3:-} ]] || printf '  %s\n' "$3" >/dev/tty
+    printf '\n  %s%s%s ' "$B" "$1" "$N" >/dev/tty
+    if (($2)); then read -rs REPLY_TEXT <"$TTY_IN" || true; printf '\n' >/dev/tty; else read -r REPLY_TEXT <"$TTY_IN" || true; fi
+    return 0
+  fi
+  local saved=$ACTIVITY saved_pct=$ACT_PCT rc
+  PROMPT_Q=$1 PROMPT_ERR=${3:-} ACTIVITY="Waiting for your answer" ACT_PCT=-1 BUSY=0
+  while true; do
+    tui_draw
+    printf '\e[%d;%dH\e[?25h' "$PROMPT_ROW" "$PROMPT_COL" >&8
+    stty echo <"$TTY_IN" 2>/dev/null || true
+    rc=0
+    if (($2)); then read -rs REPLY_TEXT <"$TTY_IN" || rc=$?; else read -r REPLY_TEXT <"$TTY_IN" || rc=$?; fi
+    stty -echo <"$TTY_IN" 2>/dev/null || true
+    printf '\e[?25l' >&8
+    # A window resize interrupts read (status > 128): redraw and ask again.
+    if ((rc > 128 && TUI_RESIZED)); then continue; fi
+    break
+  done
+  PROMPT_Q="" PROMPT_ERR="" ACTIVITY=$saved ACT_PCT=$saved_pct
+  PANEL=()
+  tui_draw
+}
+
+cancelled() {  # cancelled QUESTION — the user answered "n" to a confirmation
+  log "cancelled at: $1"
+  ((STEP == 0)) || { STEP_STATE[STEP - 1]=skipped; STEP_NOTE[STEP - 1]="Cancelled"; }
+  tui_end
+  printf '\n  %sCancelled.%s Nothing further was changed.\n\n' "$Y" "$N"
+  exit 1
+}
+
+confirm() {  # confirm "Question" — Y/n; "n" cancels the whole run
+  local err=""
+  if ((ASSUME_YES)); then log "auto-yes: $1"; PANEL=(); return 0; fi
+  if [[ ! -r $TTY_IN ]] || ! { : <"$TTY_IN"; } 2>/dev/null; then
+    die "No terminal available to ask: $1" "Run the installer from a terminal, or pass --yes."
+  fi
+  while true; do
+    ask_line "$1 [Y/n]" 0 "$err"
+    case "${REPLY_TEXT,,}" in
+      ""|y|yes) log "confirmed: $1"; PANEL=(); return 0 ;;
+      n|no) cancelled "$1" ;;
+      *) err="Please answer y or n." ;;
+    esac
+  done
+}
+
+ask_yn() {  # ask_yn "Question" y|n — returns 0 for yes; never cancels the run
+  local def=$2 err=""
+  if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then PANEL=(); [[ $def == y ]]; return; fi
+  while true; do
+    ask_line "$1 $([[ $def == y ]] && echo '[Y/n]' || echo '[y/N]')" 0 "$err"
+    case "${REPLY_TEXT,,}" in
+      "") log "answer ($def): $1"; [[ $def == y ]]; return ;;
+      y|yes) log "answer (y): $1"; return 0 ;;
+      n|no) log "answer (n): $1"; return 1 ;;
+      *) err="Please answer y or n." ;;
+    esac
+  done
+}
+
+ask() {  # ask VAR "Question" DEFAULT [ERROR] — free-text answer into VAR (default under --yes)
+  local -n _ask_var=$1
+  if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then _ask_var=$3; PANEL=(); return; fi
+  ask_line "$2${3:+ [$3]}" 0 "${4:-}"
+  _ask_var=${REPLY_TEXT:-$3}
+}
+
+ask_secret() {  # ask_secret VAR "Prompt" — hidden input (not echoed, not logged)
+  local -n _secret_var=$1
+  _secret_var=""
+  [[ -r $TTY_IN ]] || return 0
+  ask_line "$2" 1
+  _secret_var=$REPLY_TEXT
+}
+
+# ---- steps and failures ----------------------------------------------------------------------
 status() {  # status STATE MESSAGE — progress for web-UI requests (read by the app)
   ((FROM_REQUEST || CONFIG_MODE)) || return 0
   python3 - "$STATUS_FILE" "$1" "$TARGET_VERSION" "$2" "$LOG_FILE" <<'PY' || true
@@ -122,9 +456,12 @@ os.replace(tmp, path)
 PY
 }
 
-die() {
+die() {  # die MESSAGE [HINT] [tail] — stop; "tail" also shows the end of the log
   local msg="$1" hint="${2:-}"
+  ((STEP == 0)) || STEP_STATE[STEP - 1]=failed
+  tui_end
   printf '\n  %s✗ %s%s\n' "$R$B" "$msg" "$N" >&2
+  if [[ ${3:-} == tail ]]; then tail -n 15 "$LOG_FILE" | sed 's/^/    /' >&2; fi
   [[ -n $hint ]] && printf '    %s\n' "$hint" >&2
   printf '    %sFull log: %s%s\n\n' "$D" "$LOG_FILE" "$N" >&2
   log "FAILED: $msg"
@@ -136,10 +473,17 @@ on_err() {
   ((BASH_SUBSHELL == 0)) || return 0
   die "Unexpected error on line $1" "Re-run the installer; it is safe to run again."
 }
+WORK=""
+on_exit() {
+  tui_end
+  [[ -z $WORK ]] || rm -rf "$WORK"
+}
 trap 'on_err $LINENO' ERR
 trap 'printf "\n"; die "Interrupted"' INT
+trap on_exit EXIT
 
 banner() {
+  ((TUI)) && return 0  # the dashboard has its own header
   printf '\n%s' "$C$B"
   cat <<'ART'
    __  __           _      ____                  _   _
@@ -151,82 +495,50 @@ ART
   printf '%s\n' "$N"
 }
 
-plan() {  # plan "Title 1" "Title 2" ... — declares the wizard's steps
-  STEP_TITLES=("$@"); STEPS=$#; STEP=0
+plan() {  # plan "Title 1" "Title 2" ... — declares the steps (set STEP_WEIGHTS first to weight them)
+  STEP_TITLES=("$@"); STEPS=$#; STEP=0; STEP_STATE=(); STEP_NOTE=()
+  local t i=1
+  for t in "$@"; do STEP_STATE+=(pending); STEP_NOTE+=(""); done
+  title_col
+  if ((TUI_ON)); then tui_draw; return; fi
   printf '  %sThis will:%s\n' "$B" "$N"
-  local i=1 t
   for t in "$@"; do printf '    %s%d.%s %s\n' "$D" "$i" "$N" "$t"; i=$((i + 1)); done
   printf '\n'
 }
 
-step() {  # step — advance to the next declared step and draw the overall progress bar
+step() {  # step — finish the current step and start the next declared one
+  if ((STEP > 0)) && [[ ${STEP_STATE[STEP - 1]} == active ]]; then STEP_STATE[STEP - 1]="done"; fi
   STEP=$((STEP + 1))
-  local title="${STEP_TITLES[$((STEP - 1))]}" width=24 filled
+  STEP_STATE[STEP - 1]=active
+  RECENT=()
+  local title="${STEP_TITLES[$((STEP - 1))]}"
+  log "== Step $STEP/$STEPS: $title"
+  if ((TUI_ON)); then activity "$title"; return; fi
+  local width=24 filled
   filled=$((STEP * width / STEPS))
   printf '\n%s[%s%s]%s %sStep %d of %d%s  %s%s%s\n' "$C" \
     "$(repeat █ "$filled")" "$(repeat ░ $((width - filled)))" "$N" \
     "$D" "$STEP" "$STEPS" "$N" "$B" "$title" "$N"
-  log "== Step $STEP/$STEPS: $title"
 }
 
-confirm() {  # confirm "Question" — Y/n; "n" cancels the whole installation
-  local answer
-  if ((ASSUME_YES)); then log "auto-yes: $1"; return 0; fi
-  if [[ ! -r $TTY_IN ]] || ! { : <"$TTY_IN"; } 2>/dev/null; then
-    die "No terminal available to ask: $1" "Run the installer from a terminal, or pass --yes."
-  fi
-  while true; do
-    printf '\n  %s%s%s [Y/n] ' "$B" "$1" "$N"
-    read -r answer <"$TTY_IN" || answer=n
-    case "${answer,,}" in
-      ""|y|yes) log "confirmed: $1"; return 0 ;;
-      n|no)
-        printf '\n  %sInstallation cancelled.%s Nothing further was changed.\n\n' "$Y" "$N"
-        log "cancelled at: $1"
-        exit 1 ;;
-      *) printf '  Please answer y or n.\n' ;;
-    esac
-  done
+steps_done() {  # mark the run complete (100%)
+  if ((STEP > 0)) && [[ ${STEP_STATE[STEP - 1]} == active ]]; then STEP_STATE[STEP - 1]="done"; fi
+  ALL_DONE=1 ACTIVITY="Done" ACT_PCT=100 BUSY=0
+  tui_draw
 }
 
-ask_yn() {  # ask_yn "Question" y|n — returns 0 for yes; never cancels the installer
-  local answer def=$2
-  if ((ASSUME_YES)); then [[ $def == y ]]; return; fi
-  [[ -r $TTY_IN ]] || { [[ $def == y ]]; return; }
-  while true; do
-    printf '\n  %s%s%s %s ' "$B" "$1" "$N" "$([[ $def == y ]] && echo '[Y/n]' || echo '[y/N]')" >/dev/tty
-    read -r answer <"$TTY_IN" || answer=""
-    case "${answer,,}" in
-      "") [[ $def == y ]]; return ;;
-      y|yes) return 0 ;;
-      n|no) return 1 ;;
-      *) printf '  Please answer y or n.\n' >/dev/tty ;;
-    esac
-  done
-}
-
-ask_secret() {  # ask_secret "Prompt" — hidden input (not echoed, not logged)
-  local answer
-  [[ -r $TTY_IN ]] || { printf ''; return; }
-  printf '  %s%s%s ' "$B" "$1" "$N" >/dev/tty
-  read -rs answer <"$TTY_IN" || true
-  printf '\n' >/dev/tty
-  printf '%s' "$answer"
-}
-
-ask() {  # ask "Question" DEFAULT — free-text answer (returns default under --yes)
-  local answer
-  if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then printf '%s' "$2"; return; fi
-  if [[ -n $2 ]]; then printf '  %s%s%s [%s] ' "$B" "$1" "$N" "$2" >/dev/tty; else printf '  %s%s%s ' "$B" "$1" "$N" >/dev/tty; fi
-  read -r answer <"$TTY_IN" || true
-  printf '%s' "${answer:-$2}"
-}
-
-run() {  # run "Message" cmd... — runs quietly with a spinner, output goes to the log
+# ---- running commands ------------------------------------------------------------------------
+run() {  # run "Message" cmd... — runs quietly (output goes to the log) with live progress
   local msg="$1"; shift
   log "\$ $*"
+  if ((TUI_ON)); then
+    activity "$msg"
+    "$@" >>"$LOG_FILE" 2>&1 &
+    if wait_busy $! "${RUN_PROBE:-}"; then ok "$msg ${D}($((SECONDS - ACT_SINCE))s)${N}"; return; fi
+    die "$msg failed" "" tail
+  fi
   if [[ ! -t 1 || $FROM_REQUEST -eq 1 || $CONFIG_MODE -eq 1 ]]; then
-    "$@" >>"$LOG_FILE" 2>&1 || { tail -n 20 "$LOG_FILE" | sed 's/^/    /' >&2; die "$msg failed"; }
+    "$@" >>"$LOG_FILE" 2>&1 || die "$msg failed" "" tail
     ok "$msg"; return
   fi
   "$@" >>"$LOG_FILE" 2>&1 &
@@ -235,18 +547,35 @@ run() {  # run "Message" cmd... — runs quietly with a spinner, output goes to 
     printf '\r  %s%s%s %s %s(%ss)%s' "$C" "${SPIN[i++ % 10]}" "$N" "$msg" "$D" $((SECONDS - start)) "$N"
     sleep 0.1
   done
-  if wait "$pid"; then
-    printf '\r\e[K'; ok "$msg ${D}($((SECONDS - start))s)${N}"
-  else
-    printf '\r\e[K'; tail -n 20 "$LOG_FILE" | sed 's/^/    /' >&2
-    die "$msg failed"
-  fi
+  printf '\r\e[K'
+  wait "$pid" || die "$msg failed" "" tail
+  ok "$msg ${D}($((SECONDS - start))s)${N}"
 }
 
-bar() {  # bar PERCENT LABEL — single-line progress bar
-  local pct=${1%.*} width=30 filled
+run_bg() {  # run_bg "Message" cmd... — like run, but returns the status instead of stopping
+  local msg="$1" rc=0; shift
+  log "\$ $*"
+  if ((TUI_ON)); then
+    activity "$msg"
+    "$@" >>"$LOG_FILE" 2>&1 &
+    wait_busy $! || rc=$?
+  else
+    "$@" >>"$LOG_FILE" 2>&1 || rc=$?
+  fi
+  return "$rc"
+}
+
+bar() {  # bar PERCENT LABEL — progress of the current activity (apt, downloads)
+  local pct=${1%.*}
+  [[ $pct =~ ^[0-9]+$ ]] || return 0
   ((pct > 100)) && pct=100
-  filled=$((pct * width / 100))
+  if ((TUI_ON)); then
+    ACT_PCT=$pct
+    [[ -z ${2:-} ]] || ACTIVITY=$2
+    tui_tick
+    return 0
+  fi
+  local width=30 filled=$((pct * 30 / 100))
   printf '\r  %s%s%s%s%s %3d%% %s\e[K' "$G" "$(repeat █ "$filled")" "$D" "$(repeat ░ $((width - filled)))" "$N" "$pct" "${2:0:40}"
 }
 
@@ -285,11 +614,16 @@ missing_packages() {  # missing_packages PKG... — prints those not installed
 lan_addresses() { hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | head -n 3; }
 
 wait_healthy() {  # wait_healthy PORT EXPECTED_VERSION TIMEOUT
-  local port=$1 want=$2 deadline=$((SECONDS + $3)) v restarts
+  local port=$1 want=$2 deadline=$((SECONDS + $3)) v restarts base
+  # Give up early if systemd is crash-looping the service. Count restarts from now: before
+  # systemd 253 (Debian 12) a manual restart does not reset NRestarts, so a failed upgrade's
+  # restarts would otherwise make the rolled-back version look broken too.
+  base=$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)
+  [[ $base =~ ^[0-9]+$ ]] || base=0
   while ((SECONDS < deadline)); do
-    # Give up early if systemd is crash-looping the service (NRestarts resets on a manual restart).
     restarts=$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)
-    if [[ ${restarts:-0} -ge 2 ]] || systemctl is-failed --quiet "$SERVICE"; then
+    [[ $restarts =~ ^[0-9]+$ ]] || restarts=$base
+    if ((restarts - base >= 2)) || systemctl is-failed --quiet "$SERVICE"; then
       log "service is crash-looping (restarts=$restarts)"
       return 1
     fi
@@ -310,7 +644,7 @@ preflight() {
   . /etc/os-release
   local arch; arch=$(uname -m)
   case "${ID:-}:${VERSION_CODENAME:-}" in
-    debian:bookworm|debian:trixie|raspbian:bookworm|raspbian:trixie) ok "Operating system: ${PRETTY_NAME:-$ID}" ;;
+    debian:bookworm|debian:trixie|raspbian:bookworm|raspbian:trixie) ok "Operating system: ${PRETTY_NAME:-$ID}"; step_note "${PRETTY_NAME:-$ID}" ;;
     *)
       if [[ " ${ID_LIKE:-} " == *" debian "* || ${ID:-} == debian ]]; then
         warn "Untested OS: ${PRETTY_NAME:-unknown}. Supported: Raspberry Pi OS / Debian 12 (bookworm) and 13 (trixie)."
@@ -320,7 +654,7 @@ preflight() {
       fi ;;
   esac
   case "$arch" in
-    aarch64|x86_64) ok "Architecture: $arch" ;;
+    aarch64|x86_64) ok "Architecture: $arch"; step_note "${STEP_NOTE[STEP - 1]:-} · $arch" ;;
     armv7l|armv6l) die "A 64-bit operating system is required (found 32-bit $arch)" \
       "Re-image the Pi with Raspberry Pi OS (64-bit) using Raspberry Pi Imager." ;;
     *) die "Unsupported CPU architecture: $arch" ;;
@@ -337,12 +671,13 @@ preflight() {
 
   if [[ -z $FROM_FILE ]]; then
     if ! command -v curl >/dev/null; then
-      warn "curl is needed to download $APP_NAME but is not installed."
-      printf '\n  %sThis will run:%s apt-get update && apt-get install curl ca-certificates\n' "$B" "$N"
+      info "curl is needed to download $APP_NAME but is not installed."
+      note "${B}This will run:${N} apt-get update && apt-get install curl ca-certificates"
       confirm "Install curl?"
       run "Refreshing package lists" apt-get update
       run "Installing curl" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
     fi
+    activity "Checking internet access to GitHub"
     curl -fsS --max-time 15 -o /dev/null "$API_URL" >>"$LOG_FILE" 2>&1 ||
       die "Cannot reach $API_URL" "Check the Pi's internet connection and DNS."
     ok "Internet access to GitHub"
@@ -358,14 +693,16 @@ choose_version() {
     [[ -f $FROM_FILE ]] || die "File not found: $FROM_FILE"
     TARGET_VERSION=$(basename "$FROM_FILE" | sed -n 's/^meshcore-home-\([0-9.]*\)\.tar\.gz$/\1/p')
     valid_version "$TARGET_VERSION" || die "Unexpected package name: $(basename "$FROM_FILE")"
-    ok "Package: $FROM_FILE (v$TARGET_VERSION)"
+    ok "Package: $FROM_FILE (v$TARGET_VERSION)"; step_note "v$TARGET_VERSION (local file)"
   else
     if [[ -n $WANT_VERSION ]]; then
       TARGET_VERSION=${WANT_VERSION#v}
       valid_version "$TARGET_VERSION" || die "Invalid version: $WANT_VERSION"
     else
+      activity "Looking up the latest release"
       TARGET_VERSION=$(latest_version) || die "Could not look up the latest release of $REPO"
     fi
+    step_note "v$TARGET_VERSION"
     ok "Release: v$TARGET_VERSION  ${D}https://github.com/$REPO/releases/tag/v$TARGET_VERSION${N}"
   fi
   if [[ $MODE == upgrade ]]; then
@@ -380,20 +717,22 @@ choose_version() {
       warn "v$cur is installed but not running correctly."
       confirm "Repair the installation by reinstalling v$cur?"
       REPAIR=1
+      step_note "Repair v$cur"
       return
     fi
     version_gt "$TARGET_VERSION" "$cur" ||
       die "v$TARGET_VERSION is older than the installed v$cur" "Downgrades are not supported by the installer."
-    info "Upgrade: v$cur → v$TARGET_VERSION"
+    info "Upgrade: v$cur → v$TARGET_VERSION"; step_note "v$cur → v$TARGET_VERSION"
   fi
 }
 
 install_packages() {
   local missing; mapfile -t missing < <(missing_packages "${REQUIRED_PACKAGES[@]}")
-  if ((${#missing[@]} == 0)); then ok "All required system packages are already installed"; return; fi
+  if ((${#missing[@]} == 0)); then ok "All required system packages are already installed"; step_note "Already installed"; return; fi
   ((FROM_REQUEST)) && die "This version needs new system packages (${missing[*]})" \
     "Upgrade from a terminal instead: sudo meshcore-home update"
   apt_review_install "Install these packages?" cancel "${missing[@]}"
+  step_note "${#missing[@]} installed"
 }
 
 # apt_review_install QUESTION ON_DECLINE PKG... — show exactly what apt will install (with
@@ -415,21 +754,31 @@ apt_review_install() {
   local size; size=$({ LC_ALL=C apt-get install --no-install-recommends --assume-no "${missing[@]}" 2>/dev/null || true; } |
     sed -n 's/^\(Need to get .*\)\.$/\1/p;s/^\(After this operation, .*\)\.$/\1/p' | paste -sd ';' - | sed 's/;/; /')
 
-  printf '\n  %sThe following system packages will be installed with apt:%s\n' "$B" "$N"
-  local line name ver desc
+  ((TUI_ON)) || printf '\n'
+  note "${B}The following system packages will be installed with apt:${N}"
+  local line name ver desc row namew=12
+  for name in "${missing[@]}"; do ((${#name} > namew)) && namew=${#name}; done
   for line in "${inst[@]}"; do
     name=${line%% *}; ver=${line#* }
     if printf '%s\n' "${missing[@]}" | grep -qx "$name"; then
       desc=$(apt-cache show --no-all-versions "$name" 2>/dev/null | sed -n 's/^Description\(-en\)\{0,1\}: //p' | head -n1)
-      printf '    %s%-28s%s %s%-22s%s %s\n' "$B" "$name" "$N" "$D" "$ver" "$N" "$desc"
+      printf -v row '  %s%-*s%s  %s%-18s%s %s' "$B" "$namew" "$name" "$N" "$D" "$ver" "$N" "$desc"
+      note_row "$row"
     fi
   done
   local deps=$((${#inst[@]} - ${#missing[@]}))
   if ((deps > 0)); then
-    printf '    %splus %d supporting package(s): %s%s\n' "$D" "$deps" \
-      "$(for line in "${inst[@]}"; do n=${line%% *}; printf '%s\n' "${missing[@]}" | grep -qx "$n" || printf '%s ' "$n"; done)" "$N"
+    local dep_list
+    dep_list=$(for line in "${inst[@]}"; do n=${line%% *}; printf '%s\n' "${missing[@]}" | grep -qx "$n" || printf '%s ' "$n"; done)
+    local dep_text="plus $deps supporting package(s): $dep_list"
+    if ((TUI_ON)); then
+      # On a small screen, name the count and keep the full list in the log rather than overflowing.
+      local budget=$((ROWS - 13 - ${#PANEL[@]})) need=$(((${#dep_text} + COLS - 9) / (COLS - 6)))
+      if ((need > budget)); then log "  $dep_text"; dep_text="plus $deps supporting package(s), listed in $LOG_FILE"; fi
+    fi
+    note "  ${D}${dep_text}${N}"
   fi
-  [[ -n $size ]] && printf '    %s%s%s\n' "$D" "$size" "$N"
+  [[ -z $size ]] || note "  ${D}${size}${N}"
   if [[ $on_decline == skip ]]; then
     ask_yn "$question" y || return 1
   else
@@ -439,6 +788,7 @@ apt_review_install() {
   # apt reports progress on fd 3 as "pmstatus:package:percent:description". Its exit code is
   # captured in a file so the progress-drawing loop can never mask (or fake) a failure.
   log "\$ apt-get install ${missing[*]}"
+  activity "Installing ${missing[*]}" 0
   local rcfile; rcfile=$(mktemp)
   { DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o APT::Status-Fd=3 \
       "${missing[@]}" 3>&1 1>>"$LOG_FILE" 2>&1; echo $? >"$rcfile"; } |
@@ -446,30 +796,31 @@ apt_review_install() {
       if [[ -t 1 && ($kind == pmstatus || $kind == dlstatus) ]]; then bar "$pct" "$desc"; fi
     done
   local rc; rc=$(cat "$rcfile"); rm -f "$rcfile"
-  if [[ -t 1 ]]; then printf '\r\e[K'; fi
-  [[ $rc == 0 ]] || { tail -n 20 "$LOG_FILE" | sed 's/^/    /' >&2; die "Package installation failed"; }
+  if [[ -t 1 ]] && ((!TUI_ON)); then printf '\r\e[K'; fi
+  [[ $rc == 0 ]] || die "Package installation failed" "" tail
   ok "Installed: ${missing[*]}"
 }
 
 configure() {
-  PORT=${PORT:-$(ask "Port for the web interface?" "$DEFAULT_PORT")}
+  [[ -n $PORT ]] || ask PORT "Port for the web interface?" "$DEFAULT_PORT"
   [[ $PORT =~ ^[0-9]+$ ]] && ((PORT >= 1 && PORT <= 65535)) || die "Invalid port: $PORT"
   if ss -Hltn "sport = :$PORT" 2>/dev/null | grep -q .; then
     die "Port $PORT is already in use" "Choose another with --port, or stop whatever is using it."
   fi
-  printf '\n  %sThese changes will be made to this system:%s\n' "$B" "$N"
-  printf '    • Create system user %s%s%s (no login, no home directory) to run the app\n' "$B" "$APP_USER" "$N"
-  printf '    • Create %s (app), %s (config) and %s (data)\n' "$PREFIX" "$CONF_DIR" "$STATE_DIR"
-  printf '    • Create PostgreSQL role and database %s%s%s (local socket, OS-user auth, no password)\n' "$B" "$DB_NAME" "$N"
-  printf '    • Install systemd services %s%s%s (starts at boot) and %s-update (in-place upgrades)\n' "$B" "$SERVICE" "$N" "$SERVICE"
-  printf '    • Install the %s%s%s command\n' "$B" "$CLI_LINK" "$N"
-  printf '    • Serve the web interface on port %s%s%s (all network interfaces, plain HTTP)\n' "$B" "$PORT" "$N"
+  ((TUI_ON)) || printf '\n'
+  note "${B}These changes will be made to this system:${N}"
+  note "  • Create system user ${B}${APP_USER}${N} (no login, no home directory) to run the app"
+  note "  • Create $PREFIX (app), $CONF_DIR (config) and $STATE_DIR (data)"
+  note "  • Create PostgreSQL role and database ${B}${DB_NAME}${N} (local socket, OS-user auth, no password)"
+  note "  • Install systemd services ${B}${SERVICE}${N} (starts at boot) and $SERVICE-update (in-place upgrades)"
+  note "  • Install the ${B}${CLI_LINK}${N} command"
+  note "  • Serve the web interface on port ${B}${PORT}${N} (all network interfaces, plain HTTP)"
   confirm "Make these changes?"
+  step_note "Port $PORT"
 }
 
 fetch_package() {
-  WORK=$(mktemp -d /tmp/meshcore-home.XXXXXX)
-  trap 'rm -rf "$WORK"' EXIT
+  WORK=$(mktemp -d /tmp/meshcore-home.XXXXXX)  # removed by on_exit
   local name="meshcore-home-$TARGET_VERSION.tar.gz"
   if [[ -n $FROM_FILE ]]; then
     cp "$FROM_FILE" "$WORK/$name"
@@ -478,13 +829,24 @@ fetch_package() {
     local base; base="$(download_base)/v$TARGET_VERSION"
     status downloading "Downloading v$TARGET_VERSION"
     log "\$ curl $base/$name"
-    if [[ -t 1 && $FROM_REQUEST -eq 0 ]]; then
+    if ((TUI_ON)); then
+      # curl's progress bar ends each update with a carriage return; feed its percentage to ours.
+      activity "Downloading $name" 0
+      local rcfile; rcfile=$(mktemp)
+      { curl -fL --retry 3 --progress-bar -o "$WORK/$name" "$base/$name" 2>&1 >/dev/null; echo $? >"$rcfile"; } |
+        while IFS= read -r -d $'\r' line || [[ -n $line ]]; do
+          if [[ $line =~ ([0-9]+)(\.[0-9])?% ]]; then bar "${BASH_REMATCH[1]}"; else log "curl: $line"; fi
+        done
+      local rc; rc=$(cat "$rcfile"); rm -f "$rcfile"
+      [[ $rc == 0 ]] || die "Download failed: $base/$name"
+    elif [[ -t 1 && $FROM_REQUEST -eq 0 ]]; then
       curl -fL --retry 3 --progress-bar -o "$WORK/$name" "$base/$name" || die "Download failed: $base/$name"
     else
       curl -fsSL --retry 3 -o "$WORK/$name" "$base/$name" || die "Download failed: $base/$name"
     fi
     curl -fsSL --retry 3 -o "$WORK/SHA256SUMS" "$base/SHA256SUMS" || die "Download failed: $base/SHA256SUMS"
     ok "Downloaded $name ($(du -h "$WORK/$name" | cut -f1))"
+    step_note "$(du -h "$WORK/$name" | cut -f1) · SHA-256 checked"
   fi
   if [[ -f $WORK/SHA256SUMS ]]; then
     (cd "$WORK" && grep " $name\$" SHA256SUMS | sha256sum -c --status) ||
@@ -522,12 +884,25 @@ install_release() {
     -C "$dest" --strip-components=1 --no-same-owner
   [[ "$(tr -d '[:space:]' <"$dest/VERSION")" == "$TARGET_VERSION" ]] || die "Package version does not match"
   run "Creating Python environment" python3 -m venv "$dest/venv"
-  run "Installing Python packages (this can take a few minutes on a Pi)" \
+  # Progress: pip logs "Collecting <pkg>" once per pinned requirement.
+  PIP_TOTAL=$(grep -cvE '^[[:space:]]*(#|$)' "$dest/requirements.txt" || true)
+  PIP_FROM=$(($(stat -c %s "$LOG_FILE") + 1))
+  RUN_PROBE=pip_probe run "Installing Python packages (this can take a few minutes on a Pi)" \
     "$dest/venv/bin/python" -m pip install --no-cache-dir --disable-pip-version-check --only-binary=:all: \
     -r "$dest/requirements.txt"
   run "Precompiling" "$dest/venv/bin/python" -m compileall -q "$dest/app" "$dest/migrations"
   chmod 755 "$dest/deploy/native/install.sh" "$dest/deploy/native/meshcore-home" "$dest/deploy/native/tls-hook"
   ok "v$TARGET_VERSION installed to $dest"
+  step_note "v$TARGET_VERSION"
+}
+
+PIP_TOTAL=1 PIP_FROM=1
+pip_probe() {
+  local n
+  n=$(tail -c +"$PIP_FROM" "$LOG_FILE" | grep -c '^Collecting ' || true)
+  ((PIP_TOTAL > 0)) || PIP_TOTAL=1
+  ACT_PCT=$((n * 90 / PIP_TOTAL)); ((ACT_PCT <= 90)) || ACT_PCT=90
+  if tail -c +"$PIP_FROM" "$LOG_FILE" | grep -q '^Installing collected packages'; then ACT_PCT=95; fi
 }
 
 ensure_database() {
@@ -540,7 +915,9 @@ ensure_database() {
   if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1; then
     run "Creating database $DB_NAME" runuser -u postgres -- createdb -O "$APP_USER" "$DB_NAME"
   fi
-  ok "PostgreSQL database ready ($(runuser -u postgres -- psql -tAc 'SHOW server_version' | cut -d' ' -f1))"
+  local pgv; pgv=$(runuser -u postgres -- psql -tAc 'SHOW server_version' | cut -d' ' -f1)
+  ok "PostgreSQL database ready ($pgv)"
+  step_note "PostgreSQL $pgv"
 }
 
 write_env() {
@@ -583,6 +960,7 @@ activate() {  # switch current -> new release and (re)start, rolling back on fai
   if ! systemctl restart "$SERVICE.service" >>"$LOG_FILE" 2>&1; then
     warn "$SERVICE failed to start"
   elif run_check "Started; waiting for v$TARGET_VERSION to become ready" wait_healthy "$PORT" "$TARGET_VERSION" 120; then
+    step_note "Running"
     return 0
   fi
   journalctl -u "$SERVICE" -n 30 --no-pager >>"$LOG_FILE" 2>&1 || true
@@ -600,8 +978,10 @@ activate() {  # switch current -> new release and (re)start, rolling back on fai
     install_units
     TARGET_VERSION=$failed
     systemctl restart "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
-    if wait_healthy "$PORT" "$prev_v" 90; then
+    if run_bg "Restarting v$prev_v" wait_healthy "$PORT" "$prev_v" 90; then
       rm -rf "$new"  # discard the release that failed
+      STEP_STATE[STEP - 1]=failed; STEP_NOTE[STEP - 1]="Rolled back to v$prev_v"
+      tui_end
       log "rolled back to v$prev_v"
       status rolled_back "v$failed didn't start, so v$prev_v was restored automatically. Nothing was lost."
       printf '\n  %s✗ Upgrade to v%s failed — v%s was restored and is running.%s\n' "$R$B" "$failed" "$prev_v" "$N" >&2
@@ -614,14 +994,15 @@ activate() {  # switch current -> new release and (re)start, rolling back on fai
 
 run_check() {  # like run(), but returns non-zero instead of exiting
   local msg="$1"; shift
-  if "$@"; then ok "$msg"; return 0; fi
+  if run_bg "$msg" "$@"; then ok "$msg"; return 0; fi
   warn "$msg — timed out"; return 1
 }
 
 backup_database() {
   status installing "Backing up the database"
   local f; f="$BACKUP_DIR/pre-upgrade-$(installed_version)-$(date +%Y%m%dT%H%M%S).dump"
-  run "Backing up the database to $f" runuser -u "$APP_USER" -- pg_dump -Fc -f "$f" "$DB_NAME"
+  run "Backing up the database" runuser -u "$APP_USER" -- pg_dump -Fc -f "$f" "$DB_NAME"
+  step_note "$(du -h "$f" | cut -f1) · $(basename "$f")"
   # Keep the newest few pre-upgrade backups.
   { ls -1t "$BACKUP_DIR"/pre-upgrade-*.dump 2>/dev/null || true; } | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 }
@@ -638,6 +1019,8 @@ prune_releases() {
 
 finish() {
   local port; port=$(env_get PORT); port=${port:-$DEFAULT_PORT}
+  steps_done
+  tui_end
   status "done" "Upgraded to v$TARGET_VERSION"
   printf '\n  %s%s✓ %s v%s is running.%s\n\n' "$G" "$B" "$APP_NAME" "$TARGET_VERSION" "$N"
   if https_enabled; then
@@ -658,35 +1041,62 @@ finish() {
 
 uninstall() {
   [[ $EUID -eq 0 ]] || die "Please run as root" "sudo meshcore-home uninstall"
-  printf '\n  %sThis will remove:%s\n' "$B" "$N"
-  printf '    • The %s services and the %s command\n' "$SERVICE" "$CLI_LINK"
-  printf '    • The application files in %s\n' "$PREFIX"
-  [[ -f $NGINX_SITE ]] && printf '    • The nginx HTTPS site for %s (nginx itself stays installed)\n' "$(env_get HTTPS_HOST)"
+  TARGET_VERSION=$(installed_version || true)
+  local nginx=0
+  [[ -f $NGINX_SITE || -L /etc/nginx/sites-enabled/meshcore-home ]] && nginx=1
+  local -a titles=("Review what will be removed" "Stop and remove the services" "Remove the application files")
+  ((nginx)) && titles+=("Remove the HTTPS site")
+  ((PURGE)) && titles+=("Delete the database and data")
+  if ((PURGE)); then tui_start "Uninstall (including all data)"; else tui_start "Uninstall"; fi
+  STEP_WEIGHTS=(1 3 3 1 3)
+  banner
+  plan "${titles[@]}"
+
+  step
+  ((TUI_ON)) || printf '\n'
+  note "${B}This will remove:${N}"
+  note "  • The $SERVICE services and the $CLI_LINK command"
+  note "  • The application files in $PREFIX"
+  ((nginx)) && note "  • The nginx HTTPS site for $(env_get HTTPS_HOST) (nginx itself stays installed)"
   if ((PURGE)); then
-    printf '    • %sThe database %s (all message history), %s and %s%s\n' "$R" "$DB_NAME" "$CONF_DIR" "$STATE_DIR" "$N"
-    printf '    • The system user %s\n' "$APP_USER"
-    [[ -f $CF_CREDENTIALS ]] && printf '    • The saved Cloudflare API token (%s)\n' "$CF_CREDENTIALS"
+    note "  • ${R}The database $DB_NAME (all message history), $CONF_DIR and $STATE_DIR${N}"
+    note "  • The system user $APP_USER"
+    [[ -f $CF_CREDENTIALS ]] && note "  • The saved Cloudflare API token ($CF_CREDENTIALS)"
   else
-    printf '  %sKept:%s the database, %s and %s (use --purge to delete them too)\n' "$B" "$N" "$CONF_DIR" "$STATE_DIR"
+    note "${B}Kept:${N} the database, $CONF_DIR and $STATE_DIR (use --purge to delete them too)"
   fi
-  printf '  %sSystem packages (PostgreSQL, Python) are left installed.%s\n' "$D" "$N"
+  note "${D}System packages (PostgreSQL, Python) are left installed.${N}"
   confirm "Uninstall $APP_NAME?"
+
+  step
+  activity "Stopping $APP_NAME"
   systemctl disable --now "$SERVICE-update.path" "$SERVICE-config.path" "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
-  rm -f "$UNIT_DIR/$SERVICE.service" "$CLI_LINK"
-  local u; for u in "${HELPER_UNITS[@]}"; do rm -f "$UNIT_DIR/$u"; done
+  # ${VAR:?} guards: an empty variable must never turn a removal into a top-level path.
+  rm -f "${UNIT_DIR:?}/${SERVICE:?}.service" "${CLI_LINK:?}"
+  local u; for u in "${HELPER_UNITS[@]}"; do rm -f "${UNIT_DIR:?}/${u:?}"; done
   systemctl daemon-reload
-  rm -rf "$PREFIX"
-  if [[ -f $NGINX_SITE || -L /etc/nginx/sites-enabled/meshcore-home ]]; then
-    rm -f /etc/nginx/sites-enabled/meshcore-home "$NGINX_SITE"
-    systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
+  ok "Services and the $CLI_LINK command removed"
+
+  step
+  run "Removing $PREFIX" rm -rf "${PREFIX:?}"
+
+  if ((nginx)); then
+    step
+    rm -f /etc/nginx/sites-enabled/meshcore-home "${NGINX_SITE:?}"
+    run_bg "Reloading nginx" systemctl reload nginx || true
+    ok "HTTPS site removed"
   fi
   if ((PURGE)); then
-    rm -f "$CF_CREDENTIALS"
-    runuser -u postgres -- dropdb --if-exists "$DB_NAME" >>"$LOG_FILE" 2>&1 || true
-    runuser -u postgres -- dropuser --if-exists "$APP_USER" >>"$LOG_FILE" 2>&1 || true
-    rm -rf "$CONF_DIR" "$STATE_DIR"
+    step
+    rm -f "${CF_CREDENTIALS:?}"
+    run_bg "Deleting the database $DB_NAME" runuser -u postgres -- dropdb --if-exists "$DB_NAME" || true
+    run_bg "Deleting the database role $APP_USER" runuser -u postgres -- dropuser --if-exists "$APP_USER" || true
+    rm -rf "${CONF_DIR:?}" "${STATE_DIR:?}"
     userdel "$APP_USER" >>"$LOG_FILE" 2>&1 || true
+    ok "Database, configuration, data and system user removed"
   fi
+  steps_done
+  tui_end
   printf '\n  %s✓ %s has been removed.%s\n\n' "$G" "$APP_NAME" "$N"
 }
 
@@ -716,8 +1126,7 @@ port_owner() {  # port_owner PORT — name of the process listening on it, if an
 
 run_quiet() {  # like run(), but returns non-zero instead of exiting
   local msg="$1"; shift
-  log "\$ $*"
-  if "$@" >>"$LOG_FILE" 2>&1; then ok "$msg"; return 0; fi
+  if run_bg "$msg" "$@"; then ok "$msg"; return 0; fi
   warn "$msg — failed"; return 1
 }
 
@@ -1004,31 +1413,33 @@ load_current_network() {  # NEW_* defaults = current configuration
 
 https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up — the app stays as it was
   load_current_network
-  printf '\n  HTTPS puts nginx in front of %s with a trusted Let'"'"'s Encrypt certificate.\n' "$APP_NAME"
-  printf '  The certificate is validated through %sCloudflare DNS%s, so the Pi does not need to be\n' "$B" "$N"
-  printf '  reachable from the internet. You need a domain whose DNS is managed by Cloudflare.\n'
-  printf '  %s(You can also change all of this later in the web interface: Settings → Network & HTTPS.)%s\n' "$D" "$N"
+  ((TUI_ON)) || printf '\n'
+  note "HTTPS puts nginx in front of $APP_NAME with a trusted Let's Encrypt certificate."
+  note "The certificate is validated through ${B}Cloudflare DNS${N}, so the Pi does not need to be reachable from the internet. You need a domain whose DNS is managed by Cloudflare."
+  note "${D}(You can also change all of this later in the web interface: Settings → Network & HTTPS.)${N}"
 
-  local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+  local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' err=""
   HTTPS_HOST=${HTTPS_HOST:-$NEW_HOST}
   while true; do
-    HTTPS_HOST=${HTTPS_HOST:-$(ask "Hostname for the app (e.g. meshcore.example.com)?" "")}
+    [[ -n $HTTPS_HOST ]] || ask HTTPS_HOST "Hostname for the app (e.g. meshcore.example.com)?" "" "$err"
     HTTPS_HOST=${HTTPS_HOST,,}
     [[ $HTTPS_HOST =~ $fqdn_re ]] && break
     if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then warn "Invalid or missing hostname for HTTPS"; return 1; fi
-    warn "Enter a full hostname such as meshcore.example.com"; HTTPS_HOST=""
+    err="Enter a full hostname such as meshcore.example.com"; HTTPS_HOST=""
   done
-  HTTPS_EMAIL=${HTTPS_EMAIL:-${NEW_EMAIL:-$(ask "Email for Let's Encrypt expiry notices (optional)?" "")}}
+  HTTPS_EMAIL=${HTTPS_EMAIL:-$NEW_EMAIL}
+  [[ -n $HTTPS_EMAIL ]] || ask HTTPS_EMAIL "Email for Let's Encrypt expiry notices (optional)?" ""
 
   local token=""
   if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
-    printf '\n  Create a Cloudflare API token at %shttps://dash.cloudflare.com/profile/api-tokens%s using\n' "$C" "$N"
-    printf '  the %s"Edit zone DNS"%s template, limited to the zone that contains %s.\n' "$B" "$N" "$HTTPS_HOST"
-    printf '  It is stored only in %s (root-only) and used for renewals.\n' "$CF_CREDENTIALS"
+    ((TUI_ON)) || printf '\n'
+    note "Create a Cloudflare API token at ${C}https://dash.cloudflare.com/profile/api-tokens${N} using the ${B}\"Edit zone DNS\"${N} template, limited to the zone that contains $HTTPS_HOST."
+    note "It is stored only in $CF_CREDENTIALS (root-only) and used for renewals."
     if [[ -f $CF_CREDENTIALS ]] && ask_yn "Reuse the Cloudflare token saved earlier?" y; then
       token=""
     else
-      token=${MESHCORE_HOME_CF_TOKEN:-$(ask_secret "Cloudflare API token (input hidden):")}
+      token=${MESHCORE_HOME_CF_TOKEN:-}
+      [[ -n $token ]] || ask_secret token "Cloudflare API token (input hidden):"
       [[ -n $token ]] || { warn "No Cloudflare token entered; HTTPS not set up."; return 1; }
     fi
   fi
@@ -1041,10 +1452,11 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
     ok "nginx and certbot are already installed"
   fi
 
-  printf '\n  %sThese changes will be made for HTTPS:%s\n' "$B" "$N"
-  printf '    • Obtain a Let'"'"'s Encrypt certificate for %s%s%s (renewed automatically by certbot.timer)\n' "$B" "$HTTPS_HOST" "$N"
-  printf '    • Add an nginx site on ports 80 and %s for %s (port 80 redirects to HTTPS)\n' "$NEW_HTTPS_PORT" "$HTTPS_HOST"
-  printf '    • Make %s listen on 127.0.0.1:%s only, so it is reached through nginx\n' "$APP_NAME" "$NEW_PORT"
+  ((TUI_ON)) || printf '\n'
+  note "${B}These changes will be made for HTTPS:${N}"
+  note "  • Obtain a Let's Encrypt certificate for ${B}${HTTPS_HOST}${N} (renewed automatically by certbot.timer)"
+  note "  • Add an nginx site on ports 80 and $NEW_HTTPS_PORT for $HTTPS_HOST (port 80 redirects to HTTPS)"
+  note "  • Make $APP_NAME listen on 127.0.0.1:$NEW_PORT only, so it is reached through nginx"
   ask_yn "Set up HTTPS?" y || { warn "HTTPS skipped; $APP_NAME stays on plain HTTP."; return 1; }
 
   NEW_HTTPS=1 NEW_HOST=$HTTPS_HOST NEW_EMAIL=$HTTPS_EMAIL NEW_TOKEN=$token
@@ -1052,12 +1464,13 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
     warn "HTTPS was not set up; $APP_NAME is unchanged. Try again any time with: sudo meshcore-home https"
     return 1
   fi
+  step_note "$(public_url)"
 }
 
 https_disable() {
   if ! https_enabled; then ok "HTTPS is not enabled"; return; fi
-  printf '\n  %sThis will%s remove the nginx site for %s and make %s listen on all\n' "$B" "$N" "$(env_get HTTPS_HOST)" "$APP_NAME"
-  printf '  interfaces over plain HTTP again. The certificate and saved Cloudflare token are kept.\n'
+  ((TUI_ON)) || printf '\n'
+  note "${B}This will${N} remove the nginx site for $(env_get HTTPS_HOST) and make $APP_NAME listen on all interfaces over plain HTTP again. The certificate and saved Cloudflare token are kept."
   confirm "Disable HTTPS?"
   load_current_network
   NEW_HTTPS=0
@@ -1158,10 +1571,9 @@ security_updates_enabled() {
 }
 
 security_updates_setup() {  # returns 1 if skipped; never cancels the installer
-  if security_updates_enabled; then ok "Automatic security updates are already enabled"; return 0; fi
-  printf '\n  Debian can install %ssecurity updates%s for the operating system automatically\n' "$B" "$N"
-  printf '  (unattended-upgrades) — recommended for an always-on Pi. It only applies security fixes from\n'
-  printf '  your OS repositories; it never upgrades %s itself (you choose when to do that).\n' "$APP_NAME"
+  if security_updates_enabled; then ok "Automatic security updates are already enabled"; step_note "Already on"; return 0; fi
+  ((TUI_ON)) || printf '\n'
+  note "Debian can install ${B}security updates${N} for the operating system automatically (unattended-upgrades), which is recommended for an always-on Pi. It only applies security fixes from your OS repositories; it never upgrades $APP_NAME itself (you choose when to do that)."
   ask_yn "Enable automatic security updates?" y || { info "Skipped. Enable later with: sudo meshcore-home security-updates"; return 1; }
   local missing; mapfile -t missing < <(missing_packages unattended-upgrades)
   if ((${#missing[@]})); then
@@ -1173,6 +1585,7 @@ security_updates_setup() {  # returns 1 if skipped; never cancels the installer
   run "Enabling automatic security updates" env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive unattended-upgrades
   if security_updates_enabled; then
     ok "Security updates will be installed automatically (daily, via apt-daily-upgrade.timer)"
+    step_note "On (daily)"
   else
     warn "unattended-upgrades is installed but not enabled; see $LOG_FILE"
     return 1
@@ -1213,16 +1626,25 @@ main() {
     return 0
   fi
   if [[ $MODE == security-updates ]]; then
-    security_updates_setup || exit 1
+    tui_start "Security updates"
+    plan "Automatic security updates"; step
+    if security_updates_setup; then steps_done; tui_end; else step_skip "Not enabled"; tui_end; exit 1; fi
     return
   fi
   if [[ $MODE == https || $MODE == https-disable ]]; then
     [[ -n $(installed_version) ]] || die "$APP_NAME is not installed"
     TARGET_VERSION=$(installed_version)
-    if [[ $MODE == https-disable ]]; then https_disable; return; fi
+    if [[ $MODE == https-disable ]]; then
+      tui_start "Disable HTTPS"
+      plan "Disable HTTPS"; step
+      https_disable
+      steps_done; tui_end
+      return
+    fi
+    tui_start "HTTPS"
     banner
-    STEP_TITLES=("Set up HTTPS"); STEPS=1; step
-    https_setup || exit 1
+    plan "Set up HTTPS"; step
+    https_setup || { step_skip "Not set up"; tui_end; exit 1; }
     finish
     return
   fi
@@ -1236,8 +1658,10 @@ main() {
     if ((FROM_REQUEST)); then
       STEP_TITLES=(Check Version Packages Backup Download Install Restart); STEPS=7
     else
+      tui_start "Upgrade"
       banner
-      printf '  %s v%s is installed — this will upgrade it.\n\n' "$APP_NAME" "$cur"
+      ((TUI_ON)) || printf '  %s v%s is installed — this will upgrade it.\n\n' "$APP_NAME" "$cur"
+      STEP_WEIGHTS=(3 1 8 5 8 50 25)
       plan "Check this system" "Choose the version" "System packages" "Back up the database" \
         "Download and verify" "Install the new version" "Switch over and restart"
     fi
@@ -1252,7 +1676,9 @@ main() {
     return
   fi
 
+  tui_start "Installer"
   banner
+  STEP_WEIGHTS=(3 1 20 1 6 40 4 12 7 6)
   plan "Check this system" "Choose the version" "System packages" "Review system changes" \
     "Download and verify" "Install the app" "Set up the database" "Start the service" "HTTPS (optional)" \
     "Automatic security updates (optional)"
@@ -1266,11 +1692,12 @@ main() {
   step; activate; prune_releases
   step
   if [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain on Cloudflare)" n; then
-    https_setup || true
+    https_setup || step_skip "Not set up"
   else
     info "Skipped. You can add it later with: sudo meshcore-home https"
+    step_skip "Skipped"
   fi
-  step; security_updates_setup || true
+  step; security_updates_setup || step_skip "Skipped"
   finish
 }
 

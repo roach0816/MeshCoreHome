@@ -16,6 +16,7 @@ import {
 import { playChime, type SoundSetting } from "../lib/sound";
 import { useUpdateInfo } from "../lib/queries";
 import { NetworkSection } from "../components/NetworkSettings";
+import { ApiKeysSection } from "../components/ApiKeys";
 import { api, type Device, type MapConfig, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
@@ -65,6 +66,7 @@ export function Settings() {
           <DataSection />
           <NetworkSection />
           <SoftwareSection />
+          <ApiKeysSection />
         </div>
       </div>
     </div>

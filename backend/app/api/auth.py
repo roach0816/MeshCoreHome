@@ -16,6 +16,7 @@ from app.api.deps import (
     create_session,
     require_auth,
     require_requested_with,
+    require_session,
 )
 from app.config import get_settings
 from app.db import get_db
@@ -197,7 +198,7 @@ async def login(
 
 @router.post("/auth/logout", status_code=204)
 async def logout(
-    response: Response, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    response: Response, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await db.execute(delete(Session).where(Session.id == ctx.session.id))
     await db.commit()
@@ -217,7 +218,7 @@ async def change_password(
     body: ChangePasswordRequest,
     request: Request,
     response: Response,
-    ctx: AuthContext = Depends(require_auth),
+    ctx: AuthContext = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
     if not verify_password(ctx.user.password_hash, body.current_password):
@@ -236,7 +237,7 @@ async def change_password(
 @router.put("/auth/username", response_model=Me)
 async def change_username(
     body: ChangeUsernameRequest,
-    ctx: AuthContext = Depends(require_auth),
+    ctx: AuthContext = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ) -> Me:
     if not verify_password(ctx.user.password_hash, body.current_password):

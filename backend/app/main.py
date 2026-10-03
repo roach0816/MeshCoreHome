@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import db
-from app.api import auth, contacts, inbox, node_map, radio, radio_config, system
-from app.api.deps import load_session
+from app.api import api_keys, auth, contacts, inbox, node_map, radio, radio_config, system
+from app.api.deps import bearer_token, load_api_key, load_session
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
@@ -70,6 +71,26 @@ app = FastAPI(
 )
 
 
+def _openapi_schema() -> dict:
+    """Declare API-key (bearer) auth so /api/docs offers "Authorize" and clients see it."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "ApiKey": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "An API key from Settings → API keys (mch_...). See docs/API.md.",
+        }
+    }
+    schema["security"] = [{"ApiKey": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_schema
+
+
 class SecurityHeaders(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -96,6 +117,7 @@ app.include_router(radio.router)
 app.include_router(node_map.router)
 app.include_router(radio_config.router)
 app.include_router(system.router)
+app.include_router(api_keys.router)
 
 
 # ---- health ------------------------------------------------------------------------------
@@ -129,11 +151,17 @@ def _same_origin(ws: WebSocket) -> bool:
 
 @app.websocket("/ws")
 async def websocket(ws: WebSocket):
-    if not _same_origin(ws):
-        await ws.close(code=4403)
-        return
-    async with db.session_factory()() as s:
-        ctx = await load_session(s, ws.cookies.get(SESSION_COOKIE))
+    raw_key = bearer_token(ws.headers)
+    if raw_key is not None:
+        # Another service: authenticated by API key, so no browser origin check applies.
+        async with db.session_factory()() as s:
+            ctx = await load_api_key(s, raw_key)
+    else:
+        if not _same_origin(ws):
+            await ws.close(code=4403)
+            return
+        async with db.session_factory()() as s:
+            ctx = await load_session(s, ws.cookies.get(SESSION_COOKIE))
     if ctx is None:
         await ws.close(code=4401)
         return

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, require_auth
+from app.api.deps import AuthContext, require_auth, require_session
 from app.config import APP_VERSION, get_settings
 from app.db import get_db
 from app.models import AuditEvent, Channel, CollectionGap, Contact, Message, Radio
@@ -98,7 +98,7 @@ async def get_radio_settings(ctx: AuthContext = Depends(require_auth), db: Async
 
 @router.put("/settings/radio", response_model=app_settings.RadioConfig)
 async def put_radio_settings(
-    body: RadioSettingsIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: RadioSettingsIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     current = await app_settings.get_radio_config(db)
     cfg = app_settings.RadioConfig(
@@ -128,17 +128,17 @@ async def _set_paused(db: AsyncSession, paused: bool) -> app_settings.RadioConfi
 
 
 @router.post("/radio/pause", response_model=app_settings.RadioConfig)
-async def pause_radio(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def pause_radio(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
     return await _set_paused(db, True)
 
 
 @router.post("/radio/resume", response_model=app_settings.RadioConfig)
-async def resume_radio(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def resume_radio(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
     return await _set_paused(db, False)
 
 
 @router.post("/radio/test-connection")
-async def test_connection(body: TestConnectionIn, ctx: AuthContext = Depends(require_auth)):
+async def test_connection(body: TestConnectionIn, ctx: AuthContext = Depends(require_session)):
     """Plain TCP reachability check. Does not perform the companion handshake (the supervisor owns that)."""
     started = time.monotonic()
     try:
@@ -156,14 +156,16 @@ async def test_connection(body: TestConnectionIn, ctx: AuthContext = Depends(req
 
 
 @router.post("/radio/simulate-incoming")
-async def simulate_incoming(ctx: AuthContext = Depends(require_auth)):
+async def simulate_incoming(ctx: AuthContext = Depends(require_session)):
     if not supervisor.simulate_incoming():
         raise HTTPException(status.HTTP_409_CONFLICT, "Only available while the simulated radio is connected")
     return {"ok": True}
 
 
 @router.delete("/simulated-data")
-async def delete_simulated_data(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def delete_simulated_data(
+    ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
+):
     cfg = await app_settings.get_radio_config(db)
     if cfg.mode == "simulated":
         raise HTTPException(status.HTTP_409_CONFLICT, "Switch away from the simulated radio first")

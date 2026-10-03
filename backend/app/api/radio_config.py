@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, require_auth
+from app.api.deps import AuthContext, require_auth, require_session
 from app.db import get_db
 from app.models import AuditEvent
 from app.radio.base import PUBLIC_CHANNEL_KEY, NotSupported, RadioError, hashtag_key
@@ -210,7 +210,7 @@ async def get_config(ctx: AuthContext = Depends(require_auth)):
 
 @router.put("/config/identity")
 async def put_identity(
-    body: IdentityIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: IdentityIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "identity", body.model_dump(), {"share_location": body.share_location})
     return await _config()
@@ -218,7 +218,7 @@ async def put_identity(
 
 @router.put("/config/radio")
 async def put_radio(
-    body: RadioIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: RadioIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     current = await _config()
     max_power = (current.get("radio") or {}).get("max_tx_power_dbm")
@@ -234,7 +234,7 @@ async def put_radio(
 
 @router.put("/config/behavior")
 async def put_behavior(
-    body: BehaviorIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: BehaviorIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "behavior", body.model_dump(), body.model_dump())
     return await _config()
@@ -242,7 +242,7 @@ async def put_behavior(
 
 @router.put("/config/telemetry")
 async def put_telemetry(
-    body: TelemetryIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: TelemetryIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "telemetry", body.model_dump(), body.model_dump())
     return await _config()
@@ -250,7 +250,7 @@ async def put_telemetry(
 
 @router.put("/config/tuning")
 async def put_tuning(
-    body: TuningIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: TuningIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "tuning", body.model_dump(), body.model_dump())
     return await _config()
@@ -284,7 +284,7 @@ async def hashtag_channel_key(name: str, ctx: AuthContext = Depends(require_auth
 
 @router.post("/channels")
 async def add_channel(
-    body: ChannelAddIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: ChannelAddIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     """Add a channel in the first free slot (the "Add channel" flows)."""
     current = await _config()
@@ -333,7 +333,7 @@ async def add_channel(
 async def put_channel_scope(
     slot: int,
     body: ChannelScopeIn,
-    ctx: AuthContext = Depends(require_auth),
+    ctx: AuthContext = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
     conversation_id = await supervisor.set_channel_scope(slot, body.flood_scope or None)
@@ -346,7 +346,10 @@ async def put_channel_scope(
 
 @router.put("/channels/{slot}")
 async def put_channel(
-    slot: int, body: ChannelIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    slot: int,
+    body: ChannelIn,
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
 ):
     current = await _config()
     if not 0 <= slot < int(current.get("max_channels") or 0):
@@ -374,7 +377,7 @@ async def put_channel(
 
 @router.delete("/channels/{slot}")
 async def clear_channel(
-    slot: int, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    slot: int, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     current = await _config()
     if not 0 <= slot < int(current.get("max_channels") or 0):
@@ -385,7 +388,7 @@ async def clear_channel(
 
 @router.put("/custom-vars")
 async def put_custom_var(
-    body: CustomVarIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: CustomVarIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "custom_var", body.model_dump(), {"key": body.key})
     return await _config()
@@ -393,19 +396,19 @@ async def put_custom_var(
 
 @router.post("/actions/advert")
 async def send_advert(
-    body: AdvertIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: AdvertIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     await _apply(db, "advert", body.model_dump(), body.model_dump())
     return {"ok": True}
 
 
 @router.post("/actions/sync-clock")
-async def sync_clock(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def sync_clock(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
     await _apply(db, "sync_clock", {"epoch": int(time.time())})
     return {"ok": True}
 
 
 @router.post("/actions/reboot")
-async def reboot(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def reboot(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
     await _apply(db, "reboot", {})
     return {"ok": True, "detail": "Rebooting. The app will reconnect automatically."}

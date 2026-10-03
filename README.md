@@ -52,6 +52,12 @@ direct messages from any browser that can reach it.
   at the positions they advertise (sharing a position is optional in MeshCore). You can filter by
   type and by when each node was last heard. Built with [Leaflet](https://leafletjs.com) and
   [OpenStreetMap](https://www.openstreetmap.org) tiles by default.
+- **API keys** (Settings → API keys) let other services and scripts read messages, send them,
+  and follow events live, using `Authorization: Bearer <key>`. A key can be *read only* or
+  *read & write* and can expire. Keys are shown once and stored only as a fingerprint. Account,
+  network, update, and radio settings stay limited to the web interface. See
+  [docs/API.md](docs/API.md) for the full API guide; the running app also serves an interactive
+  reference at `/api/docs`.
 - **Node settings** (Settings → Configure node settings): change the connected radio's own
   configuration from the browser:
   - **Identity:** name, location, and whether adverts share the location.
@@ -113,7 +119,14 @@ curl -fsSLo install.sh https://github.com/roach0816/MeshCoreHome/releases/latest
 sudo bash install.sh
 ```
 
-The installer is a step-by-step wizard with progress bars:
+The installer runs as a full-screen dashboard that stays in place instead of scrolling. It shows
+the checklist of steps, what is happening now, and one overall progress bar. Each question
+appears on the same screen with an explanation of what will change. When it finishes, a short
+summary stays in your terminal; the full detail is in `/var/log/meshcore-home-install.log`.
+Upgrades (`meshcore-home update`) and the uninstaller use the same screen. Small terminals (under
+64×20), pipes, and `--plain` get plain line-by-line output instead.
+
+The steps are:
 
 1. **Check this system:** OS, 64-bit CPU, systemd, memory, disk space, and internet access.
 2. **Choose the version:** the latest release.

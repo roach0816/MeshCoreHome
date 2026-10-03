@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, require_auth
+from app.api.deps import AuthContext, require_auth, require_session
 from app.config import APP_VERSION, get_settings
 from app.db import get_db
 from app.models import AuditEvent
@@ -53,7 +53,7 @@ async def update_status(ctx: AuthContext = Depends(require_auth)):
 
 @router.post("/update", status_code=202)
 async def request_update(
-    body: UpdateRequest, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: UpdateRequest, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     s = get_settings()
     if s.install_kind != "native" or not s.state_dir:
@@ -132,7 +132,7 @@ async def network_info(ctx: AuthContext = Depends(require_auth)):
 
 @router.put("/network", status_code=202)
 async def apply_network(
-    body: NetworkConfigIn, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+    body: NetworkConfigIn, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
 ):
     _native_or_409()
     if system_config.in_progress():
@@ -190,7 +190,7 @@ async def apply_network(
 
 
 @router.post("/network/renew", status_code=202)
-async def renew_certificate(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+async def renew_certificate(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
     _native_or_409()
     snap = system_config.snapshot() or {}
     if not snap.get("https_enabled"):
