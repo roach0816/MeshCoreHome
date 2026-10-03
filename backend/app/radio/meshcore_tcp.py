@@ -230,9 +230,23 @@ class MeshCoreTcpRadio(RadioAdapter):
             )
         raise RadioError(f"unexpected response to message fetch ({_describe(res)})")
 
-    async def send_channel(self, slot: int, text: str, timestamp: int) -> SendResult:
+    async def send_channel(
+        self, slot: int, text: str, timestamp: int, scope: str | None = None
+    ) -> SendResult:
         mc = self._require()
-        res = await mc.commands.send_chan_msg(slot, text, timestamp)
+        if scope:
+            # Like the MeshCore app: scope this one send, then revert to the radio's default.
+            # Untested on hardware.
+            res = await mc.commands.set_flood_scope(scope)
+            if res is None or res.is_error():
+                return SendResult(ok=False, error=f"could not set region scope ({_describe(res)})")
+        try:
+            res = await mc.commands.send_chan_msg(slot, text, timestamp)
+        finally:
+            if scope:
+                reset = await mc.commands.set_flood_scope(None)
+                if reset is None or reset.is_error():
+                    log.warning("could not revert the flood scope (%s)", _describe(reset))
         if res is None or res.is_error():
             return SendResult(ok=False, error=_describe(res))
         return SendResult(ok=True)

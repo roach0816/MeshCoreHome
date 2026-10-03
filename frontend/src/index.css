@@ -254,3 +254,14 @@ dialog.mc-dialog[open]::backdrop {
 .mc-menu {
   animation: mc-menu-in 120ms var(--ease-out);
 }
+
+/* Popovers that open upwards from a button (emoji picker). */
+.mc-pop {
+  transform-origin: bottom left;
+  animation: mc-pop-in 140ms var(--ease-out);
+}
+
+/* Draw emoji with the operating system's colour emoji font. */
+.emoji-glyph {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif;
+}

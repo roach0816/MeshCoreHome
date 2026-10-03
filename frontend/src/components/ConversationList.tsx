@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatch } from "react-router";
-import { BellOff, Hash, MoreHorizontal, Search, Star, UserRound, X } from "lucide-react";
+import { BellOff, Hash, MoreHorizontal, Plus, Search, Star, UserRound, X } from "lucide-react";
 import { api, type Conversation, type SearchHit } from "../lib/api";
 import { cx, formatListTime } from "../lib/util";
 import { useConversationActions } from "./ConversationActions";
 import { useContextTrigger } from "./useContextTrigger";
+import { AddChannelDialog } from "./AddChannel";
+import { IconButton } from "./ui";
 
 type Filter = "all" | "unread" | "favorites";
 
@@ -43,6 +45,7 @@ export function ConversationList() {
   const activeId = match?.params.id;
   const actions = useConversationActions();
   const trigger = useContextTrigger();
+  const [adding, setAdding] = useState(false);
 
   const q = query.trim().toLowerCase();
   const list = useMemo(() => {
@@ -63,7 +66,8 @@ export function ConversationList() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="space-y-2 px-3 pb-2 pt-3">
-        <div className="relative">
+        <div className="flex items-center gap-1">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
           <input
             type="search"
@@ -83,6 +87,11 @@ export function ConversationList() {
             </button>
           )}
         </div>
+        <IconButton label="Add channel" onClick={() => setAdding(true)} className="size-10">
+          <Plus className="size-5" />
+        </IconButton>
+        </div>
+        {adding && <AddChannelDialog onClose={() => setAdding(false)} />}
         <div className="flex gap-1.5" role="tablist" aria-label="Filter conversations">
           {(["all", "unread", "favorites"] as Filter[]).map((f) => (
             <button

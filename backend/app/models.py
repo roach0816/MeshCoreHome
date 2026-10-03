@@ -115,6 +115,9 @@ class Channel(Base):
     # Keyed fingerprint of name + secret; detects slot reuse without storing the secret.
     fingerprint: Mapped[str] = mapped_column(String(64))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Region scope (name without "#") stamped on messages sent to this channel; None = radio default.
+    # Kept app-side, like the MeshCore app does: the firmware has no per-channel scope.
+    flood_scope: Mapped[str | None] = mapped_column(String(31))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

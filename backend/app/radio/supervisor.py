@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app import db
 from app.config import get_settings
 from app.models import Channel, CollectionGap, Contact, Conversation, Message, Radio, SendAttempt, utcnow
-from app.radio.base import IncomingMessage, RadioAdapter, RadioError
+from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioError
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
@@ -305,20 +305,59 @@ class RadioSupervisor:
         if adapter is None or not self.connected:
             raise RadioError("radio is not connected")
         # Reads every channel slot, so allow longer than a single command.
-        return await self._cmd(adapter.read_config, timeout=60)
+        cfg = await self._cmd(adapter.read_config, timeout=60)
+        # Region scopes are app-side; report them alongside the radio's channels.
+        if self._radio is not None and cfg.get("channels"):
+            async with db.session_factory()() as s:
+                scopes = dict(
+                    (
+                        await s.execute(
+                            select(Channel.slot, Channel.flood_scope).where(
+                                Channel.radio_id == self._radio.id, Channel.active.is_(True)
+                            )
+                        )
+                    ).all()
+                )
+            for ch in cfg["channels"]:
+                ch["flood_scope"] = scopes.get(ch["slot"]) if ch.get("name") else None
+        return cfg
 
     def path_hash_size(self) -> int:
         return self._adapter.path_hash_size() if self._adapter else 1
 
-    async def current_channel_secret(self, slot: int) -> bytes | None:
-        """Used only to rename a channel while keeping its key; never leaves the server."""
+    async def radio_channels(self) -> list[RadioChannel]:
+        """The radio's channels including keys. Keys never leave the server."""
         adapter = self._adapter
         if adapter is None or not self.connected:
             raise RadioError("radio is not connected")
-        for ch in await self._cmd(adapter.get_channels):
+        return await self._cmd(adapter.get_channels)
+
+    async def current_channel_secret(self, slot: int) -> bytes | None:
+        """Used only to rename a channel while keeping its key; never leaves the server."""
+        for ch in await self.radio_channels():
             if ch.slot == slot and any(ch.secret):
                 return ch.secret
         return None
+
+    async def set_channel_scope(self, slot: int, scope: str | None) -> str | None:
+        """Set the region scope of the active channel in `slot`; returns its conversation id."""
+        if self._radio is None:
+            return None
+        async with db.session_factory()() as s:
+            row = (
+                await s.execute(
+                    select(Channel, Conversation.id)
+                    .join(Conversation, Conversation.channel_id == Channel.id)
+                    .where(Channel.radio_id == self._radio.id, Channel.slot == slot, Channel.active.is_(True))
+                )
+            ).first()
+            if row is None:
+                return None
+            ch, conv_id = row
+            ch.flood_scope = scope
+            await s.commit()
+        hub.publish("conversations-updated")
+        return str(conv_id)
 
     async def configure_node(self, op: str, params: dict) -> dict:
         adapter = self._adapter
@@ -440,11 +479,12 @@ class RadioSupervisor:
             if m is None:
                 return None
             conv = await s.get(Conversation, m.conversation_id)
-            target: tuple[str, int | str] | None = None
+            # ("channel", slot, region scope) or ("dm", public key)
+            target: tuple | None = None
             if conv.kind == "channel" and conv.channel_id:
                 ch = await s.get(Channel, conv.channel_id)
                 if ch and ch.active:
-                    target = ("channel", ch.slot)
+                    target = ("channel", ch.slot, ch.flood_scope)
             elif conv.contact_id:
                 contact = await s.get(Contact, conv.contact_id)
                 if contact:
@@ -474,7 +514,7 @@ class RadioSupervisor:
                 raise RadioError("radio disconnected before transmission")
             ts = int(time.time())
             if target[0] == "channel":
-                result = await self._cmd(adapter.send_channel, target[1], body, ts)
+                result = await self._cmd(adapter.send_channel, target[1], body, ts, target[2])
             else:
                 result = await self._cmd(adapter.send_dm, target[1], body, ts)
             if result.ok:

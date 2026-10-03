@@ -220,7 +220,7 @@ export interface ConversationInfo {
     last_advert_at: string | null;
     on_radio: boolean;
   } | null;
-  channel: { slot: number; name: string; generation: number; active: boolean } | null;
+  channel: { slot: number; name: string; generation: number; active: boolean; flood_scope: string | null } | null;
   stats: {
     total: number;
     incoming: number;
@@ -288,7 +288,7 @@ export interface NodeConfig {
   };
   telemetry: { base: TelemetryMode; location: TelemetryMode; environment: TelemetryMode };
   tuning: { rx_delay: number; airtime_factor: number } | null;
-  channels: { slot: number; name: string; key: ChannelKeyKind }[];
+  channels: { slot: number; name: string; key: ChannelKeyKind; flood_scope?: string | null }[];
   max_channels: number;
   custom_vars: Record<string, string> | null;
 }

@@ -269,6 +269,7 @@ class ConversationChannelInfo(BaseModel):
     name: str
     generation: int
     active: bool
+    flood_scope: str | None
 
 
 class ConversationStats(BaseModel):
@@ -335,7 +336,11 @@ async def conversation_info(
         if contact
         else None,
         channel=ConversationChannelInfo(
-            slot=channel.slot, name=channel.name, generation=channel.generation, active=channel.active
+            slot=channel.slot,
+            name=channel.name,
+            generation=channel.generation,
+            active=channel.active,
+            flood_scope=channel.flood_scope,
         )
         if channel
         else None,

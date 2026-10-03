@@ -31,6 +31,15 @@ direct messages from any browser that can reach it.
   no hardware required), or *None*. You can switch modes at any time in Settings.
 - Channels and DMs with unread counts, favorites, search, paginated history, date separators, a
   "new messages" divider, per-conversation drafts, and a UTF-8 byte budget in the composer.
+  The composer has an emoji picker. Browsers can't open the OS's own picker from a button, so this
+  one is built in, draws emoji with the system emoji font, and shows the OS shortcut.
+- **Add channel** (the **+** next to the search box) offers the same choices as the MeshCore app:
+  create a private channel, join a private channel, join Public, join a hashtag channel, or scan a QR
+  code. Hashtag and new private channels come with their key, a QR code, and a
+  `meshcore://channel/add` link to share. A channel can have a **region scope**: messages you send on
+  it only flood through repeaters serving that region. The scope is stored by this app and applied
+  to each send, as the MeshCore app does. Scanning with the live camera needs HTTPS; over plain
+  HTTP you can scan a photo instead.
 - Honest delivery states: *Queued → Sending → Sent by radio / Acknowledged / No acknowledgement /
   Outcome uncertain / Failed / Expired*. Sends are idempotent, and an interrupted send is never
   re-sent automatically.
@@ -47,8 +56,9 @@ direct messages from any browser that can reach it.
   configuration from the browser:
   - **Identity:** name, location, and whether adverts share the location.
   - **LoRa radio:** frequency, bandwidth, spreading factor, coding rate, TX power, and client repeat.
-  - **Channels:** add, rename, or remove. Keys can be hashtag-derived, the Public key, a generated
-    random key (shown once), or entered by hand. Keys are never displayed afterwards.
+  - **Channels:** add, rename, remove, or set a region scope. Keys can be hashtag-derived, the
+    Public key, a generated random key (shown once), or entered by hand. Private keys are never
+    displayed afterwards.
   - **Contacts and routing:** auto-add contacts, extra ACKs, path hash size, and default flood scope.
   - **Other:** telemetry permissions, firmware variables, advanced timing, adverts, clock sync, and
     reboot.

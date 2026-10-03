@@ -139,7 +139,11 @@ class RadioAdapter(ABC):
         """Retrieve one queued message from the radio, or None when the queue is empty."""
 
     @abstractmethod
-    async def send_channel(self, slot: int, text: str, timestamp: int) -> SendResult: ...
+    async def send_channel(
+        self, slot: int, text: str, timestamp: int, scope: str | None = None
+    ) -> SendResult:
+        """Send on a channel slot. `scope` is a region name (without "#") applied to this
+        message only; None uses the radio's default flood scope."""
 
     @abstractmethod
     async def send_dm(self, public_key: str, text: str, timestamp: int) -> SendResult: ...

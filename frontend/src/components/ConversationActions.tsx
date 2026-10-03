@@ -178,6 +178,9 @@ function InfoDialog({ conv, onClose, onDelete }: { conv: Conversation; onClose: 
                 {d.channel.generation > 1 && <span className="text-muted"> · generation {d.channel.generation}</span>}
                 {!d.channel.active && <span className="text-muted"> · no longer on the radio</span>}
               </Row>
+              <Row k="Region scope">
+                {d.channel.flood_scope ? `#${d.channel.flood_scope}` : <span className="text-muted">Radio default</span>}
+              </Row>
             </>
           )}
           {d.contact && (

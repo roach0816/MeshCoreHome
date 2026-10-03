@@ -5,6 +5,8 @@ import { ChevronLeft, Clock, Copy, Megaphone, Pencil, Plus, Power, RefreshCw, Tr
 import { api, type ChannelKeyKind, type NodeConfig, type TelemetryMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, IconButton, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
+import { AddChannelDialog } from "../components/AddChannel";
+import { normaliseScope, scopeError } from "../lib/channelLink";
 import { useStatus } from "./Shell";
 import { cx } from "../lib/util";
 
@@ -17,7 +19,7 @@ const TELEMETRY: { value: TelemetryMode; label: string }[] = [
 const KEY_LABEL: Record<ChannelKeyKind, string> = {
   none: "No key",
   public: "Public key",
-  hashtag: "Hashtag (key from name)",
+  hashtag: "Hashtag key",
   private: "Private key",
 };
 const utf8Len = (s: string) => new TextEncoder().encode(s).length;
@@ -409,15 +411,19 @@ function RadioSection({ c }: { c: NodeConfig }) {
 
 // ---- channels -------------------------------------------------------------------------
 
-type ChannelEdit = { slot: number; name: string; key: ChannelKeyKind; isNew: boolean };
+type ChannelEdit = { slot: number; name: string; key: ChannelKeyKind; scope: string };
 
 function ChannelsSection({ c }: { c: NodeConfig }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<ChannelEdit | null>(null);
+  const [adding, setAdding] = useState(false);
   const [clearing, setClearing] = useState<{ slot: number; name: string } | null>(null);
   const [newKey, setNewKey] = useState<{ name: string; hex: string; base64: string } | null>(null);
   const bySlot = new Map(c.channels.map((ch) => [ch.slot, ch]));
-  const slots = Array.from({ length: c.max_channels }, (_, i) => bySlot.get(i) ?? { slot: i, name: "", key: "none" as ChannelKeyKind });
+  const slots = Array.from(
+    { length: c.max_channels },
+    (_, i) => bySlot.get(i) ?? { slot: i, name: "", key: "none" as ChannelKeyKind, flood_scope: null },
+  );
   const used = slots.filter((s) => s.name);
   const firstFree = slots.find((s) => !s.name);
   const clear = useMutation({
@@ -437,11 +443,17 @@ function ChannelsSection({ c }: { c: NodeConfig }) {
         {used.map((ch) => (
           <li key={ch.slot} className="flex items-center gap-3 px-3 py-2">
             <span className="w-14 shrink-0 text-xs text-muted">Slot {ch.slot}</span>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{ch.name}</span>
-            <Badge tone={ch.key === "private" ? "accent" : "muted"} className="hidden sm:inline-flex">
+            <span className="min-w-16 flex-1">
+              <span className="block truncate text-sm font-medium">{ch.name}</span>
+              {ch.flood_scope && <span className="block truncate text-xs text-muted">Region #{ch.flood_scope}</span>}
+            </span>
+            <Badge tone={ch.key === "private" ? "accent" : "muted"} className="hidden whitespace-nowrap sm:inline-flex">
               {KEY_LABEL[ch.key]}
             </Badge>
-            <IconButton label={`Edit ${ch.name}`} onClick={() => setEditing({ slot: ch.slot, name: ch.name, key: ch.key, isNew: false })}>
+            <IconButton
+              label={`Edit ${ch.name}`}
+              onClick={() => setEditing({ slot: ch.slot, name: ch.name, key: ch.key, scope: ch.flood_scope ?? "" })}
+            >
               <Pencil className="size-4" />
             </IconButton>
             <IconButton label={`Remove ${ch.name}`} onClick={() => setClearing({ slot: ch.slot, name: ch.name })}>
@@ -451,9 +463,10 @@ function ChannelsSection({ c }: { c: NodeConfig }) {
         ))}
         {used.length === 0 && <li className="px-3 py-3 text-sm text-muted">No channels configured.</li>}
       </ul>
-      <Button disabled={!firstFree} onClick={() => firstFree && setEditing({ slot: firstFree.slot, name: "", key: "none", isNew: true })}>
+      <Button disabled={!firstFree} onClick={() => setAdding(true)}>
         <Plus className="size-4" aria-hidden /> Add channel
       </Button>
+      {adding && <AddChannelDialog openOnAdd={false} onClose={() => setAdding(false)} />}
       <ErrorText error={clear.error} />
       {editing && (
         <ChannelDialog
@@ -525,17 +538,22 @@ function ChannelDialog({
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState(edit.name);
-  const initialMode: KeyMode = edit.isNew ? "hashtag" : edit.key === "hashtag" ? "hashtag" : "keep";
-  const [mode, setMode] = useState<KeyMode>(initialMode);
+  const [mode, setMode] = useState<KeyMode>(edit.key === "hashtag" ? "hashtag" : "keep");
   const [key, setKey] = useState("");
+  const [scope, setScope] = useState(edit.scope);
   const isHashtag = name.trim().startsWith("#");
   // Hashtag names always derive their key from the name; keep the mode consistent with the name.
-  const effectiveMode: KeyMode = isHashtag ? "hashtag" : mode === "hashtag" ? (edit.isNew ? "random" : "keep") : mode;
+  const effectiveMode: KeyMode = isHashtag ? "hashtag" : mode === "hashtag" ? "keep" : mode;
   const save = useMutation({
     mutationFn: () =>
       api<{ config: NodeConfig; new_key?: { hex: string; base64: string } }>(`/api/radio/channels/${edit.slot}`, {
         method: "PUT",
-        json: { name: name.trim(), key_mode: effectiveMode, key: effectiveMode === "custom" ? key.trim() : null },
+        json: {
+          name: name.trim(),
+          key_mode: effectiveMode,
+          key: effectiveMode === "custom" ? key.trim() : null,
+          flood_scope: normaliseScope(scope),
+        },
       }),
     onSuccess: (r) => {
       qc.setQueryData(["node-config"], r.config);
@@ -544,16 +562,17 @@ function ChannelDialog({
     },
   });
   const bytes = utf8Len(name.trim());
-  const valid = bytes > 0 && bytes <= 31 && (effectiveMode !== "custom" || key.trim().length > 0);
+  const valid =
+    bytes > 0 && bytes <= 31 && (effectiveMode !== "custom" || key.trim().length > 0) && !scopeError(scope);
   const modes: { value: KeyMode; label: string; hint: string; show: boolean }[] = [
-    { value: "keep", label: "Keep the current key", hint: "Rename only.", show: !edit.isNew && !isHashtag },
+    { value: "keep", label: "Keep the current key", hint: "Rename only.", show: !isHashtag },
     { value: "random", label: "Generate a new private key", hint: "Shown once so you can share it.", show: !isHashtag },
     { value: "custom", label: "Enter a key", hint: "Join an existing private channel (32 hex characters or base64).", show: !isHashtag },
     { value: "public", label: "MeshCore Public key", hint: "The well-known key every companion ships with.", show: !isHashtag },
   ];
   return (
     <Dialog
-      title={edit.isNew ? `Add channel (slot ${edit.slot})` : `Edit ${edit.name}`}
+      title={`Edit ${edit.name}`}
       onClose={onClose}
       footer={
         <>
@@ -616,6 +635,14 @@ function ChannelDialog({
             )}
           </fieldset>
         )}
+        <Field
+          label="Region scope"
+          htmlFor="ch-scope"
+          error={scopeError(scope)}
+          hint="Messages you send on this channel only flood through repeaters serving this region. Empty uses the radio's default scope."
+        >
+          <Input id="ch-scope" placeholder="#region" value={scope} onChange={(e) => setScope(e.target.value)} />
+        </Field>
         <ErrorText error={save.error} />
       </div>
     </Dialog>

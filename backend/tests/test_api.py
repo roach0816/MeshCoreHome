@@ -386,6 +386,90 @@ async def test_node_configuration_on_simulated_radio(client):
     simulated._SIM_STATE = None
 
 
+async def test_add_channel_flows_and_region_scope(client):
+    from app.radio import simulated
+    from app.radio.base import PUBLIC_CHANNEL_KEY, hashtag_key
+
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+
+    # Hashtag key preview: derived from the name, so it may be shown.
+    r = await client.get("/api/radio/channels/hashtag-key", params={"name": "#hikers"})
+    assert r.json()["hex"] == hashtag_key("#hikers").hex()
+    assert (await client.get("/api/radio/channels/hashtag-key", params={"name": "#"})).status_code == 422
+
+    # Join a hashtag channel with a region scope: first free slot, key returned for sharing.
+    r = await client.post(
+        "/api/radio/channels",
+        headers=csrf(client),
+        json={"name": "#hikers", "key_mode": "hashtag", "flood_scope": "#boulder"},
+    )
+    assert r.status_code == 200, r.text
+    added = r.json()
+    assert added["slot"] == 2 and added["share"]["hex"] == hashtag_key("#hikers").hex()
+    assert next(c for c in added["config"]["channels"] if c["slot"] == 2)["flood_scope"] == "boulder"
+    info = (await client.get(f"/api/conversations/{added['conversation_id']}/info")).json()
+    assert info["channel"]["flood_scope"] == "boulder"
+
+    # The same channel again is refused (one key, one slot).
+    dup = await client.post(
+        "/api/radio/channels", headers=csrf(client), json={"name": "#hikers", "key_mode": "hashtag"}
+    )
+    assert dup.status_code == 409 and "already on the radio" in dup.json()["detail"]
+
+    # Public, a new private channel (key returned once), and joining a private channel.
+    r = await client.post(
+        "/api/radio/channels", headers=csrf(client), json={"name": "Public", "key_mode": "public"}
+    )
+    assert r.json()["share"]["hex"] == PUBLIC_CHANNEL_KEY.hex()
+    r = await client.post(
+        "/api/radio/channels", headers=csrf(client), json={"name": "Family", "key_mode": "random"}
+    )
+    assert len(r.json()["share"]["hex"]) == 32
+    r = await client.post(
+        "/api/radio/channels",
+        headers=csrf(client),
+        json={"name": "Club", "key_mode": "custom", "key": "00112233445566778899aabbccddeeff"},
+    )
+    assert r.status_code == 200 and "share" not in r.json()
+    bad = await client.post(
+        "/api/radio/channels", headers=csrf(client), json={"name": "#x y", "key_mode": "hashtag"}
+    )
+    assert bad.status_code == 422
+
+    # Sending on the scoped channel passes the scope to the radio for that message only.
+    body = {"client_message_id": uuid.uuid4().hex, "body": "trail is clear"}
+    sent = await client.post(
+        f"/api/conversations/{added['conversation_id']}/messages", headers=csrf(client), json=body
+    )
+    assert sent.status_code == 200
+
+    async def scoped_send():
+        return simulated.sim_state().get("last_channel_scope") == "boulder"
+
+    await wait_for(scoped_send)
+
+    # Clearing the scope.
+    r = await client.put("/api/radio/channels/2/scope", headers=csrf(client), json={"flood_scope": ""})
+    assert r.status_code == 200 and r.json()["flood_scope"] is None
+    assert (
+        await client.put("/api/radio/channels/7/scope", headers=csrf(client), json={"flood_scope": "x"})
+    ).status_code == 404
+
+    # Fill the remaining slots, then adding reports that the radio is full.
+    for i in range(2):
+        r = await client.post(
+            "/api/radio/channels", headers=csrf(client), json={"name": f"#fill{i}", "key_mode": "hashtag"}
+        )
+        assert r.status_code == 200
+    full = await client.post(
+        "/api/radio/channels", headers=csrf(client), json={"name": "#onemore", "key_mode": "hashtag"}
+    )
+    assert full.status_code == 409 and "slots" in full.json()["detail"]
+    simulated._SIM_STATE = None
+
+
 async def test_node_configuration_requires_connection(client):
     await do_setup(client, mode="none")
     r = await client.get("/api/radio/config")

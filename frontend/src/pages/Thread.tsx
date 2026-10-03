@@ -18,6 +18,7 @@ import {
 } from "../lib/util";
 import { useConversations } from "../components/ConversationList";
 import { Badge, IconButton } from "../components/ui";
+import { EmojiButton } from "../components/EmojiPicker";
 
 const PAGE = 50;
 const BOTTOM_SLACK = 80;
@@ -381,6 +382,19 @@ function Composer({ conv, online, onSent }: { conv: Conversation; online: boolea
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   }, [text]);
 
+  const insertEmoji = (emoji: string) => {
+    const ta = taRef.current;
+    const start = ta?.selectionStart ?? text.length;
+    const end = ta?.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + emoji + text.slice(end));
+    clientId.current = newClientId();
+    requestAnimationFrame(() => {
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  };
+
   const submit = () => {
     if (!text.trim() || over || !online || send.isPending) return;
     send.mutate(text);
@@ -403,7 +417,8 @@ function Composer({ conv, online, onSent }: { conv: Conversation; online: boolea
           </p>
         )}
         {disabledReason && <p className="mb-1.5 text-xs text-muted">{disabledReason}</p>}
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-1.5 sm:gap-2">
+          <EmojiButton onPick={insertEmoji} disabled={!canReply} />
           <label htmlFor="composer" className="sr-only">
             Message
           </label>

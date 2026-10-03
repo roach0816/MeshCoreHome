@@ -185,10 +185,13 @@ class SimulatedRadio(RadioAdapter):
         self._require()
         return self._queue.popleft() if self._queue else None
 
-    async def send_channel(self, slot: int, text: str, timestamp: int) -> SendResult:
+    async def send_channel(
+        self, slot: int, text: str, timestamp: int, scope: str | None = None
+    ) -> SendResult:
         self._require()
         if slot not in sim_state()["channels"]:
             return SendResult(ok=False, error="unknown channel slot")
+        sim_state()["last_channel_scope"] = scope
         await asyncio.sleep(0.15)
         return SendResult(ok=True)
 
