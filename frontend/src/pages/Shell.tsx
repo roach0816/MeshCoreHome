@@ -173,18 +173,14 @@ function UserPanel({ me }: { me: Me }) {
                 </span>
                 v{version} · Update to v{update.data.latest.version}
               </Link>
-            ) : meta.data?.release_url ? (
-              <a
-                href={meta.data.release_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Release notes for v${version} (opens GitHub)`}
+            ) : (
+              <Link
+                to="/settings/updates"
+                title="Software updates and release notes"
                 className="text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
               >
                 MeshCore Home v{version}
-              </a>
-            ) : (
-              <span className="text-xs text-muted">MeshCore Home v{version}</span>
+              </Link>
             ))}
         </div>
       </div>
