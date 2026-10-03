@@ -103,7 +103,7 @@ export function Shell({ me }: { me: Me }) {
           <Route index element={<EmptyPane />} />
           <Route path="c/:id" element={<Thread status={status.data} />} />
           <Route path="contacts" element={<Contacts />} />
-          <Route path="settings" element={<Settings me={me} />} />
+          <Route path="settings" element={<Settings />} />
           <Route path="settings/node" element={<NodeSettings />} />
           <Route path="settings/updates" element={<Updates />} />
           <Route path="account" element={<Account me={me} />} />

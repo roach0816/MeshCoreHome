@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import {
+  History,
   ChevronLeft,
   Download,
   Pause,
@@ -10,14 +11,14 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  UserRound,
   Volume2,
 } from "lucide-react";
 import { playChime, type SoundSetting } from "../lib/sound";
 import { useUpdateInfo } from "../lib/queries";
 import { NetworkSection } from "../components/NetworkSettings";
-import { api, type Device, type MapConfig, type Me, type RadioConfig, type RadioMode } from "../lib/api";
+import { api, type Device, type MapConfig, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
+import { Dialog } from "../components/Dialog";
 import { radioSummary } from "../components/StatusPill";
 import { useStatus } from "./Shell";
 import { applyTheme, cx, formatDateTime, getThemePref, relativeSeconds, type ThemePref } from "../lib/util";
@@ -41,7 +42,7 @@ function Row({ k, children }: { k: string; children: ReactNode }) {
   );
 }
 
-export function Settings({ me }: { me: Me }) {
+export function Settings() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-2 border-b border-line bg-surface px-1.5 py-1.5 md:px-4">
@@ -56,16 +57,14 @@ export function Settings({ me }: { me: Me }) {
       </header>
       <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
         <div className="mx-auto max-w-3xl space-y-4">
-          <SoftwareSection />
-          <NetworkSection />
           <RadioSection />
           <DeviceSection />
-          <GapsSection />
           <NotificationsSection />
           <MapSection />
           <AppearanceSection />
-          <AccountSection me={me} />
           <DataSection />
+          <NetworkSection />
+          <SoftwareSection />
         </div>
       </div>
     </div>
@@ -139,6 +138,8 @@ function RadioSection() {
   const simulate = useMutation({ mutationFn: () => api("/api/radio/simulate-incoming", { method: "POST" }) });
 
   const r = status.data?.radio;
+  const gaps = status.data?.gaps ?? [];
+  const [showGaps, setShowGaps] = useState(false);
   const summary = radioSummary(status.data);
   const dirty =
     cfg.data &&
@@ -266,12 +267,17 @@ function RadioSection() {
             <SlidersHorizontal className="size-4" aria-hidden /> Configure node settings
           </Link>
         )}
+        <Button onClick={() => setShowGaps(true)}>
+          <History className="size-4" aria-hidden /> Collection gaps
+          {gaps.length > 0 && <Badge tone={gaps.some((g) => g.open) ? "warn" : "muted"}>{gaps.some((g) => g.open) ? "ongoing" : gaps.length}</Badge>}
+        </Button>
         {r?.state === "connected" && r.is_simulated && (
           <Button onClick={() => simulate.mutate()} disabled={simulate.isPending}>
             <Sparkles className="size-4" aria-hidden /> Simulate incoming message
           </Button>
         )}
       </div>
+      {showGaps && <GapsDialog onClose={() => setShowGaps(false)} />}
     </Section>
   );
 }
@@ -325,14 +331,15 @@ function DeviceSection() {
   );
 }
 
-function GapsSection() {
+function GapsDialog({ onClose }: { onClose: () => void }) {
   const status = useStatus();
   const gaps = status.data?.gaps ?? [];
   return (
-    <Section
-      title="Collection gaps"
-      description="Periods when the archive was not collecting. Messages sent during a gap may be missing — the radio's own buffer is finite."
-    >
+    <Dialog title="Collection gaps" onClose={onClose} footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <p className="mb-3 text-sm text-muted">
+        Periods when the archive was not collecting. Messages sent during a gap may be missing — the radio's own
+        buffer is finite.
+      </p>
       {gaps.length === 0 ? (
         <p className="text-sm text-muted">No gaps recorded.</p>
       ) : (
@@ -347,7 +354,7 @@ function GapsSection() {
           ))}
         </ul>
       )}
-    </Section>
+    </Dialog>
   );
 }
 
@@ -503,19 +510,6 @@ function AppearanceSection() {
           </button>
         ))}
       </div>
-    </Section>
-  );
-}
-
-function AccountSection({ me }: { me: Me }) {
-  return (
-    <Section title="Account" description={`Signed in as ${me.username}.`}>
-      <Link
-        to="/account"
-        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium hover:bg-surface-2"
-      >
-        <UserRound className="size-4" aria-hidden /> Manage username and password
-      </Link>
     </Section>
   );
 }
