@@ -90,3 +90,15 @@ async def test_setup_token_file_written_and_removed(client, native):
     )
     assert r.status_code == 200
     assert not f.exists()
+
+
+async def test_tls_status_reported(client, native):
+    await do_setup(client, mode="none")
+    assert (await client.get("/api/system/update")).json()["tls"] is None
+    (native / "tls-status.json").write_text(
+        json.dumps(
+            {"host": "meshcore.example.com", "not_after": "2027-01-01T00:00:00Z", "issuer": "Let's Encrypt"}
+        )
+    )
+    tls = (await client.get("/api/system/update")).json()["tls"]
+    assert tls["host"] == "meshcore.example.com" and tls["not_after"].startswith("2027")

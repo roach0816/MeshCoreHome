@@ -313,4 +313,5 @@ export interface UpdateInfo {
   update_available: boolean;
   can_install: boolean;
   status: UpdateStatus | null;
+  tls: { host: string; not_after: string; issuer?: string } | null;
 }

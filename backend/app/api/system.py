@@ -42,7 +42,7 @@ async def update_info(refresh: bool = Query(default=False), ctx: AuthContext = D
         _manual_checks.hit(key)
         force = True
     await updates.checker.check(force=force)
-    return {**updates.checker.summary(), "status": updates.read_status()}
+    return {**updates.checker.summary(), "status": updates.read_status(), "tls": updates.read_tls()}
 
 
 @router.get("/update/status")

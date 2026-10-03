@@ -19,6 +19,7 @@ Usage: meshcore-home <command>
   restart        Restart the application
   setup-token    Show the first-run setup token (until setup is completed)
   backup         Back up the database now
+  https          Set up HTTPS (nginx + Let's Encrypt via Cloudflare DNS); --disable to remove
   uninstall      Remove the application (add --purge to delete all data)
   version        Print the installed version
 USAGE
@@ -39,6 +40,10 @@ case "$cmd" in
   restart) need_root "$cmd" "$@"; systemctl restart "$SERVICE"; systemctl --no-pager status "$SERVICE" | head -n 5 ;;
   update|upgrade) need_root "$cmd" "$@"; exec bash "$INSTALLER" --upgrade "$@" ;;
   uninstall) need_root "$cmd" "$@"; cp "$INSTALLER" /tmp/meshcore-home-uninstall.sh; exec bash /tmp/meshcore-home-uninstall.sh --uninstall "$@" ;;
+  https)
+    need_root "$cmd" "$@"
+    if [[ ${1:-} == --disable ]]; then exec bash "$INSTALLER" --https-disable; fi
+    exec bash "$INSTALLER" --https "$@" ;;
   setup-token)
     need_root "$cmd" "$@"
     if [[ -f $STATE_DIR/setup-token ]]; then cat "$STATE_DIR/setup-token"; else echo "Setup has already been completed (no token)."; fi ;;

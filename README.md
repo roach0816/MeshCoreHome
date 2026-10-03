@@ -116,6 +116,7 @@ The installer is a step-by-step wizard with progress bars:
 7. **Set up the database:** a local PostgreSQL database, reached as the app's OS user, so there's
    no password.
 8. **Start the service** and show the address to open and the **first-run setup token**.
+9. **HTTPS (optional):** see [HTTPS on the Pi](#https-on-the-pi).
 
 Answering **n** at any prompt cancels the installation. Re-running the installer is safe: it picks
 up where a failed attempt stopped, and repairs a broken install.
@@ -131,11 +132,41 @@ Manage it with the `meshcore-home` command:
 
 ```text
 meshcore-home status         version, service state, web address
+sudo meshcore-home https     set up HTTPS (or `https --disable` to go back to plain HTTP)
 meshcore-home logs [-f]      application log
 sudo meshcore-home update    upgrade to the latest release (same wizard, with a database backup)
 sudo meshcore-home backup    back up the database now
 sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
 ```
+
+### HTTPS on the Pi
+
+Without this step, the Pi serves **plain HTTP** on port 8080. Passwords and session cookies then
+cross your network unencrypted, and some browser features are unavailable (the copy buttons, "Use
+this device's location").
+
+HTTPS is offered as the last step of the installer, or later with `sudo meshcore-home https`. It
+uses:
+
+- **nginx** in front of the app on ports 80/443. Port 80 redirects to HTTPS, and the app then
+  listens on `127.0.0.1` only.
+- A trusted **Let's Encrypt** certificate validated through **Cloudflare DNS** (DNS-01). The Pi
+  doesn't need to be reachable from the internet, so it works for a private, LAN-only hostname.
+- Debian's own `nginx`, `certbot`, and `python3-certbot-dns-cloudflare` packages. They're listed and
+  confirmed **[Y/n]** before installing. `certbot.timer` renews the certificate automatically.
+
+You need:
+
+1. A hostname in a domain whose DNS is on Cloudflare (e.g. `meshcore.<your-domain>`).
+2. A Cloudflare API token created with the **"Edit zone DNS"** template, limited to that zone. The
+   installer asks for it with hidden input and stores it only in
+   `/etc/letsencrypt/meshcore-home-cloudflare.ini`, readable by root only. It's never shown, logged,
+   or given to the app.
+3. A local DNS record (router, Pi-hole, etc.) pointing the hostname at the Pi's LAN address.
+
+If the certificate can't be obtained, nothing changes: the app stays on HTTP, and you can retry
+with `sudo meshcore-home https`. **Settings → Software updates** shows the hostname and when the
+certificate expires.
 
 ### Updates
 
