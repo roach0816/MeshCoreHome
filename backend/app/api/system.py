@@ -1,5 +1,6 @@
 """Software version, update availability and (native installs) in-place upgrades."""
 
+import json
 import re
 import time
 from typing import Literal
@@ -96,9 +97,62 @@ class NetworkConfigIn(BaseModel):
     redirect_http: bool = True
     email: str | None = Field(default=None, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     staging: bool = False
-    propagation_seconds: int = Field(default=30, ge=10, le=600)
-    # Write-only. Omit (or null) to keep the token already saved on the device.
+    # 0: lego checks DNS propagation itself; otherwise wait this many seconds (10–600).
+    propagation_seconds: int = Field(default=0, ge=0, le=600)
+    # One of the providers in dns-providers.json (GET /api/system/network lists them).
+    dns_provider: str = Field(default="cloudflare", pattern=r"^[a-z0-9]{2,32}$")
+    # Write-only {ENV name: value} for that provider. Omit (or null) to keep the saved values;
+    # a blank value keeps that field's saved value.
+    credentials: dict[str, str] | None = None
+    # Older clients (v0.6.4 to v0.7.3): a Cloudflare API token. Same as dns_provider "cloudflare"
+    # with credentials {"CF_DNS_API_TOKEN": token}.
     cf_token: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_\-]{20,200}$")
+
+
+def _check_credentials(body: NetworkConfigIn) -> None:
+    """The provider exists, only its own fields are sent, and required ones are present."""
+    provider = system_config.dns_provider(body.dns_provider)
+    if provider is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"Unknown DNS provider: {body.dns_provider}"
+        )
+    fields = {f["env"]: f for f in provider["fields"]}
+    given = {k: v.strip() for k, v in (body.credentials or {}).items() if v and v.strip()}
+    unknown = sorted(set(body.credentials or {}) - set(fields))
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"{provider['name']} does not use: {', '.join(unknown)}"
+        )
+    for env, value in given.items():
+        f = fields[env]
+        if f.get("kind") == "json":
+            try:
+                json.loads(value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, f"{f['label']}: this is not valid JSON"
+                ) from exc
+        elif len(value) > 500 or re.search(r"[\x00-\x1f\x7f']", value):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, f"{f['label']}: unexpected characters or too long"
+            )
+        elif f.get("choices") and value not in f["choices"]:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"{f['label']}: choose one of {', '.join(f['choices'])}",
+            )
+    snap = system_config.snapshot() or {}
+    if snap.get("credentials_provider") == provider["id"]:
+        return  # saved values stay unless replaced
+    missing = [
+        f["label"]
+        for f in provider["fields"]
+        if f.get("required") and not f.get("default") and f["env"] not in given
+    ]
+    if missing:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"{provider['name']}: enter the {', '.join(missing)}"
+        )
 
 
 def _native_or_409() -> None:
@@ -128,6 +182,7 @@ async def network_info(ctx: AuthContext = Depends(require_auth)):
         "certificate": system_config.certificate() if native else None,
         "status": system_config.status() if native else None,
         "in_progress": system_config.in_progress() if native else False,
+        "providers": system_config.dns_providers() if native else [],
     }
 
 
@@ -152,9 +207,13 @@ async def apply_network(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, "Port 80 is used for the HTTP→HTTPS redirect"
             )
-        snap = system_config.snapshot() or {}
-        if not body.cf_token and not snap.get("token_saved"):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Enter a Cloudflare API token")
+        if 0 < body.propagation_seconds < 10:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "The DNS wait must be 0 (automatic) or 10–600 seconds"
+            )
+        if body.cf_token:
+            body.dns_provider, body.credentials = "cloudflare", {"CF_DNS_API_TOKEN": body.cf_token}
+        _check_credentials(body)
     try:
         system_config.write_request(
             {
@@ -167,7 +226,8 @@ async def apply_network(
                 "email": body.email or "",
                 "staging": body.staging,
                 "propagation_seconds": body.propagation_seconds,
-                "cf_token": body.cf_token or "",
+                "dns_provider": body.dns_provider,
+                "credentials": {k: v for k, v in (body.credentials or {}).items() if v.strip()},
             }
         )
     except OSError as exc:
@@ -182,7 +242,8 @@ async def apply_network(
                 "hostname": hostname or None,
                 "app_port": body.app_port,
                 "https_port": body.https_port,
-                "token_changed": bool(body.cf_token),
+                "dns_provider": body.dns_provider,
+                "credentials_changed": bool(body.credentials),
             },
         )
     )

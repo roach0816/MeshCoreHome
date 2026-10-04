@@ -345,8 +345,10 @@ export interface NetworkSnapshot {
   redirect_http: boolean;
   email: string | null;
   staging: boolean;
-  dns_provider: "cloudflare";
-  propagation_seconds: number;
+  dns_provider: string;
+  credentials_provider: string | null; // credentials are saved for this provider (never shown)
+  acme_client: "lego" | "certbot" | null;
+  propagation_seconds: number; // 0 = automatic
   token_saved: boolean;
   https_packages_installed: boolean;
   auto_renew: boolean;
@@ -367,6 +369,27 @@ export interface NetworkInfo {
   certificate: { host: string; not_after: string; issuer?: string } | null;
   status: NetworkStatus | null;
   in_progress: boolean;
+  providers: DnsProvider[];
+}
+
+export interface DnsProviderField {
+  env: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  kind?: "text" | "choice" | "json";
+  default?: string;
+  choices?: string[];
+}
+
+export interface DnsProvider {
+  id: string;
+  name: string;
+  lego: string;
+  fields: DnsProviderField[];
+  help: string;
+  note: string | null;
+  docs: string;
 }
 
 export type ApiKeyScope = "read" | "write";

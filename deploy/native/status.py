@@ -757,12 +757,58 @@ def check_https(r: Report, env: dict[str, str]) -> None:
                 f"{text} · {tls.get('issuer', '')}".strip(" ·"),
                 None
                 if level == OK
-                else "Renew now in Settings → Network & HTTPS, or: sudo certbot renew",
+                else "Renew now in Settings → Network & HTTPS (Renew now)",
             )
         except ValueError:
             r.row(INFO, "Certificate", f"expires {tls['not_after']}")
+    if "tls-test" in env.get("TLS_CERT", ""):
+        return  # self-signed test certificate: nothing renews it
+    if env.get("ACME_CLIENT") == "lego":
+        provider = env.get("ACME_PROVIDER", "?")
+        try:
+            names = {
+                p["id"]: p["name"]
+                for p in json.loads(
+                    read_text(f"{PREFIX}/current/deploy/native/dns-providers.json")
+                )["providers"]
+            }
+            provider = names.get(provider, provider)
+        except (OSError, ValueError, KeyError):
+            pass
+        r.row(INFO, "DNS validation", f"{provider} (lego)")
+        timer = systemd("meshcore-home-acme-renew.timer", "ActiveState")
+        last = systemd(
+            "meshcore-home-acme-renew.service", "Result", "ExecMainExitTimestamp"
+        )
+        if timer.get("ActiveState") != "active":
+            r.row(
+                WARN,
+                "Renewal",
+                "the renewal timer is not active, so the certificate will not renew automatically",
+                "Re-apply the HTTPS settings in Settings → Network & HTTPS, or: sudo meshcore-home https",
+            )
+        elif last.get("Result") not in (None, "", "success"):
+            r.row(
+                WARN,
+                "Renewal",
+                f"the last renewal check failed ({last.get('ExecMainExitTimestamp') or 'recently'})",
+                "Check the DNS provider credentials. Details: sudo journalctl -u meshcore-home-acme-renew",
+            )
+        else:
+            r.row(
+                OK,
+                "Renewal",
+                "checked twice a day by lego; renews about 30 days before expiry",
+            )
+        return
     rc, _ = run("systemctl", "is-active", "--quiet", "certbot.timer")
-    if rc != 0 and "tls-test" not in env.get("TLS_CERT", ""):
+    r.row(
+        INFO,
+        "DNS validation",
+        "Cloudflare (certbot, from before v0.7.4)",
+        "Saving the HTTPS settings once moves renewals to lego, reusing the saved token.",
+    )
+    if rc != 0:
         r.row(
             WARN,
             "Renewal",

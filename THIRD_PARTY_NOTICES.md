@@ -26,6 +26,10 @@ No third-party source code is copied into this repository (see `docs/upstream-re
 
 ## Downloaded at install time (native Raspberry Pi installs, optional)
 
+When you turn on **HTTPS**, the installer downloads a prebuilt [lego](https://github.com/go-acme/lego)
+binary (MIT licence) from its GitHub releases to get and renew the certificate. It is not distributed
+with MeshCore Home; the version and SHA-256 checksums are pinned in `deploy/native/lego.lock`.
+
 When you set up the **radio HAT**, the installer downloads a prebuilt
 [ZephCore](https://github.com/liquidraver/ZephCore) binary (MIT licence; it includes Monocypher,
 BSD-2-Clause OR CC0-1.0, and is built on Zephyr RTOS, Apache-2.0) from its GitHub releases. It is

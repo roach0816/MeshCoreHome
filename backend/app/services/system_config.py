@@ -42,6 +42,28 @@ def _read(name: str) -> dict[str, Any] | None:
         return None
 
 
+# Release layout: <release>/app and <release>/deploy; repository layout: <repo>/backend/app.
+_HERE = Path(__file__).resolve()
+_CATALOG_CANDIDATES = (
+    _HERE.parents[2] / "deploy" / "native" / "dns-providers.json",
+    _HERE.parents[3] / "deploy" / "native" / "dns-providers.json",
+)
+
+
+def dns_providers() -> list[dict[str, Any]]:
+    """The DNS providers offered for HTTPS (deploy/native/dns-providers.json; static, no secrets)."""
+    for path in _CATALOG_CANDIDATES:
+        try:
+            return json.loads(path.read_text())["providers"]
+        except (OSError, ValueError, KeyError):
+            continue
+    return []
+
+
+def dns_provider(provider_id: str) -> dict[str, Any] | None:
+    return next((p for p in dns_providers() if p["id"] == provider_id), None)
+
+
 def snapshot() -> dict[str, Any] | None:
     return _read(SNAPSHOT_FILE)
 

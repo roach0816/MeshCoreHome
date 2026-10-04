@@ -235,32 +235,59 @@ opens a dialog for:
 
 - the app port;
 - HTTPS on/off, the hostname, the HTTPS port, and the HTTP→HTTPS redirect;
-- the Let's Encrypt email, Cloudflare DNS validation, the API token, the DNS wait, and a staging
+- the Let's Encrypt email, your DNS provider and its credentials, the DNS wait, and a staging
   option for testing;
 - **Renew now**.
 
 Before anything changes, the dialog lists exactly what will happen. The change is applied by a
 root-only helper (`meshcore-home-config`); the web app itself never runs as root. If the app doesn't
-come back afterwards, the previous configuration, including a previously saved token, is restored
-automatically.
+come back afterwards, the previous configuration, including previously saved credentials, is
+restored automatically.
 
 HTTPS uses:
 
 - **nginx** in front of the app on ports 80/443. Port 80 redirects to HTTPS, and the app then
-  listens on `127.0.0.1` only.
-- A trusted **Let's Encrypt** certificate validated through **Cloudflare DNS** (DNS-01). The Pi
+  listens on `127.0.0.1` only. nginx comes from Debian's own repositories and is listed and
+  confirmed **[Y/n]** before installing.
+- A trusted **Let's Encrypt** certificate validated through your **DNS provider** (DNS-01). The Pi
   doesn't need to be reachable from the internet, so it works for a private, LAN-only hostname.
-- Debian's own `nginx`, `certbot`, and `python3-certbot-dns-cloudflare` packages. They're listed and
-  confirmed **[Y/n]** before installing. `certbot.timer` renews the certificate automatically.
+- [lego](https://github.com/go-acme/lego) (MIT licence) to get and renew the certificate. The
+  installer downloads the version pinned in `deploy/native/lego.lock` and checks its SHA-256. A
+  timer (`meshcore-home-acme-renew.timer`) checks twice a day and renews about 30 days before
+  expiry.
+
+Supported DNS providers (25):
+
+| | | | | |
+| --- | --- | --- | --- | --- |
+| Cloudflare | Amazon Route 53 | Google Cloud DNS | Azure DNS | DigitalOcean |
+| GoDaddy | Namecheap | Porkbun | OVHcloud | Gandi |
+| Hetzner DNS | Linode (Akamai) | Vultr | IONOS | Hostinger |
+| Name.com | NameSilo | Dynadot | DNSimple | Netlify |
+| Vercel | deSEC | Duck DNS | Infomaniak | Self-hosted (RFC 2136: BIND, PowerDNS, Knot, Technitium) |
+
+Each provider asks only for its own credentials (an API token, or a key and secret; Google takes a
+service-account JSON key). The form and installer say where to create them. **GoDaddy** only allows
+API access for accounts with 10+ domains or a paid plan, and **Namecheap** needs API access turned on
+and your public IP address allowlisted. Credentials are stored only in
+`/etc/meshcore-home/acme/credentials.env`, readable by root only, and are never shown again, logged,
+or given to the app.
 
 You need:
 
-1. A hostname in a domain whose DNS is on Cloudflare (e.g. `meshcore.<your-domain>`).
-2. A Cloudflare API token created with the **"Edit zone DNS"** template, limited to that zone. The
-   installer asks for it with hidden input and stores it only in
-   `/etc/letsencrypt/meshcore-home-cloudflare.ini`, readable by root only. It's never shown, logged,
-   or given to the app.
+1. A hostname in a domain at one of the providers above (e.g. `meshcore.<your-domain>`).
+2. API credentials for that provider, limited to that domain's zone where the provider allows it.
 3. A local DNS record (router, Pi-hole, etc.) pointing the hostname at the Pi's LAN address.
+
+**My DNS provider isn't listed.** Some registrars (Squarespace, Wix, Bluehost, Network Solutions,
+Hover) have no DNS API. Hand just the validation to a free provider that has one: create a free
+[deSEC](https://desec.io) account with a name such as `yourname.dedyn.io`, then at your registrar add
+one CNAME record, `_acme-challenge.meshcore.<your-domain>` → `_acme-challenge.yourname.dedyn.io`.
+Choose **deSEC** with its token. lego follows the CNAME, and the rest of your DNS stays where it is.
+
+**Installs from before v0.7.4** used certbot with Cloudflare. They keep working unchanged. The next
+time the HTTPS settings are saved (or `sudo meshcore-home https` runs), renewals move to lego,
+reusing the saved Cloudflare token, and certbot's renewal for that site is turned off.
 
 If the certificate can't be obtained, nothing changes: the app stays as it was, and you can retry.
 

@@ -17,7 +17,7 @@
 #                        report progress there (run by meshcore-home-update.service, never by hand)
 #     --uninstall [--purge]   remove the app; --purge also deletes the database, config and data
 #     --https            set up (or redo) HTTPS on an existing install: nginx + Let's Encrypt via
-#                        Cloudflare DNS validation (also offered at the end of a fresh install)
+#                        DNS validation at one of 25 DNS providers (also offered when installing)
 #     --https-disable    remove the HTTPS front end and serve plain HTTP again
 #     --security-updates turn on Debian's automatic security updates (unattended-upgrades)
 #     --radio-hat        set up the RAK6421 radio HAT on a Raspberry Pi 4/5 (ZephCore); with
@@ -27,6 +27,7 @@
 #                        meshcore-home-config.service, never by hand)
 #     --sync-units       install helper systemd units shipped with the running release (run as
 #                        root on every app start)
+#     --acme-renew       renew the HTTPS certificate if it is due (run by a timer)
 #
 # Everything the script changes is listed on screen and confirmed first. Answering "n" to any
 # confirmation cancels the installation.
@@ -51,9 +52,10 @@ DEFAULT_PORT=8080
 KEEP_RELEASES=2
 KEEP_BACKUPS=5
 REQUIRED_PACKAGES=(python3 python3-venv postgresql postgresql-client curl ca-certificates tar)
-# Optional HTTPS: nginx in front of the app with a Let's Encrypt certificate obtained through a
-# Cloudflare DNS-01 challenge (works for private/LAN-only hosts; nothing is exposed publicly).
-HTTPS_PACKAGES=(nginx certbot python3-certbot-dns-cloudflare openssl)
+# Optional HTTPS: nginx in front of the app with a Let's Encrypt certificate obtained by lego
+# through a DNS-01 challenge at the owner's DNS provider (works for private/LAN-only hosts;
+# nothing is exposed publicly). See "HTTPS certificates with lego" below.
+HTTPS_PACKAGES=(nginx openssl)
 NGINX_SITE=/etc/nginx/sites-available/meshcore-home
 CF_CREDENTIALS=/etc/letsencrypt/meshcore-home-cloudflare.ini
 
@@ -83,8 +85,9 @@ while (($#)); do
     --radio-hat-sync) MODE=radio-hat-sync; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --apply-config) MODE=apply-config; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --sync-units) MODE=sync-units; CONFIG_MODE=1; ASSUME_YES=1 ;;
+    --acme-renew) MODE=acme-renew; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,36p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,37p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -1072,7 +1075,7 @@ uninstall() {
   if ((PURGE)); then
     note "  • ${R}The database $DB_NAME (all message history), $CONF_DIR and $STATE_DIR${N}"
     note "  • The system user $APP_USER"
-    [[ -f $CF_CREDENTIALS ]] && note "  • The saved Cloudflare API token ($CF_CREDENTIALS)"
+    [[ -f $CF_CREDENTIALS || -d $ACME_DIR ]] && note "  • The saved DNS provider credentials and HTTPS certificate"
   else
     note "${B}Kept:${N} the database, $CONF_DIR and $STATE_DIR (use --purge to delete them too)"
   fi
@@ -1083,13 +1086,14 @@ uninstall() {
   activity "Stopping $APP_NAME"
   systemctl disable --now "$SERVICE-update.path" "$SERVICE-config.path" "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
   # ${VAR:?} guards: an empty variable must never turn a removal into a top-level path.
+  systemctl disable --now "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true
   rm -f "${UNIT_DIR:?}/${SERVICE:?}.service" "${CLI_LINK:?}"
-  local u; for u in "${HELPER_UNITS[@]}"; do rm -f "${UNIT_DIR:?}/${u:?}"; done
+  local u; for u in "${HELPER_UNITS[@]}" "${ACME_UNITS[@]}"; do rm -f "${UNIT_DIR:?}/${u:?}"; done
   systemctl daemon-reload
   ok "Services and the $CLI_LINK command removed"
 
   step
-  run "Removing $PREFIX" rm -rf "${PREFIX:?}"
+  run "Removing $PREFIX" rm -rf "${PREFIX:?}" "${LEGO_DIR:?}"
 
   if ((nginx)); then
     step
@@ -1124,7 +1128,7 @@ CONFIG_STATUS="$STATE_DIR/config-status.json"
 NETWORK_SNAPSHOT="$STATE_DIR/network.json"
 CONF_BACKUP="$CONF_DIR/.previous"
 DEFAULT_HTTPS_PORT=443
-DEFAULT_PROPAGATION=30
+DEFAULT_PROPAGATION=0  # 0: lego checks propagation itself; otherwise a fixed wait in seconds
 HELPER_UNITS=("$SERVICE-update.service" "$SERVICE-update.path" "$SERVICE-config.service" "$SERVICE-config.path")
 
 env_set() {  # env_set KEY VALUE — add or replace a line in the env file
@@ -1153,15 +1157,25 @@ https_enabled() {  # older installs (v0.6.1–0.6.3) only set HTTPS_HOST
 https_packages_installed() { local m; mapfile -t m < <(missing_packages "${HTTPS_PACKAGES[@]}"); ((${#m[@]} == 0)); }
 
 write_network_snapshot() {  # non-secret view of the configuration for the app (world-readable)
-  local enabled=0 renew="" pkgs=0
+  local enabled=0 renew="" pkgs=0 client provider saved
   https_enabled && enabled=1
   https_packages_installed && pkgs=1
-  renew=$(systemctl is-enabled certbot.timer 2>/dev/null || true)
+  client=$(env_get ACME_CLIENT)
+  provider=$(env_get ACME_PROVIDER)
+  saved=$(acme_py saved 2>/dev/null || true)
+  if [[ $client == lego ]]; then
+    renew=$(systemctl is-enabled "$SERVICE-acme-renew.timer" 2>/dev/null || true)
+  elif ((enabled)); then
+    client=certbot provider=cloudflare  # installed before v0.7.4; moves to lego when next saved
+    renew=$(systemctl is-enabled certbot.timer 2>/dev/null || true)
+  fi
+  [[ -z $saved && -f $CF_CREDENTIALS ]] && saved=cloudflare
   python3 - "$NETWORK_SNAPSHOT" "$(env_get PORT)" "$(env_get HOST)" "$enabled" "$(env_get HTTPS_HOST)" \
     "$(env_get HTTPS_PORT)" "$(env_get HTTPS_REDIRECT)" "$(env_get CERTBOT_EMAIL)" "$(env_get CERTBOT_STAGING)" \
-    "$(env_get CF_PROPAGATION)" "$([[ -f $CF_CREDENTIALS ]] && echo 1 || echo 0)" "$pkgs" "$renew" <<'PY' || true
+    "$(env_get CF_PROPAGATION)" "$saved" "$pkgs" "$renew" "${provider:-cloudflare}" "${client:-}" <<'PY' || true
 import json, os, sys, time
-(path, port, host, enabled, https_host, https_port, redirect, email, staging, prop, token, pkgs, renew) = sys.argv[1:14]
+(path, port, host, enabled, https_host, https_port, redirect, email, staging, prop, saved, pkgs, renew,
+ provider, client) = sys.argv[1:16]
 def num(v, d):
     try:
         return int(v)
@@ -1176,9 +1190,11 @@ data = {
     "redirect_http": redirect != "0",
     "email": email or None,
     "staging": staging == "1",
-    "dns_provider": "cloudflare",
-    "propagation_seconds": num(prop, 30),
-    "token_saved": token == "1",
+    "dns_provider": provider,
+    "credentials_provider": saved or None,  # credentials are saved for this provider (never shown)
+    "acme_client": client or None,  # "lego", or "certbot" for installs not yet moved to lego
+    "propagation_seconds": num(prop, 0),
+    "token_saved": saved == "cloudflare",  # API compatibility (v0.6.4 to v0.7.3)
     "https_packages_installed": pkgs == "1",
     "auto_renew": renew == "enabled",
     "updated_at": time.time(),
@@ -1197,6 +1213,10 @@ backup_network_config() {
   cp -p "$ENV_FILE" "$CONF_BACKUP/env"
   [[ -f $NGINX_SITE ]] && cp -p "$NGINX_SITE" "$CONF_BACKUP/nginx-site"
   [[ -f $CF_CREDENTIALS ]] && cp -p "$CF_CREDENTIALS" "$CONF_BACKUP/cf-credentials"
+  if [[ -d $ACME_DIR ]]; then
+    install -d -m 700 "$CONF_BACKUP/acme"
+    find "$ACME_DIR" -maxdepth 1 -type f \( -name '*.env' -o -name '*.json' \) -exec cp -p {} "$CONF_BACKUP/acme/" \;
+  fi
   return 0
 }
 
@@ -1205,6 +1225,10 @@ restore_network_config() {  # put the previous env file and nginx site back, and
   cp -p "$CONF_BACKUP/env" "$ENV_FILE"
   # A failed attempt with a new token must not lose the token that worked before.
   if [[ -f $CONF_BACKUP/cf-credentials ]]; then cp -p "$CONF_BACKUP/cf-credentials" "$CF_CREDENTIALS"; else rm -f "$CF_CREDENTIALS"; fi
+  if [[ -d $ACME_DIR ]]; then
+    find "$ACME_DIR" -maxdepth 1 -type f \( -name '*.env' -o -name '*.json' \) -delete
+    if [[ -d $CONF_BACKUP/acme ]]; then cp -p "$CONF_BACKUP"/acme/* "$ACME_DIR/" 2>/dev/null || true; fi
+  fi
   if [[ -f $CONF_BACKUP/nginx-site ]]; then
     cp -p "$CONF_BACKUP/nginx-site" "$NGINX_SITE"
     ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
@@ -1214,6 +1238,220 @@ restore_network_config() {  # put the previous env file and nginx site back, and
   systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
   systemctl restart "$SERVICE" >>"$LOG_FILE" 2>&1 || true
   wait_healthy "$(env_get PORT)" "" 60 || true
+}
+
+# ---- HTTPS certificates with lego (DNS-01 through the owner's DNS provider) --------------------
+# lego (https://github.com/go-acme/lego, MIT) gets and renews the Let's Encrypt certificate. It is
+# pinned by lego.lock and downloaded on demand. The DNS providers offered are listed in
+# dns-providers.json (lego's own provider codes and credential names). Credentials live in a
+# root-only dotenv file; a twice-daily timer renews the certificate and reloads nginx.
+# Installs made before this used certbot with Cloudflare; they keep working until their HTTPS
+# settings are next saved, which moves them to lego with the same Cloudflare token.
+ACME_DIR=$CONF_DIR/acme
+ACME_CREDENTIALS=$ACME_DIR/credentials.env
+ACME_DATA=$ACME_DIR/data
+LEGO_DIR=/opt/meshcore-home-acme
+ACME_UNITS=("$SERVICE-acme-renew.service" "$SERVICE-acme-renew.timer")
+
+acme_src() {  # the release directory with the HTTPS support files (lego.lock, dns-providers.json)
+  local d
+  for d in ${TARGET_VERSION:+"$PREFIX/releases/$TARGET_VERSION/deploy/native"} "$PREFIX/current/deploy/native" \
+           "$(dirname "${BASH_SOURCE[0]}")"; do
+    [[ -f $d/dns-providers.json && -f $d/lego.lock ]] && { printf '%s' "$d"; return 0; }
+  done
+  return 1
+}
+
+acme_py() {  # acme_py ACTION ARGS... — provider catalogue and credential handling (see below)
+  local src; src=$(acme_src) || { echo "dns-providers.json is missing from this release" >&2; return 1; }
+  python3 - "$src/dns-providers.json" "$ACME_DIR" "$@" <<'PY'
+import json, os, re, sys
+catalog, acme_dir, action, *args = sys.argv[1:]
+providers = {p["id"]: p for p in json.load(open(catalog))["providers"]}
+creds_path = os.path.join(acme_dir, "credentials.env")
+
+def saved():
+    """(provider, {ENV: value}) from the credentials file, or (None, {})."""
+    try:
+        lines = open(creds_path).read().splitlines()
+    except OSError:
+        return None, {}
+    prov, vals = None, {}
+    for line in lines:
+        if line.startswith("# provider="):
+            prov = line.split("=", 1)[1].strip()
+        elif "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            vals[k] = v[1:-1] if len(v) >= 2 and v[0] == v[-1] == "'" else v
+    return prov, vals
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+if action == "list":  # id<TAB>name
+    for p in providers.values():
+        print(f"{p['id']}\t{p['name']}")
+elif action == "get":  # get ID KEY
+    p = providers.get(args[0]) or fail(f"Unknown DNS provider: {args[0]}")
+    v = p.get(args[1])
+    print("" if v is None else v)
+elif action == "fields":  # ENV<TAB>label<TAB>secret<TAB>required<TAB>kind<TAB>default<TAB>choices
+    p = providers.get(args[0]) or fail(f"Unknown DNS provider: {args[0]}")
+    for f in p["fields"]:
+        print("\t".join([f["env"], f["label"], "1" if f.get("secret") else "0", "1" if f.get("required") else "0",
+                         f.get("kind", "text"), f.get("default", ""), ",".join(f.get("choices", []))]))
+elif action == "saved":  # the provider the saved credentials belong to
+    print(saved()[0] or "")
+elif action == "write":  # write ID JSON — validate, merge with the saved values of the same provider, save
+    pid, new = args[0], json.loads(args[1] or "{}")
+    p = providers.get(pid) or fail(f"Unknown DNS provider: {pid}")
+    if not isinstance(new, dict):
+        fail("Credentials must be a set of named values")
+    fields = {f["env"]: f for f in p["fields"]}
+    unknown = [k for k in new if k not in fields]
+    if unknown:
+        fail(f"{p['name']} does not use: {', '.join(unknown)}")
+    old_prov, old = saved()
+    values = {k: v for k, v in old.items() if k in fields} if old_prov == pid else {}
+    for k, v in new.items():
+        v = "" if v is None else str(v).strip()
+        if v:
+            values[k] = v
+    os.makedirs(acme_dir, mode=0o700, exist_ok=True)
+    out = [f"# provider={pid}", f"# {p['name']} credentials for lego (MeshCore Home). Root only; never shown again."]
+    for env, f in fields.items():
+        v = values.get(env, "")
+        if f.get("kind") == "json":
+            path = os.path.join(acme_dir, f"{env.lower()}.json")
+            if v and not v.startswith(acme_dir):  # new JSON content (the saved value is the file's path)
+                try:
+                    json.loads(v)
+                except ValueError:
+                    fail(f"{f['label']}: this is not valid JSON")
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(v)
+                v = path
+            if v and not os.path.isfile(v):
+                v = ""
+        else:
+            if not v and f.get("default"):
+                v = f["default"]
+            if v and (len(v) > 500 or re.search(r"[\x00-\x1f\x7f']", v)):
+                fail(f"{f['label']}: unexpected characters or too long")
+            if v and f.get("choices") and v not in f["choices"]:
+                fail(f"{f['label']}: choose one of {', '.join(f['choices'])}")
+        if f.get("required") and not v:
+            fail(f"{p['name']}: enter the {f['label']}")
+        if v:
+            out.append(f"{env}='{v}'")
+    tmp = creds_path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write("\n".join(out) + "\n")
+    os.replace(tmp, creds_path)
+else:
+    fail(f"unknown action {action}")
+PY
+}
+
+acme_provider_name() { acme_py get "$1" name 2>/dev/null || printf '%s' "$1"; }
+
+lego_bin() { printf '%s' "$LEGO_DIR/lego"; }
+
+lego_install() {  # download and verify the pinned lego release (once per version)
+  local src; src=$(acme_src) || { warn "lego.lock is missing from this release"; return 1; }
+  # shellcheck disable=SC1091
+  . "$src/lego.lock"
+  if [[ -x $LEGO_DIR/lego-$LEGO_VERSION ]]; then
+    ln -sfn "lego-$LEGO_VERSION" "$LEGO_DIR/lego"; return 0
+  fi
+  local arch asset sha base tmp
+  case "$(uname -m)" in
+    aarch64) asset=$LEGO_ARM64_ASSET sha=$LEGO_ARM64_SHA256 ;;
+    x86_64) asset=$LEGO_AMD64_ASSET sha=$LEGO_AMD64_SHA256 ;;
+    *) warn "No lego build for $(uname -m)"; return 1 ;;
+  esac
+  base=$(override MESHCORE_HOME_LEGO_BASE); base=${base:-$LEGO_BASE_URL}
+  tmp=$(mktemp -d)
+  if ! run_quiet "Downloading lego $LEGO_VERSION (certificate client)" curl -fsSL --retry 3 -o "$tmp/lego.tar.gz" "$base/$asset"; then
+    rm -rf "$tmp"; return 1
+  fi
+  if [[ $(sha256sum "$tmp/lego.tar.gz" | cut -d' ' -f1) != "$sha" ]]; then
+    rm -rf "$tmp"; warn "The lego download failed its SHA-256 check, so it was not installed"; return 1
+  fi
+  tar -xzf "$tmp/lego.tar.gz" -C "$tmp" lego
+  install -d -m 755 "$LEGO_DIR"
+  install -m 755 "$tmp/lego" "$LEGO_DIR/lego-$LEGO_VERSION"
+  rm -rf "$tmp"
+  ln -sfn "lego-$LEGO_VERSION" "$LEGO_DIR/lego"
+  find "$LEGO_DIR" -maxdepth 1 -name 'lego-*' ! -name "lego-$LEGO_VERSION" -delete
+  ok "Installed lego $LEGO_VERSION (checksum verified)"
+}
+
+acme_cert_path() { printf '%s/certificates/%s.crt' "$ACME_DATA" "$1"; }
+acme_key_path() { printf '%s/certificates/%s.key' "$ACME_DATA" "$1"; }
+
+acme_lego_args() {  # acme_lego_args HOST EMAIL STAGING PROPAGATION — fills LEGO_ARGS for `lego run`
+  local host=$1 email=$2 staging=$3 prop=$4 provider lego_code server dns envfile
+  provider=$(env_get ACME_PROVIDER); provider=${NEW_PROVIDER:-${provider:-cloudflare}}
+  lego_code=$(acme_py get "$provider" lego) || return 1
+  server=$(override MESHCORE_HOME_ACME_SERVER)
+  [[ -n $server ]] || { if [[ $staging == 1 ]]; then server=letsencrypt-staging; else server=letsencrypt; fi; }
+  dns=$lego_code envfile=$ACME_CREDENTIALS
+  # Testing only: a different DNS-01 provider (e.g. "exec") and its env file.
+  if [[ -n $(override MESHCORE_HOME_ACME_DNS_OVERRIDE) ]]; then
+    dns=$(override MESHCORE_HOME_ACME_DNS_OVERRIDE) envfile=$(override MESHCORE_HOME_ACME_TEST_ENV_FILE)
+  fi
+  LEGO_ARGS=(run --accept-tos --server "$server" -d "$host" --cert.name "$host" --dns "$dns"
+    --env-file "$envfile" --path "$ACME_DATA" --log.format text --no-random-sleep
+    --deploy-hook "$PREFIX/current/deploy/native/tls-hook")
+  if [[ -n $email ]]; then LEGO_ARGS+=(-m "$email"); else LEGO_ARGS+=(--account-id meshcore-home); fi
+  if [[ ${prop:-0} =~ ^[0-9]+$ ]] && ((prop > 0)); then LEGO_ARGS+=(--dns.propagation.wait "${prop}s"); fi
+  return 0
+}
+
+acme_env() {  # environment for lego (a private test CA when testing)
+  local ca; ca=$(override MESHCORE_HOME_ACME_CA)
+  if [[ -n $ca ]]; then printf 'LEGO_CA_CERTIFICATES=%s' "$ca"; else printf 'LEGO_LOG_LEVEL=info'; fi
+}
+
+acme_units_install() {  # the renewal timer (from the active release)
+  local src="$PREFIX/current/deploy/native/systemd" u
+  for u in "${ACME_UNITS[@]}"; do [[ -f $src/$u ]] && install -m 644 "$src/$u" "$UNIT_DIR/$u"; done
+  systemctl daemon-reload
+  systemctl enable --now "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true
+}
+
+acme_units_remove() {
+  systemctl disable --now "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true
+  local u; for u in "${ACME_UNITS[@]}"; do rm -f "${UNIT_DIR:?}/${u:?}"; done
+  systemctl daemon-reload
+}
+
+retire_certbot_site() {  # retire_certbot_site HOST — stop certbot renewing a certificate lego now owns
+  local conf="/etc/letsencrypt/renewal/$1.conf"
+  if [[ -n $1 && -f $conf ]]; then
+    mv "$conf" "$conf.disabled-by-meshcore-home"
+    log "certbot renewal for $1 disabled (lego renews this site now)"
+  fi
+  rm -f "$CF_CREDENTIALS"
+}
+
+acme_renew() {  # --acme-renew: run by the renewal timer; renews when due and reloads nginx
+  [[ $(env_get ACME_CLIENT) == lego ]] && https_enabled || { log "acme renew: lego not in use"; return 0; }
+  local host; host=$(env_get HTTPS_HOST)
+  NEW_PROVIDER=$(env_get ACME_PROVIDER)
+  acme_lego_args "$host" "$(env_get CERTBOT_EMAIL)" "$(env_get CERTBOT_STAGING)" "$(env_get CF_PROPAGATION)" || return 1
+  [[ ${1:-} == force ]] && LEGO_ARGS+=(--renew-force)
+  log "\$ lego ${LEGO_ARGS[*]}"
+  if env "$(acme_env)" "$(lego_bin)" "${LEGO_ARGS[@]}" >>"$LOG_FILE" 2>&1; then
+    log "acme renew: done for $host"
+    return 0
+  fi
+  log "acme renew: FAILED for $host"
+  return 1
 }
 
 obtain_certificate() {  # obtain_certificate HOST EMAIL STAGING(0/1) PROPAGATION FORCE(0/1)
@@ -1228,18 +1466,20 @@ obtain_certificate() {  # obtain_certificate HOST EMAIL STAGING(0/1) PROPAGATION
     chmod 600 "$TLS_KEY_PATH"
     return 0
   fi
-  local -a args=(certonly --non-interactive --agree-tos --dns-cloudflare
-    --dns-cloudflare-credentials "$CF_CREDENTIALS" --dns-cloudflare-propagation-seconds "$prop"
-    -d "$host" --cert-name "$host" --deploy-hook "$PREFIX/current/deploy/native/tls-hook")
-  if [[ -n $email ]]; then args+=(-m "$email"); else args+=(--register-unsafely-without-email); fi
-  if [[ $staging == 1 ]]; then args+=(--test-cert); fi
-  if [[ $force == 1 ]]; then args+=(--force-renewal --break-my-certs); else args+=(--keep-until-expiring); fi
-  if ! run_quiet "Requesting a certificate from Let's Encrypt (the DNS check takes ~${prop}s)" certbot "${args[@]}"; then
-    tail -n 8 "$LOG_FILE" | sed 's/^/    /' >&2
-    warn "Could not obtain a certificate. Check the token's permissions and that $host is in that Cloudflare zone."
+  lego_install || return 1
+  install -d -m 700 "$ACME_DIR" "$ACME_DATA"
+  local provider name
+  provider=${NEW_PROVIDER:-$(env_get ACME_PROVIDER)}; name=$(acme_provider_name "${provider:-cloudflare}")
+  acme_lego_args "$host" "$email" "$staging" "$prop" || return 1
+  [[ $force == 1 ]] && LEGO_ARGS+=(--renew-force)
+  local wait="the DNS check can take a few minutes"
+  [[ ${prop:-0} =~ ^[0-9]+$ ]] && ((prop > 0)) && wait="about ${prop}s for DNS"
+  if ! run_quiet "Requesting a certificate from Let's Encrypt via $name ($wait)" env "$(acme_env)" "$(lego_bin)" "${LEGO_ARGS[@]}"; then
+    ((TUI_ON)) || tail -n 8 "$LOG_FILE" | sed 's/^/    /' >&2
+    warn "Could not obtain a certificate. Check the $name credentials and their permissions, and that $host is in a zone they manage. Details: $LOG_FILE"
     return 1
   fi
-  TLS_CERT_PATH="/etc/letsencrypt/live/$host/fullchain.pem" TLS_KEY_PATH="/etc/letsencrypt/live/$host/privkey.pem"
+  TLS_CERT_PATH=$(acme_cert_path "$host") TLS_KEY_PATH=$(acme_key_path "$host")
 }
 
 write_nginx_site() {  # write_nginx_site HOST HTTPS_PORT REDIRECT(0/1) APP_PORT CERT KEY
@@ -1293,8 +1533,8 @@ validate_network_inputs() {  # validates NEW_* values; prints a reason and retur
   for p in "$NEW_PORT" "$NEW_HTTPS_PORT"; do
     [[ $p =~ ^[0-9]+$ ]] && ((p >= 1 && p <= 65535)) || { warn "Invalid port: $p"; return 1; }
   done
-  [[ $NEW_PROPAGATION =~ ^[0-9]+$ ]] && ((NEW_PROPAGATION >= 10 && NEW_PROPAGATION <= 600)) ||
-    { warn "DNS propagation wait must be 10–600 seconds"; return 1; }
+  [[ $NEW_PROPAGATION =~ ^[0-9]+$ ]] && ((NEW_PROPAGATION == 0 || (NEW_PROPAGATION >= 10 && NEW_PROPAGATION <= 600))) ||
+    { warn "The DNS wait must be 0 (automatic) or 10–600 seconds"; return 1; }
   if [[ $NEW_HTTPS == 1 ]]; then
     [[ $NEW_HOST =~ $fqdn_re ]] || { warn "Invalid hostname: $NEW_HOST"; return 1; }
     [[ -z $NEW_EMAIL || $NEW_EMAIL =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { warn "Invalid email: $NEW_EMAIL"; return 1; }
@@ -1321,12 +1561,17 @@ validate_network_inputs() {  # validates NEW_* values; prints a reason and retur
 
 apply_network_config() {
   # Inputs: NEW_PORT NEW_HTTPS(0/1) NEW_HOST NEW_HTTPS_PORT NEW_REDIRECT(0/1) NEW_EMAIL NEW_STAGING(0/1)
-  #         NEW_PROPAGATION NEW_TOKEN (optional; empty keeps the saved one)
+  #         NEW_PROPAGATION (0 = automatic) NEW_PROVIDER (dns-providers.json id)
+  #         NEW_CREDENTIALS (JSON {ENV: value}; empty keeps the saved values)
+  #         NEW_TOKEN (older requests: a Cloudflare API token)
   # Returns 1 (after restoring the previous configuration) if anything fails.
   validate_network_inputs || return 1
-  local old_port old_host old_https_host old_staging restart=0
+  local old_port old_host old_https_host old_staging old_client old_provider restart=0
   old_port=$(env_get PORT); old_host=$(env_get HOST)
   old_https_host=$(env_get HTTPS_HOST); old_staging=$(env_get CERTBOT_STAGING)
+  old_client=$(env_get ACME_CLIENT); old_provider=$(env_get ACME_PROVIDER)
+  NEW_PROVIDER=${NEW_PROVIDER:-${old_provider:-cloudflare}}
+  if [[ -n ${NEW_TOKEN:-} ]]; then NEW_PROVIDER=cloudflare NEW_CREDENTIALS=$(python3 -c 'import json,sys; print(json.dumps({"CF_DNS_API_TOKEN": sys.argv[1]}))' "$NEW_TOKEN"); fi
   backup_network_config
 
   if [[ $NEW_HTTPS == 1 ]]; then
@@ -1337,18 +1582,35 @@ apply_network_config() {
       run_quiet "Installing ${missing[*]}" env DEBIAN_FRONTEND=noninteractive \
         apt-get install -y --no-install-recommends "${missing[@]}" || return 1
     fi
-    if [[ -n $NEW_TOKEN ]]; then
-      install -d -m 700 "$(dirname "$CF_CREDENTIALS")"
-      (umask 077; printf '# Cloudflare API token for certbot (MeshCore Home)\ndns_cloudflare_api_token = %s\n' "$NEW_TOKEN" >"$CF_CREDENTIALS")
-      ok "Saved the Cloudflare API token (root-only)"
+    local saved new_creds=0 pname
+    pname=$(acme_provider_name "$NEW_PROVIDER")
+    saved=$(acme_py saved 2>/dev/null || true)
+    # Moving from certbot: reuse the Cloudflare token saved for it.
+    if [[ -z ${NEW_CREDENTIALS:-} && -z $saved && $NEW_PROVIDER == cloudflare && -f $CF_CREDENTIALS ]]; then
+      NEW_CREDENTIALS=$(python3 - "$CF_CREDENTIALS" <<'PY'
+import json, re, sys
+m = re.search(r"dns_cloudflare_api_token\s*=\s*(\S+)", open(sys.argv[1]).read())
+print(json.dumps({"CF_DNS_API_TOKEN": m.group(1)}) if m else "")
+PY
+)
+      [[ -n $NEW_CREDENTIALS ]] && log "reusing the Cloudflare token saved for certbot"
     fi
-    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} && ! -f $CF_CREDENTIALS ]]; then
-      warn "No Cloudflare API token is saved; enter one to set up HTTPS"; return 1
+    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+      if [[ -n ${NEW_CREDENTIALS:-} || $saved != "$NEW_PROVIDER" ]]; then
+        local err creds_in=${NEW_CREDENTIALS:-}
+        [[ -n $creds_in ]] || creds_in='{}'
+        if ! err=$(acme_py write "$NEW_PROVIDER" "$creds_in" 2>&1); then
+          warn "${err:-Invalid $pname credentials}"; restore_network_config; return 1
+        fi
+        new_creds=1
+        ok "Saved the $pname credentials (readable by root only)"
+      fi
     fi
-    TLS_CERT_PATH="/etc/letsencrypt/live/$NEW_HOST/fullchain.pem" TLS_KEY_PATH="/etc/letsencrypt/live/$NEW_HOST/privkey.pem"
+    TLS_CERT_PATH=$(acme_cert_path "$NEW_HOST") TLS_KEY_PATH=$(acme_key_path "$NEW_HOST")
     local force=0
     [[ -f $TLS_CERT_PATH && ${old_staging:-0} != "$NEW_STAGING" ]] && force=1
-    if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} || ! -f $TLS_CERT_PATH || $force == 1 || -n $NEW_TOKEN ]]; then
+    ((new_creds)) && [[ -f $TLS_CERT_PATH ]] && force=1
+    if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} || ! -f $TLS_CERT_PATH || $force == 1 || $old_client != lego ]]; then
       status certificate "Requesting a certificate for $NEW_HOST"
       obtain_certificate "$NEW_HOST" "$NEW_EMAIL" "$NEW_STAGING" "$NEW_PROPAGATION" "$force" ||
         { restore_network_config; return 1; }
@@ -1366,11 +1628,19 @@ apply_network_config() {
     env_set HTTPS_ENABLED 1
     env_set HTTPS_HOST "$NEW_HOST"
     env_set TLS_CERT "$TLS_CERT_PATH"
+    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+      env_set ACME_CLIENT lego
+      env_set ACME_PROVIDER "$NEW_PROVIDER"
+      acme_units_install
+      # Moved from certbot: lego renews this site now.
+      [[ $old_client != lego && -n $old_https_host ]] && retire_certbot_site "$old_https_host"
+    fi
   else
     rm -f /etc/nginx/sites-enabled/meshcore-home "$NGINX_SITE"
     command -v nginx >/dev/null && { systemctl reload nginx >>"$LOG_FILE" 2>&1 || true; }
     env_set HOST 0.0.0.0
     env_set HTTPS_ENABLED 0
+    acme_units_remove
     rm -f "$STATE_DIR/tls-status.json"
   fi
   env_set PORT "$NEW_PORT"
@@ -1423,14 +1693,15 @@ load_current_network() {  # NEW_* defaults = current configuration
   NEW_EMAIL=$(env_get CERTBOT_EMAIL)
   NEW_STAGING=$(env_get CERTBOT_STAGING); NEW_STAGING=${NEW_STAGING:-0}
   NEW_PROPAGATION=$(env_get CF_PROPAGATION); NEW_PROPAGATION=${NEW_PROPAGATION:-$DEFAULT_PROPAGATION}
-  NEW_TOKEN=""
+  NEW_PROVIDER=$(env_get ACME_PROVIDER); NEW_PROVIDER=${NEW_PROVIDER:-cloudflare}
+  NEW_CREDENTIALS="" NEW_TOKEN=""
 }
 
 https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up — the app stays as it was
   load_current_network
   ((TUI_ON)) || printf '\n'
   note "HTTPS puts nginx in front of $APP_NAME with a trusted Let's Encrypt certificate."
-  note "The certificate is validated through ${B}Cloudflare DNS${N}, so the Pi does not need to be reachable from the internet. You need a domain whose DNS is managed by Cloudflare."
+  note "The certificate is validated through your ${B}DNS provider${N}, so the Pi does not need to be reachable from the internet. You need a domain at one of the supported DNS providers, and an API key for it."
   note "${D}(You can also change all of this later in the web interface: Settings → Network & HTTPS.)${N}"
 
   local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' err=""
@@ -1445,18 +1716,65 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
   HTTPS_EMAIL=${HTTPS_EMAIL:-$NEW_EMAIL}
   [[ -n $HTTPS_EMAIL ]] || ask HTTPS_EMAIL "Email for Let's Encrypt expiry notices (optional)?" ""
 
-  local token=""
-  if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
-    ((TUI_ON)) || printf '\n'
-    note "Create a Cloudflare API token at ${C}https://dash.cloudflare.com/profile/api-tokens${N} using the ${B}\"Edit zone DNS\"${N} template, limited to the zone that contains $HTTPS_HOST."
-    note "It is stored only in $CF_CREDENTIALS (root-only) and used for renewals."
-    if [[ -f $CF_CREDENTIALS ]] && ask_yn "Reuse the Cloudflare token saved earlier?" y; then
-      token=""
-    else
-      token=${MESHCORE_HOME_CF_TOKEN:-}
-      [[ -n $token ]] || ask_secret token "Cloudflare API token (input hidden):"
-      [[ -n $token ]] || { warn "No Cloudflare token entered; HTTPS not set up."; return 1; }
-    fi
+  # DNS provider: a numbered list, three to a line.
+  local -a ids=() names=()
+  local id name line="" i
+  while IFS=$'\t' read -r id name; do ids+=("$id"); names+=("$name"); done < <(acme_py list)
+  ((${#ids[@]})) || { warn "The DNS provider list is missing from this release"; return 1; }
+  local current=${MESHCORE_HOME_DNS_PROVIDER:-$(env_get ACME_PROVIDER)}; current=${current:-cloudflare}
+  local default=1
+  ((TUI_ON)) || printf '\n'
+  note "${B}Which DNS provider manages ${HTTPS_HOST#*.}?${N}"
+  for ((i = 0; i < ${#ids[@]}; i++)); do
+    [[ ${ids[i]} == "$current" ]] && default=$((i + 1))
+    local short=${names[i]%% (*}
+    printf -v line '%s%3d %-20s' "$line" $((i + 1)) "${short:0:20}"
+    if (((i + 1) % 3 == 0)); then note_row "$line"; line=""; fi
+  done
+  [[ -n $line ]] && note_row "$line"
+  note "${D}Not listed? See the README, \"My DNS provider isn't listed\", for delegating validation with one CNAME record.${N}"
+  local choice="" pick
+  err=""
+  while true; do
+    ask choice "Number of your DNS provider?" "$default" "$err"
+    if [[ $choice =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ids[@]})); then break; fi
+    if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then choice=$default; break; fi
+    err="Enter a number from 1 to ${#ids[@]}"
+  done
+  pick=${ids[choice - 1]}
+  local pname help notes docs
+  pname=$(acme_py get "$pick" name); help=$(acme_py get "$pick" help); notes=$(acme_py get "$pick" note); docs=$(acme_py get "$pick" docs)
+
+  # Credentials for that provider (a saved set can be kept).
+  local keep=0 saved
+  saved=$(acme_py saved 2>/dev/null || true)
+  [[ -z $saved && $pick == cloudflare && -f $CF_CREDENTIALS ]] && saved=cloudflare
+  ((TUI_ON)) || printf '\n'
+  note "${B}$pname${N}: $help"
+  [[ -n $notes ]] && note "${Y}$notes${N}"
+  note "${D}Details: $docs${N}"
+  note "They are stored only in $ACME_DIR (root-only) and used for renewals."
+  if [[ $saved == "$pick" ]] && ask_yn "Reuse the $pname credentials saved earlier?" y; then keep=1; fi
+  local creds="{}"
+  if ((!keep)); then
+    local env label secret required kind def choices value
+    local -a pairs=()
+    while IFS=$'\t' read -r env label secret required kind def choices; do
+      value=$(override "$env")  # unattended installs: the value from the environment
+      if [[ -z $value ]]; then
+        if [[ $kind == json ]]; then
+          ask value "$label: path to the JSON key file on this Pi?" ""
+          if [[ -n $value && -f $value ]]; then value=$(cat "$value"); elif [[ -n $value ]]; then warn "No such file: $value"; value=""; fi
+        elif [[ $secret == 1 ]]; then
+          ask_secret value "$label (input hidden):"
+        else
+          ask value "$label${choices:+ ($choices)}?" "$def"
+        fi
+      fi
+      if [[ -z $value && $required == 1 ]]; then warn "No $label entered; HTTPS not set up."; return 1; fi
+      pairs+=("$env" "$value")
+    done < <(acme_py fields "$pick")
+    creds=$(python3 -c 'import json, sys; a = sys.argv[1:]; print(json.dumps({a[i]: a[i + 1] for i in range(0, len(a), 2) if a[i + 1]}))' "${pairs[@]}")
   fi
 
   local missing; mapfile -t missing < <(missing_packages "${HTTPS_PACKAGES[@]}")
@@ -1464,28 +1782,30 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
     apt_review_install "Install these packages for HTTPS?" skip "${missing[@]}" ||
       { warn "HTTPS skipped; $APP_NAME stays on plain HTTP."; return 1; }
   else
-    ok "nginx and certbot are already installed"
+    ok "nginx is already installed"
   fi
 
   ((TUI_ON)) || printf '\n'
   note "${B}These changes will be made for HTTPS:${N}"
-  note "  • Obtain a Let's Encrypt certificate for ${B}${HTTPS_HOST}${N} (renewed automatically by certbot.timer)"
+  note "  • Download lego (Let's Encrypt client, MIT licence) from GitHub and check its SHA-256"
+  note "  • Obtain a Let's Encrypt certificate for ${B}${HTTPS_HOST}${N} through $pname (renewed automatically twice a day as needed)"
   note "  • Add an nginx site on ports 80 and $NEW_HTTPS_PORT for $HTTPS_HOST (port 80 redirects to HTTPS)"
   note "  • Make $APP_NAME listen on 127.0.0.1:$NEW_PORT only, so it is reached through nginx"
   ask_yn "Set up HTTPS?" y || { warn "HTTPS skipped; $APP_NAME stays on plain HTTP."; return 1; }
 
-  NEW_HTTPS=1 NEW_HOST=$HTTPS_HOST NEW_EMAIL=$HTTPS_EMAIL NEW_TOKEN=$token
+  NEW_HTTPS=1 NEW_HOST=$HTTPS_HOST NEW_EMAIL=$HTTPS_EMAIL NEW_PROVIDER=$pick NEW_TOKEN=""
+  if ((keep)); then NEW_CREDENTIALS=""; else NEW_CREDENTIALS=$creds; fi
   if ! apply_network_config; then
     warn "HTTPS was not set up; $APP_NAME is unchanged. Try again any time with: sudo meshcore-home https"
     return 1
   fi
-  step_note "$(public_url)"
+  step_note "$(public_url) · $pname"
 }
 
 https_disable() {
   if ! https_enabled; then ok "HTTPS is not enabled"; return; fi
   ((TUI_ON)) || printf '\n'
-  note "${B}This will${N} remove the nginx site for $(env_get HTTPS_HOST) and make $APP_NAME listen on all interfaces over plain HTTP again. The certificate and saved Cloudflare token are kept."
+  note "${B}This will${N} remove the nginx site for $(env_get HTTPS_HOST) and make $APP_NAME listen on all interfaces over plain HTTP again. The certificate and saved DNS credentials are kept."
   confirm "Disable HTTPS?"
   load_current_network
   NEW_HTTPS=0
@@ -1515,17 +1835,26 @@ if action not in ("apply", "renew", "refresh", "hat-install", "hat-remove", "hat
 token = s("cf_token")
 if token and not re.fullmatch(r"[A-Za-z0-9_\-]{20,200}", token):
     action = "invalid"
+provider = s("dns_provider", "cloudflare")
+if not re.fullmatch(r"[a-z0-9]{2,32}", provider):
+    action = "invalid"
+creds = r.get("credentials") or {}
+if not isinstance(creds, dict) or any(not re.fullmatch(r"[A-Z0-9_]{1,64}", str(k)) or not isinstance(v, str) or len(v) > 20000 for k, v in creds.items()):
+    action = "invalid"
+creds_json = json.dumps(creds) if creds else ""
 out = {
     "ACTION": action,
     "NEW_PORT": s("app_port"), "NEW_HTTPS": flag("https_enabled", False), "NEW_HOST": s("hostname").lower(),
     "NEW_HTTPS_PORT": s("https_port", "443"), "NEW_REDIRECT": flag("redirect_http", True),
     "NEW_EMAIL": s("email"), "NEW_STAGING": flag("staging", False), "NEW_PROPAGATION": s("propagation_seconds", "30"),
-    "NEW_TOKEN": token,
+    "NEW_TOKEN": token, "NEW_PROVIDER": provider,
 }
 for k, v in out.items():
     if re.search(r"[\x00-\x1f]", v):
         print("ACTION=invalid"); sys.exit(0)
     print(f"{k}={shlex.quote(v)}")
+# JSON keeps any newlines (e.g. a Google key) escaped, so this is one shell word.
+print(f"NEW_CREDENTIALS={shlex.quote(creds_json)}")
 PY
 )
   rm -f "$CONFIG_REQUEST"
@@ -1554,7 +1883,14 @@ PY
     renew)
       if ! https_enabled; then status failed "HTTPS is not enabled"; return 1; fi
       status certificate "Renewing the certificate for $(env_get HTTPS_HOST)"
-      if run_quiet "Renewing the certificate" certbot renew --cert-name "$(env_get HTTPS_HOST)" --force-renewal; then
+      local renewed=1
+      if [[ $(env_get ACME_CLIENT) == lego ]]; then
+        lego_install >>"$LOG_FILE" 2>&1 || true
+        acme_renew force || renewed=0
+      else
+        run_quiet "Renewing the certificate" certbot renew --cert-name "$(env_get HTTPS_HOST)" --force-renewal || renewed=0
+      fi
+      if ((renewed)); then
         bash "$PREFIX/current/deploy/native/tls-hook" >>"$LOG_FILE" 2>&1 || true
         write_network_snapshot
         status "done" "Certificate renewed"
@@ -1958,6 +2294,7 @@ main() {
     return 0
   fi
   if [[ $MODE == radio-hat-sync ]]; then hat_sync; return; fi
+  if [[ $MODE == acme-renew ]]; then acme_renew; return; fi
   if [[ $MODE == radio-hat ]]; then
     [[ -n $(installed_version) ]] || die "$APP_NAME is not installed"
     TARGET_VERSION=$(installed_version)
@@ -2067,7 +2404,7 @@ main() {
     fi
   fi
   step
-  if [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain on Cloudflare)" n; then
+  if [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain and a DNS provider API key)" n; then
     https_setup || step_skip "Not set up"
   else
     info "Skipped. You can add it later with: sudo meshcore-home https"

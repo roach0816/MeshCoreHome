@@ -179,7 +179,8 @@ type Form = {
   email: string;
   staging: boolean;
   propagation_seconds: string;
-  cf_token: string;
+  dns_provider: string;
+  credentials: Record<string, string>; // write-only; blank keeps a saved value
 };
 
 const FQDN = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -196,8 +197,12 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
     email: config.email ?? "",
     staging: config.staging,
     propagation_seconds: String(config.propagation_seconds),
-    cf_token: "",
+    dns_provider: config.dns_provider || "cloudflare",
+    credentials: {},
   });
+  const provider = info.providers.find((p) => p.id === f.dns_provider);
+  const credsSaved = config.credentials_provider === f.dns_provider;
+  const setCred = (env: string, v: string) => setF((x) => ({ ...x, credentials: { ...x.credentials, [env]: v } }));
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((x) => ({ ...x, [k]: v }));
   const submittedAt = useRef(0);
 
@@ -205,7 +210,7 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
   const appPort = Number(f.app_port);
   const httpsPort = Number(f.https_port);
   const prop = Number(f.propagation_seconds);
-  const errors: Partial<Record<keyof Form, string>> = {};
+  const errors: Partial<Record<keyof Form | string, string>> = {};
   if (!Number.isInteger(appPort) || appPort < 1024 || appPort > 65535) errors.app_port = "1024–65535 (the app runs unprivileged)";
   if (f.https_enabled) {
     if (!FQDN.test(host)) errors.hostname = "A full hostname, e.g. meshcore.example.com";
@@ -213,9 +218,20 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
     else if (httpsPort === appPort) errors.https_port = "Must differ from the app port";
     else if (f.redirect_http && (httpsPort === 80 || appPort === 80)) errors.https_port = "Port 80 is used by the redirect";
     if (f.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) errors.email = "Enter a valid email or leave it blank";
-    if (f.cf_token && !/^[A-Za-z0-9_-]{20,200}$/.test(f.cf_token.trim())) errors.cf_token = "That doesn't look like a Cloudflare API token";
-    if (!f.cf_token && !config.token_saved) errors.cf_token = "Enter a Cloudflare API token";
-    if (!Number.isInteger(prop) || prop < 10 || prop > 600) errors.propagation_seconds = "10–600 seconds";
+    if (!provider) errors.dns_provider = "Choose your DNS provider";
+    for (const field of provider?.fields ?? []) {
+      const v = (f.credentials[field.env] ?? "").trim();
+      if (!v && field.required && !field.default && !credsSaved) errors[field.env] = `Enter the ${field.label}`;
+      if (v && field.kind === "json") {
+        try {
+          JSON.parse(v);
+        } catch {
+          errors[field.env] = "This is not valid JSON";
+        }
+      }
+      if (v && field.kind !== "json" && (v.length > 500 || /['\u0000-\u001f]/.test(v))) errors[field.env] = "Unexpected characters";
+    }
+    if (!Number.isInteger(prop) || (prop !== 0 && (prop < 10 || prop > 600))) errors.propagation_seconds = "0 (automatic) or 10–600";
   }
   const valid = Object.keys(errors).length === 0;
 
@@ -223,23 +239,29 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
   const changes = useMemo(() => {
     const list: string[] = [];
     if (f.https_enabled) {
-      if (!config.https_packages_installed)
-        list.push("Install nginx, certbot and python3-certbot-dns-cloudflare from Debian's own repositories");
-      if (f.cf_token) list.push("Save the new Cloudflare API token (readable by root only; never shown again)");
-      const needsCert = !config.https_enabled || host !== config.hostname || f.staging !== config.staging || !!f.cf_token;
+      const newCreds = Object.values(f.credentials).some((v) => v.trim());
+      const name = provider?.name ?? f.dns_provider;
+      if (!config.https_packages_installed) list.push("Install nginx from Debian's own repositories");
+      if (config.acme_client !== "lego") list.push("Download lego, the Let's Encrypt client (MIT licence), from GitHub and check its SHA-256");
+      if (config.acme_client === "certbot")
+        list.push("Move certificate renewals from certbot to lego (your saved Cloudflare token is reused)");
+      if (newCreds || !credsSaved) list.push(`Save the ${name} credentials (readable by root only; never shown again)`);
+      const needsCert =
+        !config.https_enabled || host !== config.hostname || f.staging !== config.staging || newCreds ||
+        f.dns_provider !== config.dns_provider || config.acme_client !== "lego";
       if (needsCert)
-        list.push(`Request a ${f.staging ? "staging (untrusted, for testing) " : ""}certificate for ${host} from Let's Encrypt via Cloudflare DNS`);
+        list.push(`Request a ${f.staging ? "staging (untrusted, for testing) " : ""}certificate for ${host} from Let's Encrypt via ${name}`);
       list.push(`Serve HTTPS on port ${httpsPort}${f.redirect_http ? " and redirect port 80 to it" : ""}, with nginx`);
       if (!config.https_enabled) list.push(`Make the app listen on 127.0.0.1:${appPort} only, behind nginx`);
     } else if (config.https_enabled) {
-      list.push("Turn HTTPS off: remove the nginx site (the certificate and saved token are kept)");
+      list.push("Turn HTTPS off: remove the nginx site and stop renewals (the certificate and saved credentials are kept)");
       list.push(`Serve the app over plain HTTP on port ${appPort}, on all network interfaces`);
     }
     if (appPort !== config.app_port) list.push(`Move the app from port ${config.app_port} to ${appPort}`);
     if (f.https_enabled === config.https_enabled && appPort === config.app_port && list.length === 0)
       list.push("Update the saved certificate settings");
     return list;
-  }, [f, config, host, appPort, httpsPort]);
+  }, [f, config, host, appPort, httpsPort, provider, credsSaved]);
   const restarts = appPort !== config.app_port || f.https_enabled !== config.https_enabled;
   const addressChanges = newUrl !== addressFor(config);
 
@@ -256,14 +278,15 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
           email: f.email.trim() || null,
           staging: f.staging,
           propagation_seconds: prop,
-          cf_token: f.cf_token.trim() || null,
+          dns_provider: f.dns_provider,
+          credentials: Object.fromEntries(Object.entries(f.credentials).filter(([, v]) => v.trim())),
         },
       }),
     onMutate: () => {
       submittedAt.current = Date.now() / 1000;
     },
     onSuccess: () => {
-      setF((x) => ({ ...x, cf_token: "" })); // don't keep the secret in memory longer than needed
+      setF((x) => ({ ...x, credentials: {} })); // don't keep secrets in memory longer than needed
       setStep("progress");
     },
   });
@@ -319,7 +342,7 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
             <Toggle id="net-https" checked={f.https_enabled} onChange={(v) => set("https_enabled", v)} label="Serve over HTTPS" hint="nginx terminates HTTPS in front of the app." />
             {f.https_enabled && (
               <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
-                <Field label="Hostname" htmlFor="net-host" error={errors.hostname} hint="Must be in a Cloudflare-managed domain, and resolve to this device on your network.">
+                <Field label="Hostname" htmlFor="net-host" error={errors.hostname} hint="In a domain your DNS provider manages, and resolving to this device on your network.">
                   <Input id="net-host" placeholder="meshcore.example.com" autoCapitalize="none" spellCheck={false} value={f.hostname} onChange={(e) => set("hostname", e.target.value)} />
                 </Field>
                 <Field label="HTTPS port" htmlFor="net-hport" error={errors.https_port}>
@@ -333,41 +356,104 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
           </Group>
 
           {f.https_enabled && (
-            <Group title="Certificate" description="Issued by Let's Encrypt and renewed automatically (certbot).">
+            <Group title="Certificate" description="Issued by Let's Encrypt and renewed automatically (lego).">
               <Field label="Email for expiry notices (optional)" htmlFor="net-email" error={errors.email}>
                 <Input id="net-email" type="email" autoCapitalize="none" value={f.email} onChange={(e) => set("email", e.target.value)} />
               </Field>
-              <Field label="DNS validation" htmlFor="net-dns" hint="Proves you control the domain via a DNS record, so the device never needs to be reachable from the internet.">
-                <select id="net-dns" value="cloudflare" disabled className="min-h-11 w-full rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink">
-                  <option value="cloudflare">Cloudflare (DNS-01)</option>
+              <Field
+                label="DNS provider"
+                htmlFor="net-dns"
+                error={errors.dns_provider}
+                hint="Where your domain's DNS is hosted. A temporary DNS record proves you control the domain, so this device never needs to be reachable from the internet."
+              >
+                <select
+                  id="net-dns"
+                  value={f.dns_provider}
+                  onChange={(e) => setF((x) => ({ ...x, dns_provider: e.target.value, credentials: {} }))}
+                  className="min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink sm:text-sm"
+                >
+                  {info.providers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
                 </select>
               </Field>
-              <Field
-                label="Cloudflare API token"
-                htmlFor="net-token"
-                error={errors.cf_token}
-                hint={
-                  <>
-                    Create one at{" "}
-                    <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" className="text-accent underline">
-                      dash.cloudflare.com <ExternalLink className="inline size-3" aria-hidden />
-                    </a>{" "}
-                    with the “Edit zone DNS” template, limited to your domain’s zone. Stored on the device for root only and never shown again.
-                  </>
-                }
-              >
-                <Input
-                  id="net-token"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={config.token_saved ? "A token is saved — leave blank to keep it" : "Paste the API token"}
-                  value={f.cf_token}
-                  onChange={(e) => set("cf_token", e.target.value)}
-                />
-              </Field>
+              {provider && (
+                <div className="space-y-3 rounded-lg border border-line p-3">
+                  <p className="text-xs text-muted">
+                    {provider.help}{" "}
+                    <a href={provider.docs} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-accent underline">
+                      Details <ExternalLink className="inline size-3" aria-hidden />
+                    </a>
+                  </p>
+                  {provider.note && <p className="rounded-md bg-warn/10 px-2.5 py-1.5 text-xs">{provider.note}</p>}
+                  {provider.fields.map((field) => {
+                    const id = `net-cred-${field.env}`;
+                    const keep = credsSaved ? "Saved — leave blank to keep" : undefined;
+                    const value = f.credentials[field.env] ?? "";
+                    return (
+                      <Field key={field.env} label={field.label} htmlFor={id} error={errors[field.env]}>
+                        {field.kind === "json" ? (
+                          <textarea
+                            id={id}
+                            rows={4}
+                            spellCheck={false}
+                            placeholder={keep ?? "Paste the whole JSON key file"}
+                            value={value}
+                            onChange={(e) => setCred(field.env, e.target.value)}
+                            className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs text-ink placeholder:text-muted focus:border-accent focus:outline-none"
+                          />
+                        ) : field.kind === "choice" ? (
+                          <select
+                            id={id}
+                            value={value || field.default || ""}
+                            onChange={(e) => setCred(field.env, e.target.value)}
+                            className="min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink sm:text-sm"
+                          >
+                            {(field.choices ?? []).map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Input
+                            id={id}
+                            type={field.secret ? "password" : "text"}
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            placeholder={keep ?? field.default ?? ""}
+                            value={value}
+                            onChange={(e) => setCred(field.env, e.target.value)}
+                          />
+                        )}
+                      </Field>
+                    );
+                  })}
+                  <p className="text-xs text-muted">Stored on the device for root only and never shown again.</p>
+                </div>
+              )}
+              <details className="text-xs text-muted">
+                <summary className="cursor-pointer text-ink">My DNS provider isn't listed</summary>
+                <p className="mt-1.5">
+                  Some registrars (for example Squarespace, Wix or Bluehost) have no DNS API. Hand just the validation to a
+                  free provider that has one: create a free account at deSEC (desec.io) with a domain such as
+                  <code className="mx-1 font-mono">yourname.dedyn.io</code>, then at your registrar add one CNAME record:
+                  <code className="mx-1 font-mono">_acme-challenge.{host || "meshcore.example.com"}</code>→
+                  <code className="mx-1 font-mono">_acme-challenge.yourname.dedyn.io</code>. Choose deSEC above with its
+                  token. lego follows the CNAME, and your own DNS stays where it is.
+                </p>
+              </details>
+              {config.acme_client === "certbot" && (
+                <p className="rounded-md bg-surface-2 px-3 py-2 text-xs">
+                  This device still renews its certificate with certbot. Saving moves it to lego and reuses the saved
+                  Cloudflare token; nothing else changes.
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
-                <Field label="DNS wait (seconds)" htmlFor="net-prop" error={errors.propagation_seconds} hint="Time to let the DNS record spread.">
+                <Field label="DNS wait (seconds)" htmlFor="net-prop" error={errors.propagation_seconds} hint="0 = check automatically (recommended).">
                   <Input id="net-prop" inputMode="numeric" value={f.propagation_seconds} onChange={(e) => set("propagation_seconds", e.target.value)} />
                 </Field>
                 <div className="pt-7">
@@ -378,7 +464,11 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-2 px-3 py-2 text-sm">
                   <span>
                     {certLabel(info.certificate, config) ?? "No certificate yet"}
-                    {config.auto_renew && <span className="block text-xs text-muted">certbot renews it automatically before it expires</span>}
+                    {config.auto_renew && (
+                      <span className="block text-xs text-muted">
+                        {config.acme_client === "certbot" ? "certbot" : "lego"} renews it automatically before it expires
+                      </span>
+                    )}
                   </span>
                   <Button onClick={() => renew.mutate()} disabled={renew.isPending}>
                     <RefreshCw className="size-4" aria-hidden /> Renew now
