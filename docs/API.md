@@ -132,8 +132,8 @@ through these `state` values:
 | `queued` | Accepted by MeshCore Home and waiting for the radio. |
 | `sending` | Being handed to the radio now. |
 | `accepted` | The radio transmitted it. **Final for channel messages**: channels have no delivery receipts. For a DM this means "sent, waiting for acknowledgement". |
-| `acknowledged` | DM only: the recipient's radio returned an acknowledgement. This is a delivery receipt, not a read receipt. |
-| `no_ack` | DM only: no acknowledgement arrived in time. It may or may not have been received. |
+| `acknowledged` | DM only: the recipient's radio returned an acknowledgement. This is a delivery receipt, not a read receipt. The web interface shows it as **Delivered**, like the MeshCore apps. |
+| `no_ack` | DM only: no acknowledgement arrived in time. It may or may not have been received. Shown as *Not confirmed delivered*. |
 | `uncertain` | Sending was interrupted (e.g. a restart). It may or may not have been transmitted. |
 | `failed` | The radio refused it; `error` says why. |
 | `expired` | It could not be sent within 60 seconds (e.g. the radio was busy or offline). |
@@ -506,7 +506,8 @@ shape they return.
 `/api/api-keys`, `/api/setup`, `POST`/`PUT` under `/api/system/*`, `PUT /api/settings/radio`,
 `/api/radio/pause`, `/api/radio/resume`, `/api/radio/test-connection`,
 `/api/radio/simulate-incoming`, `DELETE /api/simulated-data`, `POST /api/system/radio-hat`, and every `PUT`/`POST`/`DELETE`
-under `/api/radio/config`, `/api/radio/channels`, `/api/radio/custom-vars` and `/api/radio/actions`.
+under `/api/radio/config`, `/api/radio/channels`, `/api/radio/custom-vars` and `/api/radio/actions`,
+and everything under `/api/remote` (remote administration of repeaters and room servers).
 
 ## 6. Realtime events (WebSocket)
 
@@ -540,6 +541,7 @@ changed so you can fetch it over HTTP. They do not carry message text.
 | `read-position-updated` | `conversation_id` | That conversation's `read_position` / `unread`. |
 | `radio-status-changed` | `state` | `GET /api/status` |
 | `settings-updated` | — | The settings you care about. |
+| `remote-updated` | `public_key` | Used by the web app's remote administration page; API keys cannot read it. |
 
 A missing, invalid or expired key is refused during the handshake (HTTP `403`). The server
 closes an open socket with code `4408` if your client reads too slowly. Events are not replayed: after any reconnect, re-sync over HTTP from the

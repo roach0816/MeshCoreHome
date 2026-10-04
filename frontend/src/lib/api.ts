@@ -409,3 +409,76 @@ export interface ApiKeyCreated {
   key: string;
   api_key: ApiKey;
 }
+
+export interface RadioPreset {
+  id: string;
+  title: string;
+  freq_mhz: number;
+  bw_khz: number;
+  sf: number;
+  cr: number;
+  path_hash_size: number | null;
+}
+
+export interface PresetList {
+  source: "live" | "bundled";
+  updated: string | null;
+  info_message: string | null;
+  presets: RadioPreset[];
+}
+
+// ---- remote administration (repeaters, room servers) ----------------------------------
+
+export type RemoteKind = "status" | "telemetry" | "acl" | "neighbours" | "owner" | "regions";
+
+export interface RemoteSection<T = Record<string, unknown>> {
+  data: T;
+  at: string;
+}
+
+export interface RemoteStatus {
+  bat: number;
+  tx_queue_len: number;
+  noise_floor: number;
+  last_rssi: number;
+  nb_recv: number;
+  nb_sent: number;
+  airtime: number;
+  uptime: number;
+  sent_flood: number;
+  sent_direct: number;
+  recv_flood: number;
+  recv_direct: number;
+  full_evts: number;
+  last_snr: number;
+  direct_dups: number;
+  flood_dups: number;
+  rx_airtime: number;
+  recv_errors: number;
+}
+
+export interface RemoteNeighbours {
+  neighbours_count: number;
+  results_count: number;
+  neighbours: { pubkey: string; secs_ago: number; snr: number }[];
+}
+
+export interface RemoteState {
+  contact: { id: string; name: string; public_key: string; kind: number; lat: number | null; lon: number | null };
+  simulated: boolean;
+  radio_connected: boolean;
+  session: { admin: boolean; permissions: number | null; at: string } | null;
+  busy: boolean;
+  names: Record<string, string>;
+  sections: {
+    status?: RemoteSection<RemoteStatus>;
+    telemetry?: RemoteSection<{ lpp: { channel: number; type: string; value: unknown }[] }>;
+    acl?: RemoteSection<{ acl: { key: string; perm: number }[] }>;
+    neighbours?: RemoteSection<RemoteNeighbours>;
+    owner?: RemoteSection<{ text: string }>;
+    regions?: RemoteSection<{ text: string }>;
+  };
+  values: Record<string, { value: string; at: string }>;
+  console: { at: string; dir: "out" | "in" | "note"; text: string }[];
+}
+

@@ -75,6 +75,9 @@ export function useRealtime(enabled: boolean): SocketState {
             qc.invalidateQueries({ queryKey: ["map"] });
             qc.invalidateQueries({ queryKey: ["device"] });
             break;
+          case "remote-updated":
+            qc.invalidateQueries({ queryKey: ["remote"] });
+            break;
           case "settings-updated":
             qc.invalidateQueries({ queryKey: ["notification-settings"] });
             break;

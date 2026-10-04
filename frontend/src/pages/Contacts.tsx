@@ -16,6 +16,7 @@ import {
   RouteOff,
   Search,
   Share2,
+  SlidersHorizontal,
   Star,
   StarOff,
   Trash2,
@@ -361,6 +362,15 @@ function useContactActions() {
                 qc.invalidateQueries({ queryKey: ["conversations"] });
                 navigate(`/c/${r.conversation_id}`);
               },
+            } satisfies MenuItem,
+          ]
+        : []),
+      ...(c.kind === 2 || c.kind === 3
+        ? [
+            {
+              label: "Remote manage",
+              icon: <SlidersHorizontal className="size-4" />,
+              onSelect: () => navigate(`/contacts/${c.id}/manage`),
             } satisfies MenuItem,
           ]
         : []),

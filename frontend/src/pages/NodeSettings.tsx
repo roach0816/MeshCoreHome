@@ -1,16 +1,21 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { ChevronLeft, Clock, Copy, Megaphone, Pencil, Plus, Power, RefreshCw, Trash2 } from "lucide-react";
-import { api, type ChannelKeyKind, type NodeConfig, type TelemetryMode } from "../lib/api";
+import { ChevronLeft, Clock, Copy, Crosshair, Loader2, MapPin, Megaphone, Pencil, Plus, Power, RefreshCw, Trash2 } from "lucide-react";
+import { api, type ChannelKeyKind, type NodeConfig, type PresetList, type TelemetryMode } from "../lib/api";
+import { BANDWIDTHS, CUSTOM, matchPreset } from "../lib/presets";
 import { Badge, Button, Card, ErrorText, Field, IconButton, Input } from "../components/ui";
+import { Section, Select } from "../components/SettingsKit";
 import { Dialog } from "../components/Dialog";
 import { AddChannelDialog } from "../components/AddChannel";
 import { normaliseScope, scopeError } from "../lib/channelLink";
 import { useStatus } from "./Shell";
 import { cx } from "../lib/util";
+import { browserLocation, fmtCoord } from "../lib/geo";
 
-const BANDWIDTHS = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500];
+// Leaflet is only downloaded when the map picker opens.
+const LocationPicker = lazy(() => import("../components/LocationPicker").then((m) => ({ default: m.LocationPicker })));
+
 const TELEMETRY: { value: TelemetryMode; label: string }[] = [
   { value: 0, label: "Nobody" },
   { value: 1, label: "Contacts I allow" },
@@ -23,24 +28,6 @@ const KEY_LABEL: Record<ChannelKeyKind, string> = {
   private: "Private key",
 };
 const utf8Len = (s: string) => new TextEncoder().encode(s).length;
-
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="p-4 sm:p-5">
-      <h3 className="text-base font-semibold">{title}</h3>
-      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      <div className="mt-4 space-y-4">{children}</div>
-    </Card>
-  );
-}
 
 function Toggle({
   id,
@@ -69,36 +56,6 @@ function Toggle({
         {hint && <span className="block text-xs text-muted">{hint}</span>}
       </span>
     </label>
-  );
-}
-
-function Select<T extends string | number>({
-  id,
-  value,
-  options,
-  onChange,
-}: {
-  id: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (v: T) => void;
-}) {
-  return (
-    <select
-      id={id}
-      value={String(value)}
-      onChange={(e) => {
-        const o = options.find((x) => String(x.value) === e.target.value);
-        if (o) onChange(o.value);
-      }}
-      className="min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink focus:border-accent focus:outline-none sm:text-sm"
-    >
-      {options.map((o) => (
-        <option key={String(o.value)} value={String(o.value)}>
-          {o.label}
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -246,15 +203,28 @@ function IdentitySection({ c }: { c: NodeConfig }) {
   const valid = nameBytes > 0 && nameBytes <= 31 && coordsOk;
   const dirty =
     name.trim() !== c.identity.name || latN !== c.identity.lat || lonN !== c.identity.lon || share !== c.identity.share_location;
-  const useBrowserLocation = () =>
-    navigator.geolocation?.getCurrentPosition(
-      (p) => {
-        setLat(p.coords.latitude.toFixed(5));
-        setLon(p.coords.longitude.toFixed(5));
-      },
-      () => {},
-      { timeout: 10000 },
-    );
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState<unknown>(null);
+  const [locNote, setLocNote] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const setPoint = (la: number, lo: number) => {
+    setLat(fmtCoord(la));
+    setLon(fmtCoord(lo));
+  };
+  const useBrowserLocation = async () => {
+    setLocError(null);
+    setLocNote(null);
+    setLocating(true);
+    try {
+      const p = await browserLocation();
+      setPoint(p.lat, p.lon);
+      setLocNote(`From this device, accurate to about ${Math.max(1, Math.round(p.accuracy))} m. Save to apply it.`);
+    } catch (e) {
+      setLocError(e);
+    } finally {
+      setLocating(false);
+    }
+  };
   return (
     <Section title="Identity" description="The name and position this node advertises to the mesh.">
       <Field label="Node name" htmlFor="node-name" error={nameBytes > 31 ? "At most 31 bytes" : null} hint={`${nameBytes}/31 bytes. Shown to others in adverts and channel messages.`}>
@@ -262,29 +232,52 @@ function IdentitySection({ c }: { c: NodeConfig }) {
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Latitude" htmlFor="node-lat" error={!coordsOk ? "Enter both, within range, or leave both empty" : null}>
-          <Input id="node-lat" inputMode="decimal" placeholder="e.g. 40.01500" value={lat} onChange={(e) => setLat(e.target.value)} />
+          <Input id="node-lat" inputMode="decimal" value={lat} onChange={(e) => setLat(e.target.value)} />
         </Field>
         <Field label="Longitude" htmlFor="node-lon">
-          <Input id="node-lon" inputMode="decimal" placeholder="e.g. -105.27050" value={lon} onChange={(e) => setLon(e.target.value)} />
+          <Input id="node-lon" inputMode="decimal" value={lon} onChange={(e) => setLon(e.target.value)} />
         </Field>
       </div>
       <div className="flex flex-wrap gap-2">
-        {"geolocation" in navigator && window.isSecureContext && (
-          <Button type="button" onClick={useBrowserLocation}>
-            Use this device's location
-          </Button>
-        )}
+        <Button type="button" onClick={useBrowserLocation} disabled={locating}>
+          {locating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Crosshair className="size-4" aria-hidden />}
+          Use this device's location
+        </Button>
+        <Button type="button" onClick={() => setPicking(true)}>
+          <MapPin className="size-4" aria-hidden /> Pick on map
+        </Button>
         <Button
           type="button"
           variant="ghost"
           onClick={() => {
             setLat("");
             setLon("");
+            setLocNote(null);
           }}
         >
           Clear location
         </Button>
       </div>
+      {locNote && (
+        <p className="text-xs text-muted" role="status">
+          {locNote}
+        </p>
+      )}
+      <ErrorText error={locError} />
+      {picking && (
+        <Suspense fallback={null}>
+          <LocationPicker
+            initial={latN !== null && lonN !== null && coordsOk ? { lat: latN, lon: lonN } : null}
+            onClose={() => setPicking(false)}
+            onPick={(p) => {
+              setPoint(p.lat, p.lon);
+              setLocNote("Picked on the map. Save to apply it.");
+              setLocError(null);
+              setPicking(false);
+            }}
+          />
+        </Suspense>
+      )}
       <Toggle
         id="node-share"
         checked={share}
@@ -307,6 +300,16 @@ function IdentitySection({ c }: { c: NodeConfig }) {
 
 function RadioSection({ c }: { c: NodeConfig }) {
   const r = c.radio;
+  const qc = useQueryClient();
+  const presets = useQuery({
+    queryKey: ["radio-presets"],
+    queryFn: () => api<PresetList>("/api/radio/presets"),
+    staleTime: 3600_000,
+  });
+  const list = presets.data?.presets ?? [];
+  const hashMode = c.behavior.path_hash_mode; // null: firmware without path hash sizes
+  const currentHash = hashMode === null ? null : hashMode + 1;
+  const [presetId, setPresetId] = useState<string>(CUSTOM);
   const [freq, setFreq] = useState(String(r.freq_mhz));
   const [bw, setBw] = useState(r.bw_khz);
   const [sf, setSf] = useState(r.sf);
@@ -314,6 +317,7 @@ function RadioSection({ c }: { c: NodeConfig }) {
   const [tx, setTx] = useState(String(r.tx_power_dbm));
   const [repeat, setRepeat] = useState(!!r.repeat);
   const [confirming, setConfirming] = useState(false);
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     setFreq(String(r.freq_mhz));
     setBw(r.bw_khz);
@@ -321,41 +325,115 @@ function RadioSection({ c }: { c: NodeConfig }) {
     setCr(r.cr);
     setTx(String(r.tx_power_dbm));
     setRepeat(!!r.repeat);
-  }, [r]);
-  const save = useSection<object>("/api/radio/config/radio");
+    setPresetId(matchPreset(list, r.freq_mhz, r.bw_khz, r.sf, r.cr, currentHash)?.id ?? CUSTOM);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [r, presets.data, currentHash]);
+
+  const preset = list.find((p) => p.id === presetId);
+  const custom = !preset;
+  const choose = (id: string) => {
+    setPresetId(id);
+    const p = list.find((x) => x.id === id);
+    if (p) {
+      setFreq(String(p.freq_mhz));
+      setBw(p.bw_khz);
+      setSf(p.sf);
+      setCr(p.cr);
+    }
+  };
+  // A preset may also define the mesh's path hash size (Settings → Contacts & routing).
+  const targetHash = preset?.path_hash_size ?? null;
+  const hashChange = targetHash !== null && hashMode !== null && targetHash !== currentHash;
+
   const maxTx = r.max_tx_power_dbm ?? 30;
   const freqN = Number(freq);
   const txN = Number(tx);
   const valid = Number.isFinite(freqN) && freqN >= 150 && freqN <= 2500 && Number.isInteger(txN) && txN >= 1 && txN <= maxTx;
   const rfChanged = freqN !== r.freq_mhz || bw !== r.bw_khz || sf !== r.sf || cr !== r.cr;
-  const dirty = rfChanged || txN !== r.tx_power_dbm || (r.repeat !== null && repeat !== r.repeat);
+  const dirty = rfChanged || hashChange || txN !== r.tx_power_dbm || (r.repeat !== null && repeat !== r.repeat);
   const body = { freq_mhz: freqN, bw_khz: bw, sf, cr, tx_power_dbm: txN, repeat: r.repeat === null ? null : repeat };
+  const save = useMutation({
+    mutationFn: async () => {
+      let cfg = await api<NodeConfig>("/api/radio/config/radio", { method: "PUT", json: body });
+      if (hashChange && targetHash !== null) {
+        const b = cfg.behavior;
+        cfg = await api<NodeConfig>("/api/radio/config/behavior", {
+          method: "PUT",
+          json: { auto_add_contacts: b.auto_add_contacts, multi_acks: b.multi_acks, path_hash_mode: targetHash - 1, default_flood_scope: null },
+        });
+      }
+      return cfg;
+    },
+    onMutate: () => setSaved(false),
+    onSuccess: (cfg) => {
+      qc.setQueryData(["node-config"], cfg);
+      qc.invalidateQueries({ queryKey: ["device"] });
+      setSaved(true);
+    },
+  });
   // Keep the current value selectable even if it isn't a standard option.
-  const bwOptions = (BANDWIDTHS.includes(r.bw_khz) ? BANDWIDTHS : [...BANDWIDTHS, r.bw_khz].sort((a, b) => a - b)).map(
-    (b) => ({ value: b, label: `${b} kHz` }),
-  );
+  const bwOptions = (BANDWIDTHS.includes(bw) ? BANDWIDTHS : [...BANDWIDTHS, bw].sort((a, b2) => a - b2)).map((b2) => ({
+    value: b2,
+    label: `${b2} kHz`,
+  }));
   return (
     <Section
       title="LoRa radio"
       description="These must match the other nodes in your mesh, or this node will stop hearing them. Changes apply immediately."
     >
+      <Field
+        label="Preset"
+        htmlFor="rf-preset"
+        hint={
+          presets.isPending
+            ? "Loading MeshCore's presets…"
+            : `${presets.data?.info_message ?? "Suggested by the MeshCore community."} ${
+                presets.data?.source === "live" ? "Up to date from MeshCore." : `Built-in list${presets.data?.updated ? ` (${presets.data.updated})` : ""}.`
+              } Choose Custom to set your own.`
+        }
+      >
+        <select
+          id="rf-preset"
+          value={presetId}
+          onChange={(e) => choose(e.target.value)}
+          className="min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink sm:text-sm"
+        >
+          {list.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.title} · {p.freq_mhz} MHz · {p.bw_khz} kHz · SF{p.sf} · CR{p.cr}
+              {p.path_hash_size ? ` · ${p.path_hash_size}-byte paths` : ""}
+            </option>
+          ))}
+          <option value={CUSTOM}>Custom</option>
+        </select>
+      </Field>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Frequency (MHz)" htmlFor="rf-freq" hint="Use a frequency that is legal where you are." error={freq && !(freqN >= 150 && freqN <= 2500) ? "150–2500 MHz" : null}>
-          <Input id="rf-freq" inputMode="decimal" value={freq} onChange={(e) => setFreq(e.target.value)} />
+        <Field
+          label="Frequency (MHz)"
+          htmlFor="rf-freq"
+          hint={custom ? "Use a frequency that is legal where you are." : undefined}
+          error={freq && !(freqN >= 150 && freqN <= 2500) ? "150–2500 MHz" : null}
+        >
+          <Input id="rf-freq" inputMode="decimal" disabled={!custom} value={freq} onChange={(e) => setFreq(e.target.value)} />
         </Field>
         <Field label="Bandwidth" htmlFor="rf-bw">
-          <Select id="rf-bw" value={bw} options={bwOptions} onChange={setBw} />
+          <Select id="rf-bw" value={bw} options={bwOptions} onChange={setBw} disabled={!custom} />
         </Field>
-        <Field label="Spreading factor" htmlFor="rf-sf" hint="Higher = longer range, slower.">
-          <Select id="rf-sf" value={sf} options={[5, 6, 7, 8, 9, 10, 11, 12].map((v) => ({ value: v, label: `SF${v}` }))} onChange={setSf} />
+        <Field label="Spreading factor" htmlFor="rf-sf" hint={custom ? "Higher = longer range, slower." : undefined}>
+          <Select id="rf-sf" value={sf} options={[5, 6, 7, 8, 9, 10, 11, 12].map((v) => ({ value: v, label: `SF${v}` }))} onChange={setSf} disabled={!custom} />
         </Field>
         <Field label="Coding rate" htmlFor="rf-cr">
-          <Select id="rf-cr" value={cr} options={[5, 6, 7, 8].map((v) => ({ value: v, label: `4/${v}` }))} onChange={setCr} />
+          <Select id="rf-cr" value={cr} options={[5, 6, 7, 8].map((v) => ({ value: v, label: `4/${v}` }))} onChange={setCr} disabled={!custom} />
         </Field>
         <Field label={`TX power (dBm, max ${maxTx})`} htmlFor="rf-tx" error={tx && !(txN >= 1 && txN <= maxTx) ? `1–${maxTx} dBm` : null}>
           <Input id="rf-tx" inputMode="numeric" value={tx} onChange={(e) => setTx(e.target.value)} />
         </Field>
       </div>
+      {preset && hashChange && (
+        <p className="text-xs text-muted">
+          This preset also sets the mesh's path hash size to {targetHash} bytes (Contacts & routing).
+        </p>
+      )}
       {r.repeat !== null && (
         <Toggle
           id="rf-repeat"
@@ -369,8 +447,8 @@ function RadioSection({ c }: { c: NodeConfig }) {
         dirty={dirty && valid}
         pending={save.isPending}
         error={save.error}
-        saved={save.saved}
-        onSave={() => (rfChanged ? setConfirming(true) : save.mutate(body))}
+        saved={saved}
+        onSave={() => (rfChanged || hashChange ? setConfirming(true) : save.mutate())}
       />
       {confirming && (
         <Dialog
@@ -386,7 +464,7 @@ function RadioSection({ c }: { c: NodeConfig }) {
                 variant="danger"
                 onClick={() => {
                   setConfirming(false);
-                  save.mutate(body);
+                  save.mutate();
                 }}
               >
                 Apply to radio
@@ -396,7 +474,9 @@ function RadioSection({ c }: { c: NodeConfig }) {
         >
           <div className="space-y-2 text-sm">
             <p>
+              {preset ? <strong>{preset.title}: </strong> : null}
               {freqN} MHz · {bw} kHz · SF{sf} · CR 4/{cr}
+              {hashChange ? ` · ${targetHash}-byte path hashes` : ""}
             </p>
             <p className="text-muted">
               If these don't match your mesh, this node will go silent to everyone else until you change them back.

@@ -105,6 +105,26 @@ class SendResult:
     error: str | None = None
 
 
+# Remote administration of repeaters / room servers over the mesh.
+#   login      arg = password             -> {"ok": bool, "admin": bool, "permissions": int | None}
+#   logout                                -> True
+#   cli        arg = command text         -> the reply arrives as a CLI message (see supervisor)
+#   status / telemetry / acl / neighbours -> decoded response (binary requests; need a login)
+#   owner / regions                       -> decoded response (anonymous requests)
+REMOTE_KINDS = ("login", "logout", "cli", "status", "telemetry", "acl", "neighbours", "owner", "regions")
+
+
+@dataclass
+class RemoteTicket:
+    """A remote request that has been handed to the radio; its reply is awaited separately."""
+
+    kind: str
+    public_key: str
+    tag: str | None = None  # expected ACK / response tag, when the radio reports one
+    timeout: float = 15.0  # seconds the radio suggests waiting for the reply
+    handle: Any = field(default=None, repr=False, compare=False)  # adapter-private wait state
+
+
 AckCallback = Callable[[str], Awaitable[None]]
 WaitingCallback = Callable[[], Awaitable[None]]
 DisconnectCallback = Callable[[str], Awaitable[None]]
@@ -164,6 +184,16 @@ class RadioAdapter(ABC):
 
     async def configure(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
         raise NotSupported("this radio does not support remote configuration")
+
+    # ---- remote administration (repeaters, room servers) -----------------------------------
+    # remote_send only hands the request to the radio (quick; done under the command lock).
+    # remote_wait waits for the reply over the mesh, which can take many seconds.
+
+    async def remote_send(self, public_key: str, kind: str, arg: str | None = None) -> RemoteTicket:
+        raise NotSupported("this radio does not support remote administration")
+
+    async def remote_wait(self, ticket: RemoteTicket, timeout: float) -> Any:
+        raise NotSupported("this radio does not support remote administration")
 
 
 MAX_PATH_BYTES = 64  # firmware out_path buffer

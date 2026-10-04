@@ -12,6 +12,7 @@ import random
 import time
 from collections import deque
 
+from app.radio import sim_repeater
 from app.radio.base import (
     DeviceSnapshot,
     IncomingMessage,
@@ -20,6 +21,7 @@ from app.radio.base import (
     RadioChannel,
     RadioContact,
     RadioError,
+    RemoteTicket,
     SendResult,
     channel_key_kind,
     hashtag_key,
@@ -316,6 +318,77 @@ class SimulatedRadio(RadioAdapter):
         self._connected = False
         if self.on_disconnect:
             await self.on_disconnect("radio rebooted")
+
+    # ---- remote administration (simulated repeaters / room servers) ----------------------
+
+    def _sim_node(self, public_key: str) -> sim_repeater.SimRepeater:
+        c = next((c for c in SIM_CONTACTS if c.public_key == public_key and c.kind in (2, 3)), None)
+        if c is None:
+            raise RadioError("no simulated repeater with that key")
+        return sim_repeater.repeater(c.public_key, c.name, c.lat, c.lon)
+
+    async def remote_send(self, public_key: str, kind: str, arg: str | None = None) -> RemoteTicket:
+        self._require()
+        node = self._sim_node(public_key)
+        await asyncio.sleep(0.05)
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        delay = self._rng.uniform(0.6, 1.8)
+        me = SIM_SELF_KEY
+        if kind == "logout":
+            node.sessions.pop(me, None)
+            return RemoteTicket(kind=kind, public_key=public_key, timeout=0)
+        if kind == "cli":
+            # Like the firmware: only an admin gets replies; the reply arrives as a CLI message.
+            if node.is_admin(me):
+                reply = node.cli(arg or "")
+                if reply is not None:
+                    self._spawn(self._cli_reply(public_key, reply, delay))
+            return RemoteTicket(kind=kind, public_key=public_key, tag=self._rng.randbytes(4).hex(), timeout=6)
+        if kind == "login":
+            result = node.login(me, arg or "")
+        elif kind in ("owner", "regions"):
+            result = node.owner() if kind == "owner" else node.region_names()
+        elif not node.logged_in(me):
+            result = None  # the firmware ignores requests from someone not logged in
+        elif kind == "status":
+            result = node.status()
+        elif kind == "telemetry":
+            result = node.telemetry()
+        elif kind == "acl":
+            result = node.acl_list() if node.is_admin(me) else None
+        elif kind == "neighbours":
+            result = node.neighbours([c.public_key for c in SIM_CONTACTS])
+        else:
+            raise NotSupported(f"unknown remote request {kind!r}")
+        if result is not None:
+            self._spawn(self._resolve_later(fut, result, delay))
+        return RemoteTicket(
+            kind=kind, public_key=public_key, tag=self._rng.randbytes(4).hex(), timeout=6, handle=fut
+        )
+
+    async def remote_wait(self, ticket: RemoteTicket, timeout: float):
+        if ticket.handle is None:
+            return True
+        return await asyncio.wait_for(ticket.handle, timeout)
+
+    async def _resolve_later(self, fut: asyncio.Future, result, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if not fut.done():
+            fut.set_result(result)
+
+    async def _cli_reply(self, public_key: str, text: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if self._connected:
+            self.inject(
+                IncomingMessage(
+                    kind="dm",
+                    text=text,
+                    txt_type=1,
+                    pubkey_prefix=public_key[:12],
+                    sender_timestamp=int(time.time()),
+                )
+            )
 
     # ---- simulation helpers -------------------------------------------------
 

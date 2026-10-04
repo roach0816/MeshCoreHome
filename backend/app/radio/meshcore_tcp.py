@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from app.radio.base import (
@@ -20,6 +21,7 @@ from app.radio.base import (
     RadioChannel,
     RadioContact,
     RadioError,
+    RemoteTicket,
     SendResult,
     advert_position,
     channel_key_kind,
@@ -31,6 +33,7 @@ log = logging.getLogger(__name__)
 COMMAND_TIMEOUT = 8.0
 CONNECT_TIMEOUT = 10.0
 MAX_CHANNEL_SLOTS_FALLBACK = 8  # only used if the device does not report max_channels
+NEIGHBOUR_PREFIX_BYTES = 4
 
 
 def _payload(event: Any) -> dict[str, Any]:
@@ -496,3 +499,143 @@ class MeshCoreTcpRadio(RadioAdapter):
         else:
             raise NotSupported(f"unknown operation {op!r}")
         return {}
+
+    # ---- remote administration ----------------------------------------------------------
+    # Mirrors the library's *_sync helpers (commands/binary.py, messaging.py), split into send and
+    # wait so the command lock is not held while the reply crosses the mesh. Reply events are
+    # subscribed to before sending, then matched by tag (or, for login, by key prefix).
+    # Untested on hardware: written against the meshcore 2.3.14 source.
+
+    async def remote_send(self, public_key: str, kind: str, arg: str | None = None) -> RemoteTicket:
+        from meshcore import EventType
+        from meshcore.packets import AnonReqType, BinaryReqType
+
+        mc = self._require()
+        c = mc.commands
+        if kind == "logout":
+            await self._ok(c.send_logout(public_key), "logging out")
+            return RemoteTicket(kind=kind, public_key=public_key, timeout=0)
+        if kind == "cli":
+            # The reply is a CLI text message, fetched by the supervisor's receive loop.
+            res = await self._ok(c.send_cmd(public_key, arg or "", dst_type=2), "sending the command")
+            return self._ticket(kind, public_key, res, None)
+
+        events = {
+            "login": [EventType.LOGIN_SUCCESS, EventType.LOGIN_FAILED],
+            "status": [EventType.STATUS_RESPONSE],
+            "telemetry": [EventType.TELEMETRY_RESPONSE],
+            "acl": [EventType.ACL_RESPONSE],
+            "neighbours": [EventType.NEIGHBOURS_RESPONSE],
+            "owner": [EventType.BINARY_RESPONSE],
+            "regions": [EventType.BINARY_RESPONSE],
+        }.get(kind)
+        if events is None:
+            raise NotSupported(f"unknown remote request {kind!r}")
+        received: list[Any] = []
+        arrived = asyncio.Event()
+
+        async def _collect(event):
+            received.append(event)
+            arrived.set()
+
+        subs = [mc.subscribe(e, _collect) for e in events]
+        try:
+            if kind == "login":
+                res = await self._ok(c.send_login(public_key, arg or ""), "sending the login")
+            elif kind in ("owner", "regions"):
+                req = AnonReqType.OWNER if kind == "owner" else AnonReqType.REGIONS
+                res = await self._ok(c.send_anon_req(public_key, req), "sending the request")
+            elif kind == "neighbours":
+                offset = int(arg or 0)
+                data = (
+                    b"\x00"  # request version
+                    + (255).to_bytes(1, "little")  # as many as fit
+                    + offset.to_bytes(2, "little")
+                    + b"\x00"  # newest first
+                    + NEIGHBOUR_PREFIX_BYTES.to_bytes(1, "little")
+                    + os.urandom(4)
+                )
+                res = await self._ok(
+                    c.send_binary_req(
+                        public_key,
+                        BinaryReqType.NEIGHBOURS,
+                        data=data,
+                        context={"pubkey_prefix_length": NEIGHBOUR_PREFIX_BYTES},
+                    ),
+                    "sending the request",
+                )
+            else:
+                req = {
+                    "status": BinaryReqType.STATUS,
+                    "telemetry": BinaryReqType.TELEMETRY,
+                    "acl": BinaryReqType.ACL,
+                }[kind]
+                res = await self._ok(
+                    c.send_binary_req(public_key, req, data=b"\0\0" if kind == "acl" else None),
+                    "sending the request",
+                )
+        except BaseException:
+            for s in subs:
+                mc.unsubscribe(s)
+            raise
+        return self._ticket(kind, public_key, res, (subs, received, arrived))
+
+    @staticmethod
+    def _ticket(kind: str, public_key: str, res: Any, handle: Any) -> RemoteTicket:
+        p = _payload(res)
+        ack = p.get("expected_ack")
+        tag = ack.hex() if isinstance(ack, bytes | bytearray) else None
+        suggested = p.get("suggested_timeout")
+        timeout = float(suggested) / 800 if isinstance(suggested, int | float) and suggested > 0 else 15.0
+        return RemoteTicket(kind=kind, public_key=public_key, tag=tag, timeout=timeout, handle=handle)
+
+    def _match(self, ticket: RemoteTicket, event: Any) -> Any:
+        from meshcore import EventType
+
+        p = _payload(event)
+        if ticket.kind == "login":
+            if str(p.get("pubkey_prefix") or "") != ticket.public_key[:12]:
+                return None
+            if event.type == EventType.LOGIN_FAILED:
+                return {"ok": False, "admin": False, "permissions": None}
+            perms = p.get("permissions")
+            return {"ok": True, "admin": bool(p.get("is_admin")), "permissions": perms}
+        if p.get("tag") != ticket.tag:
+            return None
+        if ticket.kind in ("owner", "regions"):
+            # Anonymous replies: 4-byte remote timestamp, then UTF-8 text.
+            try:
+                raw = bytes.fromhex(str(p.get("data") or ""))
+            except ValueError:
+                raise RadioError("unreadable reply from the node") from None
+            text = raw[4:].decode("utf-8", errors="replace").rstrip("\0")
+            return {"text": text}
+        if ticket.kind == "acl":
+            return {"acl": p.get("acl_data") or []}
+        if ticket.kind == "telemetry":
+            return {"lpp": p.get("lpp") or []}
+        return {k: v for k, v in p.items() if k not in ("tag", "pubkey_prefix", "pubkey_pre")}
+
+    async def remote_wait(self, ticket: RemoteTicket, timeout: float) -> Any:
+        if ticket.handle is None:
+            return True
+        subs, received, arrived = ticket.handle
+        mc = self._mc
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        try:
+            while True:
+                while received:
+                    found = self._match(ticket, received.pop(0))
+                    if found is not None:
+                        return found
+                arrived.clear()
+                left = deadline - loop.time()
+                if left <= 0:
+                    raise TimeoutError
+                await asyncio.wait_for(arrived.wait(), left)
+        finally:
+            ticket.handle = None
+            if mc is not None:
+                for s in subs:
+                    mc.unsubscribe(s)

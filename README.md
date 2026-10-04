@@ -40,7 +40,7 @@ direct messages from any browser that can reach it.
   it only flood through repeaters serving that region. The scope is stored by this app and applied
   to each send, as the MeshCore app does. Scanning with the live camera needs HTTPS; over plain
   HTTP you can scan a photo instead.
-- Honest delivery states: *Queued → Sending → Sent by radio / Acknowledged / No acknowledgement /
+- Honest delivery states: *Queued → Sending → Sent by radio / Delivered / Not confirmed delivered /
   Outcome uncertain / Failed / Expired*. Sends are idempotent, and an interrupted send is never
   re-sent automatically.
 - Durable receive pipeline: the server fetches one message from the radio, commits it to the
@@ -88,6 +88,18 @@ direct messages from any browser that can reach it.
     and channel messages under their name, are archived but hidden, never unread, and silent.
     Unblocking restores them.
   - **Remove contact:** removes it from the radio. The archive keeps the conversation.
+  - **Remote manage** (repeaters and room servers): log in with the node's admin or guest
+    password, then:
+    - read its **Status**;
+    - use its **Command line**;
+    - change its **Settings**: name, radio settings (with the same presets), transmit power, owner
+      info, adverts and advert intervals, position (with a map picker), clock, access list, admin
+      and guest passwords, regions, routing, repeat limits, telemetry, neighbours, reboot, and
+      version. **Change identity key** gives the node a new key with a public-key prefix you
+      choose.
+
+    To save airtime, nothing is fetched until you tap a refresh icon. The page shows what was
+    fetched last and when. Passwords and keys are never stored or logged.
 - Maintenance pause/resume, device information, contacts with full public keys and local aliases,
   and JSON export.
 - Light and dark themes. Layouts for phone, tablet, and desktop.
@@ -687,5 +699,6 @@ deploy/k8s/             Fleet bundle (kustomization) + *.example.yaml templates 
 
 ### Not yet included
 
-Physical-hardware verification of remote node configuration, contact-card import, BLE/serial gateways, Playwright tests in CI, NetworkPolicies, and
+Physical-hardware verification of remote node configuration and of repeater remote
+administration, contact-card import, BLE/serial gateways, Playwright tests in CI, NetworkPolicies, and
 physical-hardware verification of the MeshCore TCP adapter.

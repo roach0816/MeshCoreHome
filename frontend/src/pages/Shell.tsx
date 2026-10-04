@@ -18,6 +18,7 @@ const NodeMap = lazy(() => import("./NodeMap").then((m) => ({ default: m.NodeMap
 import { IconButton } from "../components/ui";
 import { Account } from "./Account";
 import { NodeSettings } from "./NodeSettings";
+import { RemoteManage } from "./RemoteManage";
 import { Updates } from "./Updates";
 
 export function useStatus() {
@@ -103,6 +104,7 @@ export function Shell({ me }: { me: Me }) {
           <Route index element={<EmptyPane />} />
           <Route path="c/:id" element={<Thread status={status.data} />} />
           <Route path="contacts" element={<Contacts />} />
+          <Route path="contacts/:id/manage" element={<RemoteManage />} />
           <Route path="settings" element={<Settings />} />
           <Route path="settings/node" element={<NodeSettings />} />
           <Route path="settings/updates" element={<Updates />} />

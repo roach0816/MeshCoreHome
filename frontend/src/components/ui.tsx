@@ -55,7 +55,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
         {...props}
         className={cx(
           "min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink placeholder:text-muted sm:text-sm",
-          "focus:border-accent focus:outline-none",
+          "focus:border-accent focus:outline-none disabled:bg-surface-2 disabled:text-muted",
           className,
         )}
       />

@@ -63,11 +63,11 @@ export function stateLabel(state: MessageState, kind: "dm" | "channel"): string 
     case "sending":
       return "Sending…";
     case "accepted":
-      return kind === "dm" ? "Sent · awaiting ACK" : "Sent by radio";
+      return kind === "dm" ? "Sent · awaiting delivery" : "Sent by radio";
     case "acknowledged":
-      return "Acknowledged";
+      return "Delivered";
     case "no_ack":
-      return "No acknowledgement";
+      return "Not confirmed delivered";
     case "uncertain":
       return "Outcome uncertain";
     case "failed":

@@ -524,7 +524,8 @@ function Details({ conv, onClose }: { conv: Conversation; onClose: () => void })
         )}
         {conv.kind === "dm" && (
           <p className="text-xs text-muted">
-            "Acknowledged" means the destination radio returned an ACK. It is not a read receipt.
+            "Delivered" means the recipient's radio confirmed it received the message (an ACK). It is not a
+            read receipt.
           </p>
         )}
       </dl>

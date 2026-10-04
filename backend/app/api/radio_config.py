@@ -20,6 +20,7 @@ from app.db import get_db
 from app.models import AuditEvent
 from app.radio.base import PUBLIC_CHANNEL_KEY, NotSupported, RadioError, hashtag_key
 from app.radio.supervisor import supervisor
+from app.services import radio_presets
 
 router = APIRouter(prefix="/api/radio", tags=["radio-config"])
 
@@ -206,6 +207,12 @@ async def _config():
 @router.get("/config")
 async def get_config(ctx: AuthContext = Depends(require_auth)):
     return await _config()
+
+
+@router.get("/presets")
+async def get_presets(ctx: AuthContext = Depends(require_auth)):
+    """MeshCore's suggested radio presets by country/region (see app.services.radio_presets)."""
+    return await radio_presets.catalog.get()
 
 
 @router.put("/config/identity")

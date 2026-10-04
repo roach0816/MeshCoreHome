@@ -12,6 +12,7 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app import db
 from app.config import get_settings
 from app.models import Channel, CollectionGap, Contact, Conversation, Message, Radio, SendAttempt, utcnow
-from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioError
+from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioError, RemoteTicket
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
@@ -37,6 +38,7 @@ HEARTBEAT_SECONDS = 15
 BACKOFF_MAX = 30.0
 SEND_SPACING_SECONDS = 0.5
 COMMAND_TIMEOUT = 20.0
+TXT_CLI_DATA = 1  # MeshCore TxtType.CLI_DATA: a remote node's reply to a CLI command
 
 
 @dataclass
@@ -71,6 +73,8 @@ class RadioSupervisor:
         self._adapter: RadioAdapter | None = None
         self._radio: Radio | None = None
         self._early_acks: dict[str, float] = {}
+        # Remote administration: CLI replies (txt_type 1) go here instead of the chat archive.
+        self.cli_reply_hook: Callable[[str, str], Awaitable[None]] | None = None
         self._stopping = False
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -386,6 +390,22 @@ class RadioSupervisor:
             hub.publish("radio-status-changed", state=self.status.state)
         return result
 
+    # ---- remote administration ------------------------------------------------------------
+    # Sending holds the command lock briefly; the reply crosses the mesh and is awaited outside
+    # it, so normal sending and receiving carry on meanwhile.
+
+    async def remote_send(self, public_key: str, kind: str, arg: str | None = None) -> RemoteTicket:
+        adapter = self._adapter
+        if adapter is None or not self.connected:
+            raise RadioError("radio is not connected")
+        return await self._cmd(adapter.remote_send, public_key, kind, arg, timeout=20)
+
+    async def remote_wait(self, ticket: RemoteTicket, timeout: float):
+        adapter = self._adapter
+        if adapter is None:
+            raise RadioError("radio is not connected")
+        return await adapter.remote_wait(ticket, timeout)
+
     # ---- receive ---------------------------------------------------------------------
 
     async def _on_waiting(self) -> None:
@@ -409,6 +429,13 @@ class RadioSupervisor:
                 await self._persist_incoming(msg)
 
     async def _persist_incoming(self, msg: IncomingMessage) -> None:
+        if msg.kind == "dm" and msg.txt_type == TXT_CLI_DATA and msg.pubkey_prefix and self.cli_reply_hook:
+            # A repeater / room server answering a remote CLI command: not a chat message.
+            try:
+                await self.cli_reply_hook(msg.pubkey_prefix, msg.text)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not handle a remote CLI reply: %s", _safe_error(exc))
+            return
         delay = 1.0
         while True:
             try:
