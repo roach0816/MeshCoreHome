@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.4**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.7.6**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -537,7 +537,7 @@ changed so you can fetch it over HTTP. They do not carry message text.
 | `message-created` | `conversation_id`, `message_id`; for received messages also `direction: "in"`, `kind` (`"dm"`/`"channel"`), `suppressed` (from a blocked contact) | `GET …/messages?after=<last position you have>` |
 | `delivery-updated` | `message_id` and/or `conversation_id` (either may be missing) | Re-read the affected messages to see the new `state`. |
 | `conversations-updated` | — | `GET /api/conversations` |
-| `contacts-updated` | — | `GET /api/contacts` |
+| `contacts-updated` | — | `GET /api/contacts`. Sent after the radio hears an advert or learns a path (at most every 30 s), and after contact changes. |
 | `read-position-updated` | `conversation_id` | That conversation's `read_position` / `unread`. |
 | `radio-status-changed` | `state` | `GET /api/status` |
 | `settings-updated` | — | The settings you care about. |

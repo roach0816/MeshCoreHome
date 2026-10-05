@@ -137,6 +137,9 @@ class RadioAdapter(ABC):
         self.on_ack: AckCallback | None = None
         self.on_messages_waiting: WaitingCallback | None = None
         self.on_disconnect: DisconnectCallback | None = None
+        # The radio heard an advert or learned a path: its contact table (names, positions,
+        # last heard, paths) may have changed.
+        self.on_contacts_changed: WaitingCallback | None = None
 
     @abstractmethod
     async def connect(self) -> None:

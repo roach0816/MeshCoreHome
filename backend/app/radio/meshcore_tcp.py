@@ -93,6 +93,10 @@ class MeshCoreTcpRadio(RadioAdapter):
             if code and self.on_ack:
                 await self.on_ack(code)
 
+        async def _on_contacts_changed(_event):
+            if self.on_contacts_changed:
+                await self.on_contacts_changed()
+
         async def _on_disconnected(event):
             if self.on_disconnect:
                 await self.on_disconnect(str(_payload(event).get("reason", "disconnected")))
@@ -100,6 +104,9 @@ class MeshCoreTcpRadio(RadioAdapter):
         self._subs = [
             mc.subscribe(EventType.MESSAGES_WAITING, _on_waiting),
             mc.subscribe(EventType.ACK, _on_ack),
+            # Adverts from contacts on the radio (including ones it just auto-added) and new paths.
+            mc.subscribe(EventType.ADVERTISEMENT, _on_contacts_changed),
+            mc.subscribe(EventType.PATH_UPDATE, _on_contacts_changed),
             mc.subscribe(EventType.DISCONNECTED, _on_disconnected),
         ]
 
@@ -600,7 +607,14 @@ class MeshCoreTcpRadio(RadioAdapter):
                 return {"ok": False, "admin": False, "permissions": None}
             perms = p.get("permissions")
             return {"ok": True, "admin": bool(p.get("is_admin")), "permissions": perms}
-        if p.get("tag") != ticket.tag:
+        # The library puts the tag in the event attributes (STATUS_RESPONSE has it nowhere else) and
+        # copies it into most payloads. Older firmware pushes status untagged: match its key prefix.
+        attrs = getattr(event, "attributes", None) or {}
+        tag = attrs.get("tag") or p.get("tag")
+        if tag is None and ticket.kind == "status":
+            if str(p.get("pubkey_pre") or attrs.get("pubkey_prefix") or "") != ticket.public_key[:12]:
+                return None
+        elif tag != ticket.tag:
             return None
         if ticket.kind in ("owner", "regions"):
             # Anonymous replies: 4-byte remote timestamp, then UTF-8 text.

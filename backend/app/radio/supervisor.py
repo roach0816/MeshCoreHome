@@ -34,6 +34,10 @@ log = logging.getLogger(__name__)
 OWNERSHIP_LOCK_ID = 0x4D43_5241  # "MCRA" — one radio owner per database
 FALLBACK_FETCH_SECONDS = 60
 CONTACT_REFRESH_SECONDS = 30 * 60
+# After the radio reports an advert or path change: wait for a burst to settle, and re-read the
+# contact table (over the local link, not the air) at most this often.
+CONTACT_PUSH_SETTLE_SECONDS = 3.0
+CONTACT_PUSH_MIN_INTERVAL = 30.0
 HEARTBEAT_SECONDS = 15
 BACKOFF_MAX = 30.0
 SEND_SPACING_SECONDS = 0.5
@@ -69,6 +73,7 @@ class RadioSupervisor:
         self._reload = asyncio.Event()
         self._recv_wake = asyncio.Event()
         self._send_wake = asyncio.Event()
+        self._contacts_dirty = asyncio.Event()
         self._cmd_lock = asyncio.Lock()
         self._adapter: RadioAdapter | None = None
         self._radio: Radio | None = None
@@ -196,6 +201,7 @@ class RadioSupervisor:
             adapter = self._build_adapter(cfg)
             adapter.on_ack = self._on_ack
             adapter.on_messages_waiting = self._on_waiting
+            adapter.on_contacts_changed = self._on_contacts_changed
             disconnected = asyncio.Event()
 
             async def _on_disconnect(reason: str) -> None:
@@ -619,13 +625,27 @@ class RadioSupervisor:
             except Exception as exc:
                 raise RadioError("lost database ownership connection; releasing radio") from exc
 
+    async def _on_contacts_changed(self) -> None:
+        self._contacts_dirty.set()
+
     async def _contact_refresher(self) -> None:
+        """Re-read the contact table soon after the radio reports a change, and every 30 min."""
+        loop = asyncio.get_running_loop()
+        last = loop.time()
         while True:
-            await asyncio.sleep(CONTACT_REFRESH_SECONDS)
+            try:
+                await asyncio.wait_for(self._contacts_dirty.wait(), CONTACT_REFRESH_SECONDS)
+                await asyncio.sleep(
+                    max(CONTACT_PUSH_SETTLE_SECONDS, last + CONTACT_PUSH_MIN_INTERVAL - loop.time())
+                )
+            except TimeoutError:
+                pass
+            self._contacts_dirty.clear()
             try:
                 await self.refresh_contacts()
-            except RadioError as exc:
-                log.info("periodic contact refresh failed: %s", exc)
+            except (RadioError, TimeoutError) as exc:
+                log.info("contact refresh failed: %s", exc)
+            last = loop.time()
 
     async def _open_gap(self, reason: str) -> None:
         try:

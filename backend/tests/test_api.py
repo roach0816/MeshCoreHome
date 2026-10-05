@@ -573,3 +573,25 @@ async def test_notification_settings_and_sound_override(client):
     assert (await client.get(f"/api/conversations/{cid}")).json()["sound"] == "off"
     await client.patch(f"/api/conversations/{cid}", headers=csrf(client), json={"sound": "default"})
     assert (await client.get(f"/api/conversations/{cid}")).json()["sound"] is None
+
+
+async def test_contacts_follow_radio_advert_pushes(client, monkeypatch):
+    """A new contact on the radio shows up after its advert push, without a manual refresh."""
+    from app.radio import simulated
+    from app.radio import supervisor as sup_module
+    from app.radio.base import RadioContact
+
+    monkeypatch.setattr(sup_module, "CONTACT_PUSH_SETTLE_SECONDS", 0.1)
+    monkeypatch.setattr(sup_module, "CONTACT_PUSH_MIN_INTERVAL", 0.1)
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+    newcomer = RadioContact(public_key=simulated._key("newcomer"), name="Newcomer (sim)", kind=1)
+    monkeypatch.setattr(simulated, "SIM_CONTACTS", [*simulated.SIM_CONTACTS, newcomer])
+    await supervisor.adapter.on_contacts_changed()
+
+    async def listed():
+        page = (await client.get("/api/contacts", params={"q": "Newcomer"})).json()
+        return page["total"] == 1
+
+    await wait_for(listed)
