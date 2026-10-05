@@ -70,6 +70,12 @@ function ago(iso: string | undefined, now: number): string {
   return `Fetched ${Math.round(s / 86400)} d ago`;
 }
 
+/** Estimated charge of a Li-ion cell from its voltage (mV): linear from 3.0 V (0%) to 4.2 V (100%),
+ * rounded down, which matches the MeshCore app (4.10 V shows as 91%). */
+export function batteryPercent(mV: number): number {
+  return Math.max(0, Math.min(100, Math.floor(((mV - 3000) / 1200) * 100)));
+}
+
 function duration(secs: number): string {
   const d = Math.floor(secs / 86400);
   const h = Math.floor((secs % 86400) / 3600);
@@ -439,7 +445,7 @@ function StatusTab({ id, state }: { id: string; state: RemoteState }) {
       {d ? (
         <>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <Metric label="Battery" value={`${(d.bat / 1000).toFixed(2)} V`} />
+            <Metric label="Battery" value={`${batteryPercent(d.bat)}% / ${(d.bat / 1000).toFixed(2)} V`} />
             <Metric label="Uptime" value={duration(d.uptime)} />
             <Metric label="Queue" value={d.tx_queue_len} />
             <Metric label="Last RSSI" value={`${d.last_rssi} dBm`} />
