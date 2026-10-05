@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -585,3 +585,134 @@ async def export_archive(ctx: AuthContext = Depends(require_auth), db: AsyncSess
     return JSONResponse(
         payload, headers={"Content-Disposition": f'attachment; filename="meshcore-home-export-{stamp}.json"'}
     )
+
+
+# ---- one message: details, sender, paths, delete ----------------------------------------
+
+DIRECT_ROUTE = 255  # path_len of a message that arrived on a known (direct) route
+
+
+def _contact_brief(c: Contact) -> dict[str, Any]:
+    return {
+        "id": str(c.id),
+        "name": c.name,
+        "alias": c.alias,
+        "public_key": c.public_key,
+        "kind": c.kind,
+        "last_advert_at": c.last_advert_at,
+        "on_radio": c.on_radio,
+        "favorite": c.favorite,
+        "blocked": c.blocked,
+    }
+
+
+@router.get("/messages/{message_id}/info")
+async def message_info(
+    message_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+):
+    m = await db.get(Message, message_id)
+    if m is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    conv = await db.get(Conversation, m.conversation_id)
+    meta = m.meta or {}
+
+    # Sender: the DM's contact, or for a channel the one contact whose advertised name matches the
+    # label (names are self-chosen and not verified, so several or none may match).
+    contact: Contact | None = None
+    match = None
+    if m.direction == "in":
+        if conv.kind == "dm" and conv.contact_id:
+            contact, match = await db.get(Contact, conv.contact_id), "key"
+        elif conv.kind == "channel" and m.sender_label:
+            named = (
+                (
+                    await db.execute(
+                        select(Contact)
+                        .where(Contact.radio_id == conv.radio_id, Contact.name == m.sender_label)
+                        .limit(2)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if len(named) == 1:
+                contact, match = named[0], "name"
+
+    # What the radio reported with the message; gaps are filled from the first copy it heard.
+    paths = [p for p in meta.get("paths") or [] if isinstance(p, dict)]
+    first = paths[0] if paths else {}
+    hops = meta.get("path_len")
+    hash_mode = meta.get("path_hash_mode")
+    if hops is None and first:
+        hops = DIRECT_ROUTE if first.get("route") == "direct" else len(first.get("hops") or [])
+    hash_size = hash_mode + 1 if isinstance(hash_mode, int) and hash_mode >= 0 else first.get("hash_size")
+    received = {
+        "snr": meta.get("SNR", first.get("snr")),
+        "rssi": meta.get("RSSI", first.get("rssi")),
+        "route": None if hops is None else ("direct" if hops == DIRECT_ROUTE else "flood"),
+        "hops": None if hops in (None, DIRECT_ROUTE) else hops,
+        "path_hash_size": hash_size if hops != DIRECT_ROUTE else None,
+    }
+
+    # Hop hashes are prefixes of repeaters' public keys: name them from the contact list.
+    prefixes = {h.lower() for p in paths for h in p.get("hops") or [] if isinstance(h, str)}
+    names: dict[str, list[str]] = {x: [] for x in prefixes}
+    if prefixes:
+        rows = await db.execute(
+            select(Contact.public_key, Contact.alias, Contact.name, Contact.kind).where(
+                Contact.radio_id == conv.radio_id, or_(*(Contact.public_key.startswith(x) for x in prefixes))
+            )
+        )
+        for key, alias, name, _kind in sorted(rows, key=lambda r: r[3] not in (2, 3)):  # repeaters first
+            for x in prefixes:
+                if key.startswith(x):
+                    names[x].append(alias or name)
+    return {
+        "message": MessageOut.model_validate(m),
+        "conversation_kind": conv.kind,
+        "sender": {
+            "label": m.sender_label,
+            "key_prefix": m.sender_key_prefix,
+            "contact": _contact_brief(contact) if contact else None,
+            "match": match,
+        },
+        "received": received,
+        "paths": [
+            {
+                "hops": [{"hash": h, "names": names.get(h.lower(), [])} for h in p.get("hops") or []],
+                "hash_size": p.get("hash_size"),
+                "route": p.get("route"),
+                "snr": p.get("snr"),
+                "rssi": p.get("rssi"),
+            }
+            for p in paths
+        ],
+    }
+
+
+@router.delete("/messages/{message_id}", status_code=204)
+async def delete_message(
+    message_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+):
+    """Remove one message from this archive. Nothing is transmitted and the radio is unchanged."""
+    m = await db.get(Message, message_id, with_for_update=True)
+    if m is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if m.direction == "out" and m.state in (States.QUEUED, States.SENDING):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This message is still being sent; delete it once it has gone out"
+        )
+    conv = await db.get(Conversation, m.conversation_id, with_for_update=True)
+    await db.delete(m)
+    await db.flush()
+    conv.last_message_at = (
+        await db.execute(
+            select(func.max(Message.created_at)).where(
+                Message.conversation_id == conv.id, Message.suppressed.is_(False)
+            )
+        )
+    ).scalar()
+    db.add(AuditEvent(kind="message.deleted", detail={"conversation": str(conv.id)}))
+    await db.commit()
+    hub.publish("conversations-updated")
+    hub.publish("delivery-updated", conversation_id=str(conv.id))

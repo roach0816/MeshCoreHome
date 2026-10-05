@@ -22,12 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app import db
 from app.config import get_settings
 from app.models import Channel, CollectionGap, Contact, Conversation, Message, Radio, SendAttempt, utcnow
+from app.radio import packets
 from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioError, RemoteTicket
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
 from app.services import app_settings, bot, messaging, radio_hat
 from app.services.messaging import States
+from app.services.msg_paths import PathTracker
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +83,9 @@ class RadioSupervisor:
         # Remote administration: CLI replies (txt_type 1) go here instead of the chat archive.
         self.cli_reply_hook: Callable[[str, str], Awaitable[None]] | None = None
         self._bot_tasks: set[asyncio.Task] = set()
+        # Message paths from the radio's raw packet log (see services/msg_paths.py).
+        self._paths = PathTracker()
+        self._channel_hashes: dict[int, int] = {}  # slot -> 1-byte channel hash (never the key)
         self._stopping = False
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -203,6 +208,7 @@ class RadioSupervisor:
             adapter.on_ack = self._on_ack
             adapter.on_messages_waiting = self._on_waiting
             adapter.on_contacts_changed = self._on_contacts_changed
+            adapter.on_rx_packet = self._on_rx_packet
             disconnected = asyncio.Event()
 
             async def _on_disconnect(reason: str) -> None:
@@ -295,6 +301,7 @@ class RadioSupervisor:
         await self._cmd(adapter.sync_clock, int(time.time()))
         contacts = await self._cmd(adapter.get_contacts)
         channels = await self._cmd(adapter.get_channels)
+        self._remember_channels(channels)
         async with db.session_factory()() as s:
             radio = await messaging.upsert_radio(s, snap)
             await messaging.sync_contacts(s, radio, contacts)
@@ -386,6 +393,7 @@ class RadioSupervisor:
             # Refresh what the archive knows: device name/location/RF and channel generations.
             snap = await self._cmd(adapter.get_device_snapshot)
             channels = await self._cmd(adapter.get_channels)
+            self._remember_channels(channels)
             async with db.session_factory()() as s:
                 radio = await messaging.upsert_radio(s, snap)
                 await messaging.sync_channels(s, radio, channels, await app_settings.get_fingerprint_key(s))
@@ -435,6 +443,44 @@ class RadioSupervisor:
                 # Do not fetch the next message until this one is committed.
                 await self._persist_incoming(msg)
 
+    def _remember_channels(self, channels: list[RadioChannel]) -> None:
+        self._channel_hashes = {c.slot: packets.channel_hash(c.secret) for c in channels if c.secret}
+
+    async def _on_rx_packet(self, raw: bytes, snr: float | None, rssi: float | None) -> None:
+        packet = packets.parse(raw)
+        if packet is None:
+            return
+        copy = self._paths.heard(packet, snr, rssi)
+        if copy is None:
+            return
+        message_id, entry = copy
+        try:
+            async with db.session_factory()() as s:
+                m = await s.get(Message, message_id, with_for_update=True)
+                if m is None:
+                    return
+                m.meta = {**(m.meta or {}), "paths": [*(m.meta or {}).get("paths", []), entry]}
+                await s.commit()
+                conv_id = m.conversation_id
+            hub.publish("delivery-updated", message_id=str(message_id), conversation_id=str(conv_id))
+        except Exception as exc:  # noqa: BLE001 - paths are a nicety; never disturb collection
+            log.info("could not record a message path: %s", _safe_error(exc))
+
+    def _claim_paths(self, msg: IncomingMessage) -> str | None:
+        """Attach the routes this message was heard on (msg.meta["paths"]); returns the packet key."""
+        own = self._radio.public_key if self._radio else ""
+        if msg.kind == "channel" and msg.channel_slot is not None:
+            key, entries = self._paths.claim(channel_hash=self._channel_hashes.get(int(msg.channel_slot)))
+        elif msg.kind == "dm" and msg.pubkey_prefix:
+            key, entries = self._paths.claim(
+                sender_hash=int(msg.pubkey_prefix[:2], 16), self_hash=int(own[:2], 16) if own else None
+            )
+        else:
+            return None
+        if entries:
+            msg.meta = {**(msg.meta or {}), "paths": entries}
+        return key
+
     async def _persist_incoming(self, msg: IncomingMessage) -> None:
         if msg.kind == "dm" and msg.txt_type == TXT_CLI_DATA and msg.pubkey_prefix and self.cli_reply_hook:
             # A repeater / room server answering a remote CLI command: not a chat message.
@@ -443,6 +489,7 @@ class RadioSupervisor:
             except Exception as exc:  # noqa: BLE001
                 log.warning("could not handle a remote CLI reply: %s", _safe_error(exc))
             return
+        path_key = self._claim_paths(msg)
         delay = 1.0
         while True:
             try:
@@ -450,6 +497,8 @@ class RadioSupervisor:
                     radio = await s.get(Radio, self._radio.id)
                     m, created = await messaging.ingest_incoming(s, radio, msg)
                     await s.commit()
+                if path_key and created:
+                    self._paths.follow(path_key, m.id, len((msg.meta or {}).get("paths", [])))
                 if self.status.storage_warning:
                     self.status.storage_warning = None
                     hub.publish("radio-status-changed", state=self.status.state)

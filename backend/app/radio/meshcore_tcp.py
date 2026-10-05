@@ -97,6 +97,15 @@ class MeshCoreTcpRadio(RadioAdapter):
             if self.on_contacts_changed:
                 await self.on_contacts_changed()
 
+        async def _on_rx_log(event):
+            p = _payload(event)
+            if self.on_rx_packet and isinstance(p.get("payload"), str):
+                try:
+                    raw = bytes.fromhex(p["payload"])
+                except ValueError:
+                    return
+                await self.on_rx_packet(raw, p.get("snr"), p.get("rssi"))
+
         async def _on_disconnected(event):
             if self.on_disconnect:
                 await self.on_disconnect(str(_payload(event).get("reason", "disconnected")))
@@ -107,6 +116,8 @@ class MeshCoreTcpRadio(RadioAdapter):
             # Adverts from contacts on the radio (including ones it just auto-added) and new paths.
             mc.subscribe(EventType.ADVERTISEMENT, _on_contacts_changed),
             mc.subscribe(EventType.PATH_UPDATE, _on_contacts_changed),
+            # Raw packets heard (before repeats are dropped): the routes messages took.
+            mc.subscribe(EventType.RX_LOG_DATA, _on_rx_log),
             mc.subscribe(EventType.DISCONNECTED, _on_disconnected),
         ]
 

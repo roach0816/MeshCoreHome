@@ -12,7 +12,7 @@ import random
 import time
 from collections import deque
 
-from app.radio import sim_repeater
+from app.radio import packets, sim_repeater
 from app.radio.base import (
     DeviceSnapshot,
     IncomingMessage,
@@ -393,9 +393,38 @@ class SimulatedRadio(RadioAdapter):
     # ---- simulation helpers -------------------------------------------------
 
     def inject(self, msg: IncomingMessage) -> None:
+        if self.on_rx_packet and msg.txt_type == 0 and (msg.kind == "channel" or msg.pubkey_prefix):
+            # Like a real radio: the packet is logged as heard first, then the message is handed over.
+            self._spawn(self._heard_then_queue(msg))
+            return
         self._queue.append(msg)
         if self.on_messages_waiting:
             self._spawn(self.on_messages_waiting())
+
+    async def _heard_then_queue(self, msg: IncomingMessage) -> None:
+        roof, hill = bytes.fromhex(_key("roof")[:2]), bytes.fromhex(_key("hilltop")[:2])
+        if msg.kind == "channel":
+            ch = sim_state()["channels"].get(int(msg.channel_slot or 0))
+            first = packets.channel_hash(ch[1]) if ch else 0
+            ptype, payload = packets.TYPE_GRP_TXT, bytes([first]) + self._rng.randbytes(18)
+        else:
+            ptype = packets.TYPE_TXT_MSG
+            payload = bytes(
+                [int(SIM_SELF_KEY[:2], 16), int(msg.pubkey_prefix[:2], 16)]
+            ) + self._rng.randbytes(18)
+        routes = [[roof], [hill, roof], [hill]]
+        self._rng.shuffle(routes)
+        snr = lambda: round(self._rng.uniform(-6, 11) * 4) / 4  # noqa: E731 - quarter-dB steps, like the radio
+        await self.on_rx_packet(packets.build(ptype, payload, routes[0]), snr(), self._rng.randint(-115, -70))
+        self._queue.append(msg)
+        if self.on_messages_waiting:
+            await self.on_messages_waiting()
+        if self._rng.random() < 0.6:  # often heard again through another repeater
+            await asyncio.sleep(self._rng.uniform(0.3, 1.5))
+            if self._connected and self.on_rx_packet:
+                await self.on_rx_packet(
+                    packets.build(ptype, payload, routes[1]), snr(), self._rng.randint(-115, -70)
+                )
 
     def random_message(self) -> IncomingMessage:
         now = int(time.time())

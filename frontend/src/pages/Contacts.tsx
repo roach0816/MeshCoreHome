@@ -55,6 +55,8 @@ const SHOW_LABEL: Record<Show, string> = {
   blocked: "Blocked",
   removed: "Removed from radio",
 };
+// Shorter labels for phones and tablets, where the full ones do not fit on one line.
+const SHOW_SHORT: Partial<Record<Show, string>> = { favorites: "Favs", removed: "Removed" };
 
 /** Time if heard today, otherwise the date. */
 function lastHeard(iso: string | null): string {
@@ -62,11 +64,10 @@ function lastHeard(iso: string | null): string {
   const d = new Date(iso);
   const now = new Date();
   if (sameDay(d, now)) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return d.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: d.getFullYear() === now.getFullYear() ? undefined : "numeric",
-  });
+  // Short enough for the phone column: "Oct 6" this year, "7/12/25" (locale order) before that.
+  // The full date and time are in the tooltip.
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
 }
 
 function useDebounced<T>(value: T, ms = 250): T {
@@ -186,13 +187,21 @@ export function Contacts() {
               key={s}
               role="tab"
               aria-selected={show === s}
+              aria-label={SHOW_LABEL[s]}
               onClick={() => setShow(s)}
               className={cx(
                 "min-h-8 shrink-0 rounded-full px-3 text-xs font-medium transition-colors",
                 show === s ? "bg-ink text-bg" : "bg-surface-2 text-muted hover:text-ink",
               )}
             >
-              {SHOW_LABEL[s]}
+              {SHOW_SHORT[s] ? (
+                <>
+                  <span className="lg:hidden">{SHOW_SHORT[s]}</span>
+                  <span className="hidden lg:inline">{SHOW_LABEL[s]}</span>
+                </>
+              ) : (
+                SHOW_LABEL[s]
+              )}
             </button>
           ))}
         </div>
@@ -213,7 +222,7 @@ export function Contacts() {
       </div>
 
       {/* Table */}
-      <div className="relative min-h-0 flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <ErrorText error={list.error} />
         <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
@@ -255,7 +264,7 @@ export function Contacts() {
                 }}
                 className="group cursor-pointer select-none border-b border-line [-webkit-touch-callout:none] hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
               >
-                <td className="px-3 py-2.5 md:px-4">
+                <td className="overflow-hidden px-3 py-2.5 md:px-4">
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span className={cx("truncate font-medium", c.blocked && "text-muted line-through")}>
                       {c.alias || c.name || "Unnamed"}
@@ -271,7 +280,7 @@ export function Contacts() {
                   <span className="sm:hidden">{kindLabel(c.kind).replace("Room server", "Room")}</span>
                   <span className="hidden sm:inline">{kindLabel(c.kind)}</span>
                 </td>
-                <td className="whitespace-nowrap px-2 py-2.5 text-muted">
+                <td className="truncate px-2 py-2.5 text-muted">
                   <time dateTime={c.last_advert_at ?? undefined} title={formatDateTime(c.last_advert_at)}>
                     {lastHeard(c.last_advert_at)}
                   </time>

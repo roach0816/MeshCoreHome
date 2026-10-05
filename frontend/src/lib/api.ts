@@ -482,3 +482,39 @@ export interface RemoteState {
   console: { at: string; dir: "out" | "in" | "note"; text: string }[];
 }
 
+
+// ---- one message: details, sender, paths ----------------------------------------------
+
+export interface ContactBrief {
+  id: string;
+  name: string;
+  alias: string | null;
+  public_key: string;
+  kind: number;
+  last_advert_at: string | null;
+  on_radio: boolean;
+  favorite: boolean;
+  blocked: boolean;
+}
+
+export interface MessagePath {
+  hops: { hash: string; names: string[] }[];
+  hash_size: number | null;
+  route: "flood" | "direct" | null;
+  snr: number | null;
+  rssi: number | null;
+}
+
+export interface MessageInfo {
+  message: Message;
+  conversation_kind: "dm" | "channel";
+  sender: { label: string | null; key_prefix: string | null; contact: ContactBrief | null; match: "key" | "name" | null };
+  received: {
+    snr: number | null;
+    rssi: number | null;
+    route: "flood" | "direct" | null;
+    hops: number | null;
+    path_hash_size: number | null;
+  };
+  paths: MessagePath[];
+}

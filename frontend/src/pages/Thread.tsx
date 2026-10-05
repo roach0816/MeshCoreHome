@@ -18,6 +18,8 @@ import {
 } from "../lib/util";
 import { useConversations } from "../components/ConversationList";
 import { Badge, IconButton } from "../components/ui";
+import { useMessageActions } from "../components/MessageActions";
+import { useContextTrigger } from "../components/useContextTrigger";
 import { EmojiButton } from "../components/EmojiPicker";
 
 const PAGE = 50;
@@ -50,6 +52,7 @@ function ThreadView({ conv, status }: { conv: Conversation; status?: Status }) {
   const didInitialScroll = useRef(false);
   const [showJump, setShowJump] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const messageActions = useMessageActions(conv);
   // Unread boundary is fixed when the thread opens, so it doesn't jump as messages are marked read.
   const [boundary] = useState(conv.read_position);
 
@@ -217,36 +220,47 @@ function ThreadView({ conv, status }: { conv: Conversation; status?: Status }) {
                 {conv.kind === "channel" ? "Messages heard on this channel will appear here." : "Say hello."}
               </p>
             )}
-            <ol className="space-y-1">
-              {items.map((m, i) => {
-                const prev = items[i - 1];
-                const newDay = !prev || !sameDay(new Date(prev.created_at), new Date(m.created_at));
-                const grouped =
-                  !!prev &&
-                  !newDay &&
-                  prev.direction === m.direction &&
-                  prev.sender_label === m.sender_label &&
-                  new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
-                return (
-                  <Fragment key={m.id}>
-                    {newDay && (
-                      <li className="sticky top-0 z-10 flex justify-center py-2" aria-label={formatDayHeading(m.created_at)}>
-                        <span className="rounded-full border border-line bg-surface/95 px-3 py-0.5 text-[11px] font-medium text-muted backdrop-blur">
-                          {formatDayHeading(m.created_at)}
-                        </span>
-                      </li>
-                    )}
-                    {firstUnread?.id === m.id && (
-                      <li data-unread-marker className="flex items-center gap-3 py-2" aria-label="New messages">
-                        <span className="h-px flex-1 bg-accent/50" />
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-accent">New</span>
-                        <span className="h-px flex-1 bg-accent/50" />
-                      </li>
-                    )}
-                    <Bubble m={m} conv={conv} grouped={grouped} online={online} />
-                  </Fragment>
-                );
-              })}
+            {/* One section per day, each with its own sticky date: the next day's date pushes the
+                previous one away instead of stacking on top of it. */}
+            <ol>
+              {days(items).map((day) => (
+                <li key={day.key} aria-label={day.label}>
+                  <div className="sticky top-0 z-10 flex justify-center py-2" aria-hidden>
+                    <span className="rounded-full border border-line bg-surface px-3 py-0.5 text-[11px] font-medium text-muted shadow-sm">
+                      {day.label}
+                    </span>
+                  </div>
+                  <ol className="space-y-1">
+                    {day.indexes.map((i) => {
+                      const m = items[i];
+                      const prev = i > day.indexes[0] ? items[i - 1] : undefined;
+                      const grouped =
+                        !!prev &&
+                        prev.direction === m.direction &&
+                        prev.sender_label === m.sender_label &&
+                        new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
+                      return (
+                        <Fragment key={m.id}>
+                          {firstUnread?.id === m.id && (
+                            <li data-unread-marker className="flex items-center gap-3 py-2" aria-label="New messages">
+                              <span className="h-px flex-1 bg-accent/50" />
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-accent">New</span>
+                              <span className="h-px flex-1 bg-accent/50" />
+                            </li>
+                          )}
+                          <Bubble
+                            m={m}
+                            conv={conv}
+                            grouped={grouped}
+                            online={online}
+                            onMenu={(x, y) => messageActions.openMenu(m, x, y)}
+                          />
+                        </Fragment>
+                      );
+                    })}
+                  </ol>
+                </li>
+              ))}
             </ol>
           </div>
         </div>
@@ -262,13 +276,41 @@ function ThreadView({ conv, status }: { conv: Conversation; status?: Status }) {
 
         <Composer conv={conv} online={online} onSent={() => scrollToBottom()} />
       </section>
+      {messageActions.element}
       {showDetails && <Details conv={conv} onClose={() => setShowDetails(false)} />}
     </div>
   );
 }
 
-function Bubble({ m, conv, grouped, online }: { m: Message; conv: Conversation; grouped: boolean; online: boolean }) {
+/** Messages split into calendar days (local time), as positions in the list. */
+function days(items: Message[]) {
+  const out: { key: string; label: string; indexes: number[] }[] = [];
+  items.forEach((m, i) => {
+    const prev = items[i - 1];
+    if (!prev || !sameDay(new Date(prev.created_at), new Date(m.created_at))) {
+      out.push({ key: m.id, label: formatDayHeading(m.created_at), indexes: [] });
+    }
+    out[out.length - 1].indexes.push(i);
+  });
+  return out;
+}
+
+function Bubble({
+  m,
+  conv,
+  grouped,
+  online,
+  onMenu,
+}: {
+  m: Message;
+  conv: Conversation;
+  grouped: boolean;
+  online: boolean;
+  onMenu: (x: number, y: number) => void;
+}) {
   const qc = useQueryClient();
+  // Right-click, long-press or the keyboard menu key: message actions.
+  const trigger = useContextTrigger()(onMenu);
   const [open, setOpen] = useState(false);
   const out = m.direction === "out";
   const retryable = out && ["failed", "uncertain", "no_ack", "expired"].includes(m.state);
@@ -293,6 +335,8 @@ function Bubble({ m, conv, grouped, online }: { m: Message; conv: Conversation; 
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-haspopup="menu"
+        {...trigger}
         className={cx(
           "max-w-[85%] rounded-2xl px-3.5 py-2 text-left text-[15px] leading-snug sm:max-w-[75%]",
           out ? "bg-bubble-out text-bubble-out-fg" : "border border-line bg-bubble-in text-ink",

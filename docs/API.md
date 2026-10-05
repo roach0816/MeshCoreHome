@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.11**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.7.12**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -377,6 +377,35 @@ Errors to handle:
 | 409 | The radio is offline, the conversation's sender is not a known contact, or `client_message_id` was used for a different message. |
 | 422 | Empty body, or too many bytes (`detail` gives the size and the limit). |
 | 429 | More than 20 sends per minute (shared with the owner's own sending). |
+
+#### `GET /api/messages/{message_id}/info` — read
+
+One message with what is known about its delivery and sender:
+
+```json
+{
+  "message": { "...": "same shape as above" },
+  "conversation_kind": "channel",
+  "sender": {"label": "Alice", "key_prefix": null, "contact": {"id": "…", "name": "Alice", "public_key": "…", "kind": 1, "...": "…"}, "match": "name"},
+  "received": {"snr": 6.5, "rssi": -88, "route": "flood", "hops": 2, "path_hash_size": 1},
+  "paths": [
+    {"hops": [{"hash": "eb", "names": ["Hilltop"]}, {"hash": "92", "names": ["Roof"]}], "hash_size": 1, "route": "flood", "snr": 8.75, "rssi": -102}
+  ]
+}
+```
+
+- `sender.contact` is the DM's contact. For a channel message it is the one contact whose
+  advertised name equals the label (`match: "name"`; names are not verified). `null` when there
+  is none.
+- `paths` lists each copy of the message the radio heard, with its route, first repeater first.
+  `names` are contacts whose key starts with the hop's hash; there may be none or several. Paths
+  are only recorded while MeshCore Home is connected.
+- `received.route` is `"direct"` when the message followed a known route; `hops` is then `null`.
+
+#### `DELETE /api/messages/{message_id}` — write
+
+Removes one message from this archive. Nothing is transmitted and the radio is unchanged. `409`
+while an outgoing message is still `queued` or `sending`. Returns `204`.
 
 #### `POST /api/messages/{message_id}/retry` — write
 

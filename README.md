@@ -89,6 +89,14 @@ direct messages from any browser that can reach it.
 - **Notification sounds:** a chime for new incoming messages while the app is open in a browser tab.
   The global setting is *All messages*, *Direct messages only*, or *Off*, and you can override it per
   conversation from the right-click menu.
+- **Message menu:** right-click or long-press a message for:
+  - **Message details:** when it was sent and received, hops, path hash size, SNR and RSSI.
+  - **Sender info:** the sender's contact. For channels this is matched by name, which isn't verified.
+  - **View message paths:** the route of every copy your radio heard, with the repeaters named from
+    your contacts. Paths are recorded from the radio's packet log while MeshCore Home is
+    connected.
+  - **Copy text**, **Block sender**, and **Delete**. Delete removes the message from the archive
+    only.
 - **Contacts:** a compact, searchable list (name, device type, last heard) with type and status
   filters, sorting, and pagination (10/25/50 per page). Click a person to open your conversation
   with them, or a repeater or room server to manage it remotely. Right-click or long-press a
