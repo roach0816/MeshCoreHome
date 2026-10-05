@@ -16,7 +16,7 @@ spec:
       terminationGracePeriodSeconds: 60
       securityContext:
         # The official image's postgres user. The NFS directory must be owned by 999:999
-        # (see README); a root init container cannot chown through NFS root-squash.
+        # (see docs/install-kubernetes.md); a root init container cannot chown through NFS root-squash.
         runAsUser: 999
         runAsGroup: 999
         runAsNonRoot: true

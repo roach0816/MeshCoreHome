@@ -218,7 +218,7 @@ def check_app(r: Report, env: dict[str, str], snap: dict | None) -> dict[str, st
             BAD,
             "Version",
             "not installed",
-            'Install it with install.sh (see the README, "Raspberry Pi / Debian").',
+            'Install it with install.sh (see the README, "Raspberry Pi or Debian").',
         )
 
     svc = systemd(

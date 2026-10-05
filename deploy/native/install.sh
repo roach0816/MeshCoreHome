@@ -1732,7 +1732,7 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up â
     if (((i + 1) % 3 == 0)); then note_row "$line"; line=""; fi
   done
   [[ -n $line ]] && note_row "$line"
-  note "${D}Not listed? See the README, \"My DNS provider isn't listed\", for delegating validation with one CNAME record.${N}"
+  note "${D}Not listed? See docs/install-native.md, \"My DNS provider isn't listed\", for delegating validation with one CNAME record.${N}"
   local choice="" pick
   err=""
   while true; do
