@@ -493,6 +493,37 @@ async def test_contacts_search_filter_paginate(client):
     assert (await client.get("/api/contacts?page_size=7")).status_code == 422
 
 
+async def test_contacts_sort_direction_and_favorites_first(client):
+    from app.radio import simulated
+
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+
+    async def names(**params):
+        page = (await client.get("/api/contacts", params={"page_size": 10, **params})).json()
+        return [(c["alias"] or c["name"]).lower() for c in page["items"]], page["items"]
+
+    asc, _ = await names(sort="name")
+    desc, _ = await names(sort="name", order="desc")
+    assert asc == sorted(asc) and desc == list(reversed(asc))
+    _, oldest = await names(sort="last_heard", order="asc")
+    heard = [c["last_advert_at"] for c in oldest if c["last_advert_at"]]
+    assert heard == sorted(heard)
+    _, by_kind = await names(sort="kind", order="desc")
+    assert [c["kind"] for c in by_kind] == sorted((c["kind"] for c in by_kind), reverse=True)
+
+    hiker = next(c for c in oldest if c["name"].startswith("Hiker"))
+    r = await client.post(
+        f"/api/contacts/{hiker['id']}/favorite", headers=csrf(client), json={"favorite": True}
+    )
+    assert r.status_code == 200
+    first, _ = await names(sort="name", favorites_first="true")
+    assert first[0].startswith("hiker") and first[1:] == [n for n in asc if not n.startswith("hiker")]
+    plain, _ = await names(sort="name")
+    assert plain == asc
+
+
 async def test_contact_actions_and_block(client):
     from app.radio import simulated
 

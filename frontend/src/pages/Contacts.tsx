@@ -34,6 +34,23 @@ const KIND: Record<number, string> = { 1: "Companion", 2: "Repeater", 3: "Room s
 const kindLabel = (k: number) => KIND[k] ?? `Type ${k}`;
 const PAGE_SIZES = [10, 25, 50] as const;
 type Show = "all" | "favorites" | "blocked" | "removed";
+type SortKey = "name" | "kind" | "last_heard";
+type Dir = "asc" | "desc";
+// The direction a column starts in when first clicked: newest first for "last heard", A→Z otherwise.
+const FIRST_DIR: Record<SortKey, Dir> = { name: "asc", kind: "asc", last_heard: "desc" };
+const PREFS_KEY = "mch.contacts.sort";
+
+type SortPrefs = { sort: SortKey; dir: Dir; favoritesFirst: boolean };
+function loadSortPrefs(): SortPrefs {
+  const fallback: SortPrefs = { sort: "last_heard", dir: "desc", favoritesFirst: true };
+  try {
+    const v = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+    if (v && v.sort in FIRST_DIR && (v.dir === "asc" || v.dir === "desc")) return { ...fallback, ...v, favoritesFirst: v.favoritesFirst !== false };
+  } catch {
+    // unavailable or unreadable storage: use the defaults
+  }
+  return fallback;
+}
 const SHOW_LABEL: Record<Show, string> = {
   all: "All",
   favorites: "Favorites",
@@ -69,15 +86,33 @@ export function Contacts() {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<string>("");
   const [show, setShow] = useState<Show>("all");
-  const [sort, setSort] = useState<"last_heard" | "name">("last_heard");
+  const [prefs, setPrefs] = useState<SortPrefs>(loadSortPrefs);
+  const { sort, dir, favoritesFirst } = prefs;
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch {
+      // not remembered; fine
+    }
+  }, [prefs]);
+  // Clicking the active column flips its direction; another column starts in its natural one.
+  const sortBy = (key: SortKey) =>
+    setPrefs((p) => ({ ...p, sort: key, dir: p.sort === key ? (p.dir === "asc" ? "desc" : "asc") : FIRST_DIR[key] }));
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(25);
   const [page, setPage] = useState(1);
   const query = useDebounced(q.trim());
 
   // Any filter change returns to the first page.
-  useEffect(() => setPage(1), [query, kind, show, sort, pageSize]);
+  useEffect(() => setPage(1), [query, kind, show, sort, dir, favoritesFirst, pageSize]);
 
-  const params = new URLSearchParams({ show, sort, page: String(page), page_size: String(pageSize) });
+  const params = new URLSearchParams({
+    show,
+    sort,
+    order: dir,
+    favorites_first: String(favoritesFirst && show !== "favorites"),
+    page: String(page),
+    page_size: String(pageSize),
+  });
   if (query) params.set("q", query);
   if (kind) params.set("kind", kind);
   const list = useQuery({
@@ -155,7 +190,8 @@ export function Contacts() {
             ))}
           </select>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto" role="tablist" aria-label="Show contacts">
+        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto" role="tablist" aria-label="Show contacts">
           {(["all", "favorites", "blocked", "removed"] as Show[]).map((s) => (
             <button
               key={s}
@@ -171,6 +207,20 @@ export function Contacts() {
             </button>
           ))}
         </div>
+          <label className="flex min-h-8 shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted hover:text-ink">
+            <input
+              type="checkbox"
+              checked={favoritesFirst}
+              onChange={(e) => setPrefs((p) => ({ ...p, favoritesFirst: e.target.checked }))}
+              className="size-4 accent-[var(--accent)]"
+            />
+            <Star className="size-3.5 fill-current text-warn" aria-hidden />
+            <span>
+              <span className="sm:hidden">First</span>
+              <span className="hidden sm:inline">Favorites first</span>
+            </span>
+          </label>
+        </div>
       </div>
 
       {/* Table */}
@@ -185,12 +235,19 @@ export function Contacts() {
           </colgroup>
           <thead className="sticky top-0 z-10 bg-bg/95 text-left text-xs text-muted backdrop-blur">
             <tr className="border-b border-line">
-              <SortHeader label="Name" active={sort === "name"} onClick={() => setSort("name")} />
-              <th scope="col" className="px-2 py-2 font-medium">
-                <span className="sm:hidden">Type</span>
-                <span className="hidden sm:inline">Device type</span>
-              </th>
-              <SortHeader label="Last heard" active={sort === "last_heard"} onClick={() => setSort("last_heard")} desc />
+              <SortHeader label="Name" active={sort === "name"} dir={dir} onClick={() => sortBy("name")} />
+              <SortHeader
+                label={
+                  <>
+                    <span className="sm:hidden">Type</span>
+                    <span className="hidden sm:inline">Device type</span>
+                  </>
+                }
+                active={sort === "kind"}
+                dir={dir}
+                onClick={() => sortBy("kind")}
+              />
+              <SortHeader label="Last heard" active={sort === "last_heard"} dir={dir} onClick={() => sortBy("last_heard")} />
               <th scope="col">
                 <span className="sr-only">Actions</span>
               </th>
@@ -299,11 +356,15 @@ export function Contacts() {
   );
 }
 
-function SortHeader({ label, active, onClick, desc }: { label: string; active: boolean; onClick: () => void; desc?: boolean }) {
-  const Icon = desc ? ArrowDown : ArrowUp;
+function SortHeader({ label, active, onClick, dir }: { label: ReactNode; active: boolean; onClick: () => void; dir: Dir }) {
+  const Icon = dir === "desc" ? ArrowDown : ArrowUp;
   return (
-    <th scope="col" aria-sort={active ? (desc ? "descending" : "ascending") : "none"} className="px-2 py-1 font-medium first:pl-3 md:first:pl-4">
-      <button onClick={onClick} className={cx("inline-flex min-h-8 items-center gap-1 rounded hover:text-ink", active && "text-ink")}>
+    <th scope="col" aria-sort={active ? (dir === "desc" ? "descending" : "ascending") : "none"} className="px-2 py-1 font-medium first:pl-3 md:first:pl-4">
+      <button
+        onClick={onClick}
+        title={active ? "Reverse the order" : "Sort by this column"}
+        className={cx("inline-flex min-h-8 items-center gap-1 rounded text-left hover:text-ink", active && "text-ink")}
+      >
         {label}
         {active && <Icon className="size-3" aria-hidden />}
       </button>

@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.6**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.7.7**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -418,7 +418,9 @@ Contacts are the nodes the radio knows about. `kind` is `1` companion (a person)
 | `q` | — | Search name, alias or public key (up to 100 characters). |
 | `kind` | — | Only this node type. |
 | `show` | `all` | `all`, `favorites`, `blocked`, or `removed` (no longer on the radio). |
-| `sort` | `last_heard` | `last_heard` or `name`. |
+| `sort` | `last_heard` | `last_heard`, `name` or `kind`. |
+| `order` | per column | `asc` or `desc`. Defaults to newest first for `last_heard` and A→Z otherwise. Contacts never heard stay last. |
+| `favorites_first` | `false` | `true` lists favourites before everything else, each group in the chosen order. |
 | `page` | 1 | Page number, starting at 1. |
 | `page_size` | 25 | `10`, `25` or `50`. |
 

@@ -99,7 +99,10 @@ async def list_contacts(
     q: str | None = Query(default=None, max_length=100),
     kind: int | None = Query(default=None, ge=0, le=255),
     show: Literal["all", "favorites", "blocked", "removed"] = "all",
-    sort: Literal["last_heard", "name"] = "last_heard",
+    sort: Literal["last_heard", "name", "kind"] = "last_heard",
+    # Default: newest first for last_heard, A→Z for name and kind.
+    order: Literal["asc", "desc"] | None = None,
+    favorites_first: bool = False,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25),
     ctx: AuthContext = Depends(require_auth),
@@ -133,12 +136,19 @@ async def list_contacts(
         )
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     display = func.lower(func.coalesce(Contact.alias, Contact.name))
-    order = (
-        [Contact.last_advert_at.desc().nulls_last(), display]
-        if sort == "last_heard"
-        else [display, Contact.last_advert_at.desc().nulls_last()]
-    )
-    rows = (await db.execute(base.order_by(*order).offset((page - 1) * page_size).limit(page_size))).all()
+    desc = (order or ("desc" if sort == "last_heard" else "asc")) == "desc"
+    heard = Contact.last_advert_at.desc() if desc else Contact.last_advert_at.asc()
+    named = display.desc() if desc else display.asc()
+    if sort == "last_heard":
+        ordering = [heard.nulls_last(), display]  # never-heard contacts stay at the end
+    elif sort == "name":
+        ordering = [named, Contact.last_advert_at.desc().nulls_last()]
+    else:
+        ordering = [Contact.kind.desc() if desc else Contact.kind.asc(), display]
+    if favorites_first:
+        ordering.insert(0, Contact.favorite.desc())
+    ordering.append(Contact.id)  # stable paging when everything else ties
+    rows = (await db.execute(base.order_by(*ordering).offset((page - 1) * page_size).limit(page_size))).all()
     return ContactPage(
         items=[_out(c, sim, cid) for c, sim, cid in rows], total=total, page=page, page_size=page_size
     )
