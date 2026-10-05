@@ -71,14 +71,16 @@ direct messages from any browser that can reach it.
 
   Values are checked against the firmware's own limits before anything is sent. Factory reset and
   private-key export/import are deliberately left out. Use official MeshCore tools for those.
-- **Account page** (click your name, bottom left): change your username and password, and sign out.
+- **Account** (click your name, bottom left): a dialog to change your username and password, see the version, and sign out.
 - Right-click (or long-press) menu on conversations: info, mark as read, favorite, mute or unmute,
   and delete or clear history.
 - **Notification sounds:** a chime for new incoming messages while the app is open in a browser tab.
   The global setting is *All messages*, *Direct messages only*, or *Off*, and you can override it per
   conversation from the right-click menu.
 - **Contacts:** a compact, searchable list (name, device type, last heard) with type and status
-  filters, sorting, and pagination (10/25/50 per page). Right-click or long-press a contact for:
+  filters, sorting, and pagination (10/25/50 per page). Click a person to open your conversation
+  with them, or a repeater or room server to manage it remotely. Right-click or long-press a
+  contact for:
   - **Details**
   - **Share:** copy a `meshcore://` contact link, or re-broadcast the advert to nearby nodes.
   - **Set path / Reset path:** choose the repeater route, or go back to flooding.

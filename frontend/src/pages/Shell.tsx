@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Map as MapIcon, MessagesSquare, Settings as SettingsIcon, Users } from "lucide-react";
-import { Link, NavLink, Route, Routes, useLocation } from "react-router";
+import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
 import { api, type Me, type Status } from "../lib/api";
 import { useSetupStatus, useUpdateInfo } from "../lib/queries";
 import type { SoundSetting } from "../lib/sound";
@@ -16,7 +16,7 @@ import { Settings } from "./Settings";
 // Leaflet is only downloaded when the map is opened.
 const NodeMap = lazy(() => import("./NodeMap").then((m) => ({ default: m.NodeMap })));
 import { IconButton } from "../components/ui";
-import { Account } from "./Account";
+import { AccountDialog } from "./Account";
 import { NodeSettings } from "./NodeSettings";
 import { RemoteManage } from "./RemoteManage";
 import { Updates } from "./Updates";
@@ -108,7 +108,7 @@ export function Shell({ me }: { me: Me }) {
           <Route path="settings" element={<Settings />} />
           <Route path="settings/node" element={<NodeSettings />} />
           <Route path="settings/updates" element={<Updates />} />
-          <Route path="account" element={<Account me={me} />} />
+          <Route path="account" element={<EmptyPane />} />
           <Route
             path="map"
             element={
@@ -130,6 +130,15 @@ function UserPanel({ me }: { me: Me }) {
   const meta = useSetupStatus();
   const update = useUpdateInfo();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const [accountOpen, setAccountOpen] = useState(false);
+  // Old links and bookmarks to /account open the dialog.
+  useEffect(() => {
+    if (pathname === "/account") {
+      setAccountOpen(true);
+      navigate("/", { replace: true });
+    }
+  }, [pathname, navigate]);
   const logout = useMutation({
     mutationFn: () => api("/api/auth/logout", { method: "POST" }),
     onSettled: () => {
@@ -138,7 +147,7 @@ function UserPanel({ me }: { me: Me }) {
     },
   });
   const version = meta.data?.version;
-  const active = pathname === "/account";
+  const active = accountOpen;
   return (
     <footer className="safe-bottom flex items-center gap-2 border-t border-line px-2 pt-2">
       <div
@@ -147,21 +156,22 @@ function UserPanel({ me }: { me: Me }) {
           active ? "bg-accent-soft/60" : "hover:bg-surface-2",
         )}
       >
-        {/* Decorative duplicate of the username link, kept out of the tab order. */}
-        <Link to="/account" tabIndex={-1} aria-hidden className="shrink-0">
+        {/* Decorative duplicate of the username button, kept out of the tab order. */}
+        <button type="button" onClick={() => setAccountOpen(true)} tabIndex={-1} aria-hidden className="shrink-0">
           <span className="flex size-9 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold uppercase text-accent">
             {me.username.slice(0, 1)}
           </span>
-        </Link>
+        </button>
         <div className="min-w-0">
-          <Link
-            to="/account"
-            aria-current={active ? "page" : undefined}
+          <button
+            type="button"
+            onClick={() => setAccountOpen(true)}
+            aria-haspopup="dialog"
             title="Account settings"
-            className="block truncate text-sm font-medium hover:underline"
+            className="block max-w-full truncate text-left text-sm font-medium hover:underline"
           >
             {me.username}
-          </Link>
+          </button>
           {version &&
             (update.data?.update_available && update.data.latest ? (
               <Link
@@ -189,6 +199,7 @@ function UserPanel({ me }: { me: Me }) {
       <IconButton label="Sign out" onClick={() => logout.mutate()} disabled={logout.isPending}>
         <LogOut className="size-5" />
       </IconButton>
+      {accountOpen && <AccountDialog me={me} onClose={() => setAccountOpen(false)} />}
     </footer>
   );
 }

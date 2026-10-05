@@ -1,22 +1,23 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router";
-import { ChevronLeft, ExternalLink, LogOut } from "lucide-react";
+import { ExternalLink, LogOut } from "lucide-react";
 import { api, type Me } from "../lib/api";
-import { Button, Card, ErrorText, Field, Input } from "../components/ui";
+import { Button, ErrorText, Field, Input } from "../components/ui";
+import { Dialog } from "../components/Dialog";
 import { useSetupStatus } from "../lib/queries";
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <Card className="p-4 sm:p-5">
-      <h3 className="text-base font-semibold">{title}</h3>
-      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      <div className="mt-4 space-y-4">{children}</div>
-    </Card>
+    <section className="border-t border-line pt-4">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {description && <p className="mt-0.5 text-xs text-muted">{description}</p>}
+      <div className="mt-3 space-y-3">{children}</div>
+    </section>
   );
 }
 
-export function Account({ me }: { me: Me }) {
+/** Account settings, opened from the username at the bottom of the sidebar. */
+export function AccountDialog({ me, onClose }: { me: Me; onClose: () => void }) {
   const qc = useQueryClient();
   const meta = useSetupStatus();
   const logout = useMutation({
@@ -28,57 +29,45 @@ export function Account({ me }: { me: Me }) {
   });
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-2 border-b border-line bg-surface px-1.5 py-1.5 md:px-4">
-        <Link
-          to="/"
-          className="inline-flex size-11 items-center justify-center rounded-lg text-muted hover:bg-surface-2 md:hidden"
-          aria-label="Back to conversations"
-        >
-          <ChevronLeft className="size-6" />
-        </Link>
-        <h2 className="flex-1 px-1 py-2 text-base font-semibold">Account</h2>
-      </header>
-      <div className="relative min-h-0 flex-1 overflow-y-auto p-3 md:p-6">
-        <div className="mx-auto max-w-2xl space-y-4">
-          <Card className="flex items-center gap-4 p-4 sm:p-5">
-            <span
-              aria-hidden
-              className="flex size-14 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xl font-semibold uppercase text-accent"
-            >
-              {me.username.slice(0, 1)}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-lg font-semibold">{me.username}</p>
-              <p className="text-sm text-muted">Owner of {me.home_name}</p>
-            </div>
-            <Button variant="ghost" onClick={() => logout.mutate()} disabled={logout.isPending}>
-              <LogOut className="size-4" aria-hidden /> Sign out
-            </Button>
-          </Card>
-          <UsernameSection me={me} />
-          <PasswordSection />
-          <Section title="About">
-            <p className="text-sm">
-              MeshCore Home v{meta.data?.version ?? "…"}
-              {meta.data?.release_url && (
-                <>
-                  {" · "}
-                  <a
-                    href={meta.data.release_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-accent underline"
-                  >
-                    What's new in this version <ExternalLink className="size-3.5" aria-hidden />
-                  </a>
-                </>
-              )}
-            </p>
-          </Section>
+    <Dialog title="Account" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden
+            className="flex size-12 shrink-0 items-center justify-center rounded-full bg-accent-soft text-lg font-semibold uppercase text-accent"
+          >
+            {me.username.slice(0, 1)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-semibold">{me.username}</p>
+            <p className="truncate text-sm text-muted">Owner of {me.home_name}</p>
+          </div>
+          <Button variant="ghost" onClick={() => logout.mutate()} disabled={logout.isPending}>
+            <LogOut className="size-4" aria-hidden /> Sign out
+          </Button>
         </div>
+        <UsernameSection me={me} />
+        <PasswordSection />
+        <Section title="About">
+          <p className="text-sm">
+            MeshCore Home v{meta.data?.version ?? "…"}
+            {meta.data?.release_url && (
+              <>
+                {" · "}
+                <a
+                  href={meta.data.release_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-accent underline"
+                >
+                  What's new in this version <ExternalLink className="size-3.5" aria-hidden />
+                </a>
+              </>
+            )}
+          </p>
+        </Section>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

@@ -261,10 +261,11 @@ export function Contacts() {
                 key={c.id}
                 tabIndex={0}
                 aria-haspopup="menu"
-                onClick={() => actions.open("details", c)}
+                onClick={() => actions.primary(c, navigate)}
+                title={c.kind === 1 ? "Open conversation" : c.kind === 2 || c.kind === 3 ? "Remote manage" : "Details"}
                 {...t}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") actions.open("details", c);
+                  if (e.key === "Enter") actions.primary(c, navigate);
                   else t.onKeyDown(e);
                 }}
                 className="group cursor-pointer select-none border-b border-line [-webkit-touch-callout:none] hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
@@ -409,6 +410,24 @@ function useContactActions() {
     setDialog({ kind, c });
   };
 
+  const message = async (c: Contact, navigate: (to: string) => void) => {
+    setError(null);
+    try {
+      const r = await api<{ conversation_id: string }>(`/api/contacts/${c.id}/conversation`, { method: "POST" });
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+      navigate(`/c/${r.conversation_id}`);
+    } catch (e) {
+      setError(e);
+    }
+  };
+
+  /** Clicking a contact: message a person, manage a repeater or room server, otherwise details. */
+  const primary = (c: Contact, navigate: (to: string) => void) => {
+    if (c.kind === 1) void message(c, navigate);
+    else if (c.kind === 2 || c.kind === 3) navigate(`/contacts/${c.id}/manage`);
+    else open("details", c);
+  };
+
   const items = (c: Contact, navigate: (to: string) => void): MenuItem[] => {
     const onRadio = c.on_radio;
     return [
@@ -418,11 +437,7 @@ function useContactActions() {
             {
               label: "Send message",
               icon: <MessageSquare className="size-4" />,
-              onSelect: async () => {
-                const r = await api<{ conversation_id: string }>(`/api/contacts/${c.id}/conversation`, { method: "POST" });
-                qc.invalidateQueries({ queryKey: ["conversations"] });
-                navigate(`/c/${r.conversation_id}`);
-              },
+              onSelect: () => message(c, navigate),
             } satisfies MenuItem,
           ]
         : []),
@@ -483,7 +498,7 @@ function useContactActions() {
     </>
   );
 
-  return { openMenu: (c: Contact, x: number, y: number) => setMenu({ c, x, y }), open, element };
+  return { openMenu: (c: Contact, x: number, y: number) => setMenu({ c, x, y }), open, primary, element };
 }
 
 function useContactDetail(id: string) {
