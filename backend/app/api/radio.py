@@ -197,3 +197,21 @@ async def put_notifications(
     await db.commit()
     hub.publish("settings-updated", key="notifications")
     return body
+
+
+@router.get("/settings/bot", response_model=app_settings.BotConfig)
+async def get_bot(ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    return await app_settings.get_bot_config(db)
+
+
+@router.put("/settings/bot", response_model=app_settings.BotConfig)
+async def put_bot(
+    body: app_settings.BotConfig,
+    ctx: AuthContext = Depends(require_session),  # who may command the node: owner only
+    db: AsyncSession = Depends(get_db),
+):
+    await app_settings.put_bot_config(db, body)
+    db.add(AuditEvent(kind="settings.bot", detail=body.model_dump()))
+    await db.commit()
+    hub.publish("settings-updated", key="bot")
+    return body

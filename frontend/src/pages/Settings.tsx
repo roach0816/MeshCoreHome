@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import {
   History,
   ChevronLeft,
+  Bot,
   Download,
   Pause,
   Play,
@@ -62,6 +63,7 @@ export function Settings() {
           <RadioSection />
           <DeviceSection />
           <NotificationsSection />
+          <BotSection />
           <MapSection />
           <AppearanceSection />
           <DataSection />
@@ -500,6 +502,100 @@ function NotificationsSection() {
           Shared by all your browsers. Phones may silence web pages that are in the background.
         </span>
       </div>
+    </Section>
+  );
+}
+
+type BotConfig = { enabled: boolean; allow: "favorites" | "everyone" };
+
+const BOT_COMMANDS: [string, string][] = [
+  ["/info", "This node's name, MeshCore Home version, time online, radio settings and number of contacts."],
+  ["/ping", "\u201cpong\u201d with how your message arrived: signal (SNR, RSSI) and hops."],
+  ["/help", "The list of commands."],
+];
+
+function BotSection() {
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["bot-settings"], queryFn: () => api<BotConfig>("/api/settings/bot") });
+  // The change shows at once and stays until the server answers (a refetch cannot undo it).
+  const [pending, setPending] = useState<BotConfig | null>(null);
+  const save = useMutation({
+    mutationFn: (next: BotConfig) => api<BotConfig>("/api/settings/bot", { method: "PUT", json: next }),
+    onMutate: (next) => setPending(next),
+    onSuccess: (v) => qc.setQueryData(["bot-settings"], v),
+    onSettled: () => setPending(null),
+  });
+  const c = pending ?? cfg.data;
+  return (
+    <Section
+      title="Bot"
+      description="Lets you query this node from another radio: send it a direct message such as /info and it replies automatically."
+    >
+      {!c ? (
+        <ErrorText error={cfg.error} />
+      ) : (
+        <>
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={c.enabled}
+              onChange={(e) => save.mutate({ ...c, enabled: e.target.checked })}
+              className="mt-0.5 size-5 shrink-0 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <Bot className="size-4 text-muted" aria-hidden /> Answer commands
+              </span>
+              <span className="block text-xs text-muted">
+                Direct messages that start with “/”. Channels are never answered.
+              </span>
+            </span>
+          </label>
+          <fieldset className="grid gap-2 sm:grid-cols-2" disabled={!c.enabled}>
+            <legend className="mb-2 text-sm font-medium">Who can use it</legend>
+            {(
+              [
+                ["favorites", "Favourite contacts", "Mark the radios you use as favourites in Contacts."],
+                ["everyone", "Every contact", "Anyone on your radio's contact list. Blocked contacts are always ignored."],
+              ] as const
+            ).map(([value, title, sub]) => (
+              <label
+                key={value}
+                className={cx(
+                  "flex cursor-pointer items-start gap-2 rounded-lg border p-3",
+                  !c.enabled && "cursor-not-allowed opacity-60",
+                  c.allow === value ? "border-accent bg-accent-soft/40" : "border-line hover:bg-surface-2",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="bot-allow"
+                  checked={c.allow === value}
+                  onChange={() => save.mutate({ ...c, allow: value })}
+                  className="mt-1 accent-[var(--accent)]"
+                />
+                <span>
+                  <span className="block text-sm font-medium">{title}</span>
+                  <span className="block text-xs text-muted">{sub}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <dl className="space-y-1.5 rounded-lg bg-surface-2 p-3 text-sm">
+            {BOT_COMMANDS.map(([cmd, what]) => (
+              <div key={cmd} className="flex gap-3">
+                <dt className="w-12 shrink-0 font-mono font-medium">{cmd}</dt>
+                <dd className="text-muted">{what}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-xs text-muted">
+            To save airtime it answers each contact at most once every 10 seconds and 6 times a minute in total, and
+            ignores commands more than 15 minutes old. Replies appear in the conversation like your own messages.
+          </p>
+          <ErrorText error={save.error} />
+        </>
+      )}
     </Section>
   );
 }

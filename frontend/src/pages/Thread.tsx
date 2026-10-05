@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
-import { ArrowDown, ChevronLeft, Copy, Hash, Info, RotateCw, SendHorizontal, Star, UserRound, X } from "lucide-react";
+import { ArrowDown, Bot, ChevronLeft, Copy, Hash, Info, RotateCw, SendHorizontal, Star, UserRound, X } from "lucide-react";
 import { api, ApiError, type Conversation, type Message, type MessagePage, type Status } from "../lib/api";
 import {
   cx,
@@ -295,6 +295,11 @@ function Bubble({ m, conv, grouped, online }: { m: Message; conv: Conversation; 
         <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</span>
         <span className={cx("mt-0.5 flex items-center justify-end gap-1.5 text-[11px]", out ? "opacity-80" : "text-muted")}>
           {m.is_simulated && <span className="uppercase tracking-wide">sim</span>}
+          {typeof m.meta?.bot === "string" && (
+            <span className="inline-flex items-center gap-0.5" title={`Automatic reply to /${m.meta.bot}`}>
+              <Bot className="size-3" aria-hidden /> bot
+            </span>
+          )}
           {m.duplicate_count > 0 && <span>heard ×{m.duplicate_count + 1}</span>}
           <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
         </span>

@@ -26,7 +26,7 @@ from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioErr
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
-from app.services import app_settings, messaging, radio_hat
+from app.services import app_settings, bot, messaging, radio_hat
 from app.services.messaging import States
 
 log = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ class RadioSupervisor:
         self._early_acks: dict[str, float] = {}
         # Remote administration: CLI replies (txt_type 1) go here instead of the chat archive.
         self.cli_reply_hook: Callable[[str, str], Awaitable[None]] | None = None
+        self._bot_tasks: set[asyncio.Task] = set()
         self._stopping = False
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -462,6 +463,10 @@ class RadioSupervisor:
                         kind=msg.kind,
                         suppressed=m.suppressed,
                     )
+                    if msg.kind == "dm" and not m.suppressed and bot.parse(msg.text):
+                        task = asyncio.create_task(self._run_bot(m.id), name="bot")
+                        self._bot_tasks.add(task)
+                        task.add_done_callback(self._bot_tasks.discard)
                 return
             except asyncio.CancelledError:
                 raise
@@ -472,6 +477,13 @@ class RadioSupervisor:
                 hub.publish("radio-status-changed", state=self.status.state)
                 await asyncio.sleep(delay)
                 delay = min(30.0, delay * 2)
+
+    async def _run_bot(self, message_id) -> None:
+        try:
+            if await bot.handle(message_id, connected_since=self.status.connected_since):
+                self.wake_sender()
+        except Exception as exc:  # noqa: BLE001 - the bot must never disturb collection
+            log.warning("bot could not answer: %s", _safe_error(exc))
 
     # ---- send ------------------------------------------------------------------------
 

@@ -10,7 +10,6 @@ import {
   Copy,
   Info,
   MessageSquare,
-  MoreHorizontal,
   RefreshCw,
   Route,
   RouteOff,
@@ -231,7 +230,6 @@ export function Contacts() {
             <col />
             <col className="w-[5.75rem] sm:w-36" />
             <col className="w-[4.5rem] sm:w-32" />
-            <col className="w-10 sm:w-12" />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-bg/95 text-left text-xs text-muted backdrop-blur">
             <tr className="border-b border-line">
@@ -248,9 +246,6 @@ export function Contacts() {
                 onClick={() => sortBy("kind")}
               />
               <SortHeader label="Last heard" active={sort === "last_heard"} dir={dir} onClick={() => sortBy("last_heard")} />
-              <th scope="col">
-                <span className="sr-only">Actions</span>
-              </th>
             </tr>
           </thead>
           <tbody className={cx(list.isFetching && list.isPlaceholderData && "opacity-60")}>
@@ -262,7 +257,7 @@ export function Contacts() {
                 tabIndex={0}
                 aria-haspopup="menu"
                 onClick={() => actions.primary(c, navigate)}
-                title={c.kind === 1 ? "Open conversation" : c.kind === 2 || c.kind === 3 ? "Remote manage" : "Details"}
+                title={`${c.kind === 1 ? "Open conversation" : c.kind === 2 || c.kind === 3 ? "Remote manage" : "Details"}. Right-click, or press and hold, for more.`}
                 {...t}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") actions.primary(c, navigate);
@@ -290,20 +285,6 @@ export function Contacts() {
                   <time dateTime={c.last_advert_at ?? undefined} title={formatDateTime(c.last_advert_at)}>
                     {lastHeard(c.last_advert_at)}
                   </time>
-                </td>
-                <td className="pr-2 text-right">
-                  <IconButton
-                    label={`Actions for ${c.alias || c.name}`}
-                    aria-haspopup="menu"
-                    className="size-9"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const r = e.currentTarget.getBoundingClientRect();
-                      actions.openMenu(c, r.left - 160, r.bottom + 4);
-                    }}
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </IconButton>
                 </td>
               </tr>
               );

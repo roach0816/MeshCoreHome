@@ -65,6 +65,16 @@ class NotificationConfig(BaseModel):
 
 
 NOTIFICATIONS_KEY = "notifications"
+
+
+class BotConfig(BaseModel):
+    # Answer DMs that start with "/" (see app/services/bot.py). Off until the owner turns it on.
+    enabled: bool = False
+    # Who may use it: favourite contacts only, or every known contact.
+    allow: Literal["favorites", "everyone"] = "favorites"
+
+
+BOT_KEY = "bot"
 RADIO_KEY = "radio"
 MAP_KEY = "map"
 INSTALLATION_KEY = "installation"
@@ -109,6 +119,15 @@ async def get_notification_config(db: AsyncSession) -> NotificationConfig:
 
 async def put_notification_config(db: AsyncSession, cfg: NotificationConfig) -> None:
     await _put(db, NOTIFICATIONS_KEY, cfg.model_dump())
+
+
+async def get_bot_config(db: AsyncSession) -> BotConfig:
+    raw = await _get(db, BOT_KEY)
+    return BotConfig.model_validate(raw) if raw else BotConfig()
+
+
+async def put_bot_config(db: AsyncSession, cfg: BotConfig) -> None:
+    await _put(db, BOT_KEY, cfg.model_dump())
 
 
 async def get_installation(db: AsyncSession) -> InstallationConfig:

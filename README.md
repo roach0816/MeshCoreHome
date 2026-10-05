@@ -71,7 +71,12 @@ direct messages from any browser that can reach it.
 
   Values are checked against the firmware's own limits before anything is sent. Factory reset and
   private-key export/import are deliberately left out. Use official MeshCore tools for those.
-- **Account** (click your name, bottom left): a dialog to change your username and password, see the version, and sign out.
+- **Bot** (Settings → Bot, off by default): query your home node from another radio. Send it a
+  direct message of `/info` for its name, version, time online, radio settings and contact count,
+  `/ping` for how your message arrived (SNR, RSSI, hops), or `/help`. It answers favourite contacts
+  only, unless you allow every contact. Channels are never answered. Replies are rate-limited to
+  save airtime, and commands older than 15 minutes are ignored.
+- **Account** (click your name, bottom left): a dialog to change your username and password, and sign out. The version is shown under your name.
 - Right-click (or long-press) menu on conversations: info, mark as read, favorite, mute or unmute,
   and delete or clear history.
 - **Notification sounds:** a chime for new incoming messages while the app is open in a browser tab.

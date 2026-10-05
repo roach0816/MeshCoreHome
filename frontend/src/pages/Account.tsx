@@ -1,10 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { api, type Me } from "../lib/api";
 import { Button, ErrorText, Field, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
-import { useSetupStatus } from "../lib/queries";
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
@@ -19,7 +18,6 @@ function Section({ title, description, children }: { title: string; description?
 /** Account settings, opened from the username at the bottom of the sidebar. */
 export function AccountDialog({ me, onClose }: { me: Me; onClose: () => void }) {
   const qc = useQueryClient();
-  const meta = useSetupStatus();
   const logout = useMutation({
     mutationFn: () => api("/api/auth/logout", { method: "POST" }),
     onSettled: () => {
@@ -48,24 +46,6 @@ export function AccountDialog({ me, onClose }: { me: Me; onClose: () => void }) 
         </div>
         <UsernameSection me={me} />
         <PasswordSection />
-        <Section title="About">
-          <p className="text-sm">
-            MeshCore Home v{meta.data?.version ?? "…"}
-            {meta.data?.release_url && (
-              <>
-                {" · "}
-                <a
-                  href={meta.data.release_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-accent underline"
-                >
-                  What's new in this version <ExternalLink className="size-3.5" aria-hidden />
-                </a>
-              </>
-            )}
-          </p>
-        </Section>
       </div>
     </Dialog>
   );
