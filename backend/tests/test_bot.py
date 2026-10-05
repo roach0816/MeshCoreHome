@@ -44,8 +44,10 @@ async def _received(text: str) -> bool:
         return (await s.execute(select(Message).where(Message.body == text))).first() is not None
 
 
-async def test_bot_answers_commands_from_allowed_contacts(client):
+async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
     from app.radio import simulated
+
+    monkeypatch.setattr(bot, "PER_CONTACT_SECONDS", 1.5)
 
     simulated._SIM_STATE = None
     bot._last_reply.clear()
@@ -81,14 +83,11 @@ async def test_bot_answers_commands_from_allowed_contacts(client):
     assert info.body.startswith("Home (simulated) · MeshCore Home ") and "contacts" in info.body
     assert len(info.body.encode()) <= 150 and info.meta == {"bot": "info"}
 
-    # Rate limited per contact: an immediate second command is not answered.
-    _send_to_node("tracker", "/help")
-    await wait_for(lambda: _received("/help"))
-    await _settle()
-    assert len(await _bot_replies()) == 1
-
-    bot._last_reply.clear()
+    # A quick follow-up command waits its turn (1.5 s here, 10 s for real) and is then answered.
     _send_to_node("tracker", "/ping", meta={"SNR": 7.25, "RSSI": -80, "path_len": 2})
+    await wait_for(lambda: _received("/ping"))
+    await _settle()
+    assert len(await _bot_replies()) == 1  # still waiting
 
     async def two():
         r = await _bot_replies()
@@ -96,6 +95,8 @@ async def test_bot_answers_commands_from_allowed_contacts(client):
 
     replies = await wait_for(two)
     assert any(m.body == "pong · SNR 7.25 dB, RSSI -80 dBm, 2 hops" for m in replies)
+    gap = sorted(m.created_at for m in replies)
+    assert (gap[1] - gap[0]).total_seconds() >= 1.0
 
     # Old commands (e.g. collected after an outage) are not answered.
     bot._last_reply.clear()
@@ -106,14 +107,14 @@ async def test_bot_answers_commands_from_allowed_contacts(client):
 
     # Everyone: unknown commands get a hint.
     await client.put("/api/settings/bot", headers=csrf(client), json={"enabled": True, "allow": "everyone"})
-    _send_to_node("neighbor", "/weather")
+    _send_to_node("neighbor", "/forecast")
 
     async def three():
         r = await _bot_replies()
         return r if len(r) == 3 else None
 
     replies = await wait_for(three)
-    assert any(m.body == "Unknown command /weather. Try /help" for m in replies)
+    assert any(m.body == "Unknown command /forecast. Try /help" for m in replies)
 
     # Replies go out through the normal queue.
     async def sent():
@@ -130,3 +131,17 @@ def test_parse_and_fit():
     assert len(long.encode()) <= 150 and long.endswith("...")
     assert bot._route({"path_len": 255, "SNR": -3.5}) == "SNR -3.5 dB, direct route"
     assert bot._route({"path_len": 0}) == "0 hops (heard directly)"
+
+
+async def test_wait_turn_queues_a_few_then_drops(monkeypatch):
+    import uuid
+
+    monkeypatch.setattr(bot, "PER_CONTACT_SECONDS", 0.2)
+    bot._last_reply.clear()
+    bot._recent.clear()
+    bot._waiting.clear()
+    who = uuid.uuid4()
+    results = await asyncio.gather(*(bot._wait_turn(who) for _ in range(5)))
+    # One goes at once, three wait their turn, the fifth is dropped.
+    assert sorted(results) == [False, True, True, True, True]
+    assert bot._waiting[who] == 0

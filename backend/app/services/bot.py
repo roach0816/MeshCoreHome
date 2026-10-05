@@ -4,13 +4,14 @@ Off until the owner turns it on (Settings → Bot). Only direct messages from kn
 considered, never channels; by default only favourite contacts may use it. Replies go through the
 normal outgoing queue, so they are archived and delivered like any message the owner sends.
 
-Airtime is precious, so replies are rate limited (per contact and overall), unknown commands get
-one short hint, and commands that arrive late (e.g. collected after the radio was offline) are
+Airtime is precious, so replies are rate limited (per contact and overall; quick follow-up
+commands wait their turn instead of being dropped), unknown commands get one short hint, and commands that arrive late (e.g. collected after the radio was offline) are
 ignored rather than answered out of context.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -23,7 +24,7 @@ from app import db
 from app.config import APP_VERSION, get_settings
 from app.models import Contact, Conversation, Message, Radio
 from app.realtime import hub
-from app.services import app_settings, messaging
+from app.services import app_settings, messaging, weather
 
 log = logging.getLogger(__name__)
 
@@ -31,15 +32,19 @@ DM_MAX_BYTES = 150
 MAX_AGE_SECONDS = 15 * 60  # ignore commands older than this (sender's clock)
 PER_CONTACT_SECONDS = 10.0
 GLOBAL_PER_MINUTE = 6
+MAX_WAITING = 3  # commands per contact that may queue for their turn
+MAX_WAIT_SECONDS = 60.0
 DIRECT_ROUTE = 255  # path_len for a message that came along a known (direct) route
 COMMANDS = {
     "help": "list the commands",
     "info": "about this node",
     "ping": "how your message arrived",
+    "weather": "local weather",  # listed only when a weather station is set up
 }
 
 _last_reply: dict[uuid.UUID, float] = {}
 _recent: deque[float] = deque()
+_waiting: dict[uuid.UUID, int] = {}
 
 
 def _fit(text: str, limit: int = DM_MAX_BYTES) -> str:
@@ -91,15 +96,44 @@ async def _info(s, radio: Radio, connected_since: float | None) -> str:
     return " · ".join(parts)
 
 
-def _limited(contact_id: uuid.UUID) -> bool:
-    now = time.monotonic()
-    while _recent and now - _recent[0] > 60:
-        _recent.popleft()
-    if len(_recent) >= GLOBAL_PER_MINUTE or now - _last_reply.get(contact_id, -1e9) < PER_CONTACT_SECONDS:
-        return True
-    _recent.append(now)
-    _last_reply[contact_id] = now
-    return False
+async def _wait_turn(contact_id: uuid.UUID) -> bool:
+    """Wait until a reply is allowed (10 s per contact, 6 a minute overall), then claim it.
+
+    Commands sent in quick succession are answered in turn rather than dropped, but no more than
+    MAX_WAITING per contact queue up, and none waits longer than MAX_WAIT_SECONDS.
+    """
+    if _waiting.get(contact_id, 0) >= MAX_WAITING:
+        return False
+    _waiting[contact_id] = _waiting.get(contact_id, 0) + 1
+    deadline = time.monotonic() + MAX_WAIT_SECONDS
+    try:
+        while True:
+            now = time.monotonic()
+            while _recent and now - _recent[0] > 60:
+                _recent.popleft()
+            wait = _last_reply.get(contact_id, -1e9) + PER_CONTACT_SECONDS - now
+            if len(_recent) >= GLOBAL_PER_MINUTE:
+                wait = max(wait, _recent[0] + 60 - now)
+            if wait <= 0:
+                _recent.append(now)
+                _last_reply[contact_id] = now
+                return True
+            if now + wait > deadline:
+                return False
+            await asyncio.sleep(wait)
+    finally:
+        _waiting[contact_id] -= 1
+
+
+async def _weather(station: str) -> str:
+    if not station:
+        return "No weather station is set up on this node."
+    try:
+        return weather.format_reply(await weather.read(station))
+    except weather.WeatherError as exc:
+        # Never send the station's network address over the air.
+        log.info("bot: weather unavailable: %s", exc)
+        return "The weather station is not answering right now."
 
 
 def parse(body: str) -> str | None:
@@ -135,17 +169,26 @@ async def handle(message_id: uuid.UUID, *, connected_since: float | None = None)
         if msg.sender_timestamp and time.time() - msg.sender_timestamp > MAX_AGE_SECONDS:
             log.info("bot: ignoring a /%s sent %d s ago", command, time.time() - msg.sender_timestamp)
             return None
-        if _limited(contact.id):
-            log.info("bot: rate limited, not answering /%s", command)
-            return None
-        radio = await s.get(Radio, conv.radio_id)
+        contact_id, meta = contact.id, dict(msg.meta or {})
 
+    # Outside the database session: this can wait several seconds for its turn.
+    if not await _wait_turn(contact_id):
+        log.info("bot: too many commands waiting, not answering /%s", command)
+        return None
+
+    async with db.session_factory()() as s:
+        conv = await s.get(Conversation, conv.id)
+        radio = await s.get(Radio, conv.radio_id)
+        station = (await app_settings.get_weather_config(s)).host
         if command == "help":
-            reply = "Commands: " + ", ".join(f"/{k} ({v})" for k, v in COMMANDS.items())
+            listed = {k: v for k, v in COMMANDS.items() if k != "weather" or station}
+            reply = "Commands: " + ", ".join(f"/{k} ({v})" for k, v in listed.items())
+        elif command == "weather":
+            reply = await _weather(station)
         elif command == "info":
             reply = await _info(s, radio, connected_since)
         elif command == "ping":
-            route = _route(msg.meta)
+            route = _route(meta)
             reply = f"pong · {route}" if route else "pong"
         else:
             reply = f"Unknown command /{command[:20]}. Try /help"

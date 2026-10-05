@@ -220,7 +220,9 @@ async def patch_contact(
     return _out(c, radio.is_simulated, conv_id)
 
 
-async def _radio_op(db: AsyncSession, c: Contact, op: str, params: dict[str, Any] | None = None) -> dict:
+async def radio_contact_op(
+    db: AsyncSession, c: Contact, op: str, params: dict[str, Any] | None = None
+) -> dict:
     if not c.on_radio:
         raise HTTPException(status.HTTP_409_CONFLICT, "This contact is no longer on the radio")
     if supervisor.radio is None or supervisor.radio.id != c.radio_id:
@@ -244,7 +246,8 @@ async def set_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     c = await _contact(db, contact_id)
-    await _radio_op(db, c, "contact_favorite", {"favorite": body.favorite})
+    await radio_contact_op(db, c, "contact_favorite", {"favorite": body.favorite})
+    hub.publish("conversations-updated")  # a DM's star is the contact's favourite
     await db.refresh(c)
     radio = await db.get(Radio, c.radio_id)
     return _out(c, radio.is_simulated, None)
@@ -254,7 +257,7 @@ async def set_favorite(
 async def reset_path(
     contact_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
 ):
-    await _radio_op(db, await _contact(db, contact_id), "contact_reset_path")
+    await radio_contact_op(db, await _contact(db, contact_id), "contact_reset_path")
 
 
 @router.put("/{contact_id}/path", status_code=204)
@@ -276,7 +279,7 @@ async def set_path(
         hops.append(h[: size * 2])
     if len(hops) * size > MAX_PATH_BYTES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Path is too long for the radio")
-    await _radio_op(db, c, "contact_set_path", {"path_hex": "".join(hops)})
+    await radio_contact_op(db, c, "contact_set_path", {"path_hex": "".join(hops)})
 
 
 @router.delete("/{contact_id}", status_code=204)
@@ -284,7 +287,7 @@ async def remove_contact(
     contact_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
 ):
     """Remove from the radio. The archive keeps the contact (shown under "Removed") and its messages."""
-    await _radio_op(db, await _contact(db, contact_id), "contact_remove")
+    await radio_contact_op(db, await _contact(db, contact_id), "contact_remove")
 
 
 @router.post("/{contact_id}/share")
@@ -292,7 +295,7 @@ async def share_contact(
     contact_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
 ):
     """Re-broadcast this contact's advert to nearby nodes (zero hop)."""
-    await _radio_op(db, await _contact(db, contact_id), "contact_share")
+    await radio_contact_op(db, await _contact(db, contact_id), "contact_share")
     return {"ok": True}
 
 
@@ -301,7 +304,7 @@ async def export_contact(
     contact_id: uuid.UUID, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
 ):
     """A meshcore:// contact card that other MeshCore apps can import."""
-    result = await _radio_op(db, await _contact(db, contact_id), "contact_export")
+    result = await radio_contact_op(db, await _contact(db, contact_id), "contact_export")
     if not result.get("uri"):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The radio returned no contact card")
     return {"uri": result["uri"]}

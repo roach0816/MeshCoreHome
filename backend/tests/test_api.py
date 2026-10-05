@@ -626,3 +626,38 @@ async def test_contacts_follow_radio_advert_pushes(client, monkeypatch):
         return page["total"] == 1
 
     await wait_for(listed)
+
+
+async def test_dm_star_is_the_contact_favourite(client):
+    """One star per person: starring a DM sets the contact's favourite on the radio, and back."""
+    from app.radio import simulated
+
+    simulated._SIM_STATE = None
+    await do_setup(client)
+    await _connected_conversations(client)
+    contact = (await client.get("/api/contacts", params={"q": "Neighbor"})).json()["items"][0]
+    conv_id = (await client.post(f"/api/contacts/{contact['id']}/conversation", headers=csrf(client))).json()[
+        "conversation_id"
+    ]
+
+    async def conv():
+        return (await client.get(f"/api/conversations/{conv_id}")).json()
+
+    async def contact_fav():
+        return (await client.get(f"/api/contacts/{contact['id']}")).json()["favorite"]
+
+    assert (await conv())["favorite"] is False
+    r = await client.patch(f"/api/conversations/{conv_id}", headers=csrf(client), json={"favorite": True})
+    assert r.status_code == 204
+    assert (await conv())["favorite"] is True and await contact_fav() is True
+
+    r = await client.post(
+        f"/api/contacts/{contact['id']}/favorite", headers=csrf(client), json={"favorite": False}
+    )
+    assert r.status_code == 200
+    assert (await conv())["favorite"] is False and await contact_fav() is False
+
+    # Channels keep their own star.
+    public = next(c for c in (await client.get("/api/conversations")).json() if c["title"] == "Public")
+    await client.patch(f"/api/conversations/{public['id']}", headers=csrf(client), json={"favorite": True})
+    assert (await client.get(f"/api/conversations/{public['id']}")).json()["favorite"] is True

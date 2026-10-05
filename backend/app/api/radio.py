@@ -14,7 +14,7 @@ from app.db import get_db
 from app.models import AuditEvent, Channel, CollectionGap, Contact, Message, Radio
 from app.radio.supervisor import supervisor
 from app.realtime import hub
-from app.services import app_settings, radio_hat
+from app.services import app_settings, radio_hat, weather
 
 router = APIRouter(prefix="/api", tags=["radio"])
 
@@ -197,6 +197,37 @@ async def put_notifications(
     await db.commit()
     hub.publish("settings-updated", key="notifications")
     return body
+
+
+# Weather station for the bot's /weather (a LAN address: owner only, like other network settings).
+
+
+@router.get("/settings/weather", response_model=app_settings.WeatherConfig)
+async def get_weather(ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)):
+    return await app_settings.get_weather_config(db)
+
+
+@router.put("/settings/weather", response_model=app_settings.WeatherConfig)
+async def put_weather(
+    body: app_settings.WeatherConfig,
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
+    await app_settings.put_weather_config(db, body)
+    db.add(AuditEvent(kind="settings.weather", detail={"configured": bool(body.host)}))
+    await db.commit()
+    hub.publish("settings-updated", key="weather")
+    return body
+
+
+@router.post("/settings/weather/test")
+async def test_weather(body: app_settings.WeatherConfig, ctx: AuthContext = Depends(require_session)):
+    """Read the station now and show what /weather would reply (nothing is sent)."""
+    try:
+        reading = await weather.read(body.host, use_cache=False)
+    except weather.WeatherError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"reading": reading, "reply": weather.format_reply(reading)}
 
 
 @router.get("/settings/bot", response_model=app_settings.BotConfig)

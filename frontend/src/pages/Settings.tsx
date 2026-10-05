@@ -5,6 +5,7 @@ import {
   History,
   ChevronLeft,
   Bot,
+  CloudSun,
   Download,
   Pause,
   Play,
@@ -511,6 +512,7 @@ type BotConfig = { enabled: boolean; allow: "favorites" | "everyone" };
 const BOT_COMMANDS: [string, string][] = [
   ["/info", "This node's name, MeshCore Home version, time online, radio settings and number of contacts."],
   ["/ping", "\u201cpong\u201d with how your message arrived: signal (SNR, RSSI) and hops."],
+  ["/weather", "Outdoor temperature, humidity, wind, 24-hour rain and air quality from your weather station (set up below)."],
   ["/help", "The list of commands."],
 ];
 
@@ -555,7 +557,7 @@ function BotSection() {
             <legend className="mb-2 text-sm font-medium">Who can use it</legend>
             {(
               [
-                ["favorites", "Favourite contacts", "Mark the radios you use as favourites in Contacts."],
+                ["favorites", "Favourite contacts", "Star them, in Contacts or at the top of their conversation."],
                 ["everyone", "Every contact", "Anyone on your radio's contact list. Blocked contacts are always ignored."],
               ] as const
             ).map(([value, title, sub]) => (
@@ -584,19 +586,78 @@ function BotSection() {
           <dl className="space-y-1.5 rounded-lg bg-surface-2 p-3 text-sm">
             {BOT_COMMANDS.map(([cmd, what]) => (
               <div key={cmd} className="flex gap-3">
-                <dt className="w-12 shrink-0 font-mono font-medium">{cmd}</dt>
+                <dt className="w-20 shrink-0 font-mono font-medium">{cmd}</dt>
                 <dd className="text-muted">{what}</dd>
               </div>
             ))}
           </dl>
           <p className="text-xs text-muted">
-            To save airtime it answers each contact at most once every 10 seconds and 6 times a minute in total, and
-            ignores commands more than 15 minutes old. Replies appear in the conversation like your own messages.
+            To save airtime it replies to each contact at most once every 10 seconds and 6 times a minute in total
+            (quick follow-up commands are answered in turn), and ignores commands more than 15 minutes old. Replies appear
+            in the conversation like your own messages.
           </p>
           <ErrorText error={save.error} />
+          <WeatherStation />
         </>
       )}
     </Section>
+  );
+}
+
+/** The Ecowitt gateway that answers /weather (its local live-data page; no cloud account). */
+function WeatherStation() {
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["weather-settings"], queryFn: () => api<{ host: string }>("/api/settings/weather") });
+  const [host, setHost] = useState<string | null>(null);
+  const value = host ?? cfg.data?.host ?? "";
+  const test = useMutation({
+    mutationFn: () => api<{ reply: string }>("/api/settings/weather/test", { json: { host: value } }),
+  });
+  const save = useMutation({
+    mutationFn: () => api<{ host: string }>("/api/settings/weather", { method: "PUT", json: { host: value } }),
+    onSuccess: (v) => {
+      qc.setQueryData(["weather-settings"], v);
+      setHost(null);
+    },
+  });
+  const dirty = value.trim() !== (cfg.data?.host ?? "");
+  return (
+    <div className="space-y-3 border-t border-line pt-4">
+      <Field
+        label="Weather station for /weather"
+        htmlFor="weather-host"
+        hint="The IP address or hostname of your Ecowitt gateway or Wi-Fi console (GW1100, GW2000, GW3000, …) on your network, e.g. 192.168.1.50. MeshCore Home reads its live data directly; nothing goes through the Ecowitt cloud. Leave empty to turn /weather off."
+      >
+        <Input
+          id="weather-host"
+          value={value}
+          placeholder="Not set"
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={253}
+          onChange={(e) => {
+            setHost(e.target.value);
+            test.reset();
+          }}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => test.mutate()} disabled={!value.trim() || test.isPending}>
+          <CloudSun className="size-4" aria-hidden /> {test.isPending ? "Reading the station…" : "Test station"}
+        </Button>
+        <Button variant="primary" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          Save
+        </Button>
+      </div>
+      {test.data && (
+        <div className="rounded-lg border border-ok/40 bg-ok/5 px-3 py-2 text-sm" role="status">
+          <p className="text-xs text-muted">/weather would reply:</p>
+          <p className="mt-0.5 font-medium">{test.data.reply}</p>
+        </div>
+      )}
+      <ErrorText error={test.error || save.error} />
+    </div>
   );
 }
 

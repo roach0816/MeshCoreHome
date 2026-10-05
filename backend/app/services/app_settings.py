@@ -75,6 +75,23 @@ class BotConfig(BaseModel):
 
 
 BOT_KEY = "bot"
+
+
+class WeatherConfig(BaseModel):
+    # Address of an Ecowitt gateway/console on the local network ("192.168.1.50" or "gw2000.lan",
+    # optionally ":port"). Empty: the bot's /weather command is off.
+    host: str = Field(default="", max_length=253)
+
+    @field_validator("host")
+    @classmethod
+    def _host_only(cls, v: str) -> str:
+        v = v.strip()
+        if v and (any(c.isspace() for c in v) or "/" in v or "@" in v or "?" in v or "#" in v):
+            raise ValueError("Enter only the gateway's IP address or hostname (optionally :port)")
+        return v
+
+
+WEATHER_KEY = "weather"
 RADIO_KEY = "radio"
 MAP_KEY = "map"
 INSTALLATION_KEY = "installation"
@@ -128,6 +145,15 @@ async def get_bot_config(db: AsyncSession) -> BotConfig:
 
 async def put_bot_config(db: AsyncSession, cfg: BotConfig) -> None:
     await _put(db, BOT_KEY, cfg.model_dump())
+
+
+async def get_weather_config(db: AsyncSession) -> WeatherConfig:
+    raw = await _get(db, WEATHER_KEY)
+    return WeatherConfig.model_validate(raw) if raw else WeatherConfig()
+
+
+async def put_weather_config(db: AsyncSession, cfg: WeatherConfig) -> None:
+    await _put(db, WEATHER_KEY, cfg.model_dump())
 
 
 async def get_installation(db: AsyncSession) -> InstallationConfig:

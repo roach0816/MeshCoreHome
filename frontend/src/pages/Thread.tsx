@@ -180,6 +180,14 @@ function ThreadView({ conv, status }: { conv: Conversation; status?: Status }) {
           </IconButton>
         </header>
 
+        {favorite.error != null && (
+          <div className="flex items-center gap-2 border-b border-line bg-danger/5 px-4 py-2 text-xs text-danger" role="alert">
+            <span className="flex-1">{(favorite.error as Error).message}</span>
+            <button className="underline" onClick={() => favorite.reset()}>
+              Dismiss
+            </button>
+          </div>
+        )}
         {!online && (
           <div className="border-b border-line bg-warn/10 px-4 py-2 text-xs text-ink" role="status">
             Radio is not connected — history is available, sending is disabled.{" "}

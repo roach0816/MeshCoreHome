@@ -12,6 +12,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.contacts import radio_contact_op
 from app.api.deps import AuthContext, require_auth
 from app.config import get_settings
 from app.db import get_db
@@ -183,7 +184,8 @@ async def _conversation_rows(db: AsyncSession, user_id: uuid.UUID, conv_id: uuid
                 id=conv.id,
                 kind=conv.kind,
                 title=(contact.alias or contact.name) if contact else conv.title,
-                favorite=conv.favorite,
+                # One star per person: a DM's star is its contact's favourite flag on the radio.
+                favorite=contact.favorite if contact else conv.favorite,
                 muted=conv.muted,
                 sound=conv.sound,
                 blocked=bool(contact and contact.blocked),
@@ -245,7 +247,12 @@ async def patch_conversation(
 ):
     conv = await _conversation(db, conv_id)
     if body.favorite is not None:
-        conv.favorite = body.favorite
+        contact = await db.get(Contact, conv.contact_id) if conv.contact_id else None
+        if contact is not None:
+            # Starring a person sets their favourite flag on the radio (and the bot follows it).
+            await radio_contact_op(db, contact, "contact_favorite", {"favorite": body.favorite})
+        else:
+            conv.favorite = body.favorite
     if body.muted is not None:
         conv.muted = body.muted
     if body.sound is not None:

@@ -1,7 +1,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMatch, useNavigate } from "react-router";
-import { Bell, BellOff, CheckCheck, Copy, Eraser, Info, MessageSquare, Star, StarOff, Trash2 } from "lucide-react";
+import { Bell, BellOff, CheckCheck, Copy, Eraser, Info, MessageSquare, Star, StarOff, Trash2, X } from "lucide-react";
 import { soundDefaultFor, soundEnabledFor, type SoundSetting } from "../lib/sound";
 import { api, type Conversation, type ConversationInfo } from "../lib/api";
 import { formatDateTime } from "../lib/util";
@@ -28,6 +28,7 @@ export function useConversationActions() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conversations"] });
 
+  // A DM's star is the contact's favourite on the radio, so it can fail (e.g. radio offline).
   const favorite = useMutation({
     mutationFn: (c: Conversation) => api(`/api/conversations/${c.id}`, { method: "PATCH", json: { favorite: !c.favorite } }),
     onSuccess: refresh,
@@ -92,6 +93,16 @@ export function useConversationActions() {
 
   const element = (
     <>
+      {favorite.error != null && (
+        <div className="fixed bottom-4 left-1/2 z-40 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2" role="alert">
+          <div className="flex items-start gap-2 rounded-xl border border-danger/40 bg-surface p-3 text-sm text-danger shadow-xl">
+            <span className="flex-1">{(favorite.error as Error).message}</span>
+            <IconButton label="Dismiss" className="-m-2 size-9" onClick={() => favorite.reset()}>
+              <X className="size-4" />
+            </IconButton>
+          </div>
+        </div>
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}

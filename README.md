@@ -73,9 +73,16 @@ direct messages from any browser that can reach it.
   private-key export/import are deliberately left out. Use official MeshCore tools for those.
 - **Bot** (Settings → Bot, off by default): query your home node from another radio. Send it a
   direct message of `/info` for its name, version, time online, radio settings and contact count,
-  `/ping` for how your message arrived (SNR, RSSI, hops), or `/help`. It answers favourite contacts
+  `/ping` for how your message arrived (SNR, RSSI, hops), `/weather` for your weather station's
+  outdoor temperature, humidity, wind, 24-hour rain and air quality, or `/help`. For `/weather`, enter
+  the address of your Ecowitt gateway or Wi-Fi console (e.g. GW1100/GW2000/GW3000 with a WS90) on
+  your network. MeshCore Home reads its local live data directly, without the Ecowitt cloud. It answers favourite contacts
   only, unless you allow every contact. Channels are never answered. Replies are rate-limited to
-  save airtime, and commands older than 15 minutes are ignored.
+  save airtime (quick follow-up commands are answered in turn), and commands older than 15 minutes
+  are ignored.
+- **One star per person:** starring a direct-message conversation and favouriting the contact are
+  the same thing (the radio's favourite flag), so the sidebar, Contacts and the bot always agree.
+  Channels have their own star.
 - **Account** (click your name, bottom left): a dialog to change your username and password, and sign out. The version is shown under your name.
 - Right-click (or long-press) menu on conversations: info, mark as read, favorite, mute or unmute,
   and delete or clear history.
