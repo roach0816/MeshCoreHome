@@ -333,6 +333,10 @@ version number to a file. A root-owned systemd unit (`meshcore-home-update`) the
 against the official releases before installing anything. A container install (Docker or
 Kubernetes) also shows when an update is available, but is updated by redeploying.
 
+**Radio firmware:** the same page compares the radio's MeshCore firmware version with MeshCore's
+latest companion release on GitHub, and **Settings → Device** shows *Up to date* or *vX.Y.Z
+available* next to the firmware version. MeshCore Home does not install radio firmware.
+
 ## Quick start with Docker Compose
 
 ```bash

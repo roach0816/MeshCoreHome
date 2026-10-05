@@ -20,6 +20,7 @@ import { useUpdateInfo } from "../lib/queries";
 import { NetworkSection } from "../components/NetworkSettings";
 import { ApiKeysSection } from "../components/ApiKeys";
 import { RadioHatPanel, useRadioHat } from "../components/RadioHat";
+import { FirmwareBadge, useRadioFirmware } from "../components/RadioFirmware";
 import { api, type Device, type MapConfig, type RadioConfig, type RadioMode } from "../lib/api";
 import { Badge, Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
@@ -304,6 +305,7 @@ function RadioSection() {
 
 function DeviceSection() {
   const device = useQuery({ queryKey: ["device"], queryFn: () => api<Device>("/api/device") });
+  const firmware = useRadioFirmware();
   const d = device.data;
   if (!d?.radio)
     return (
@@ -322,7 +324,14 @@ function DeviceSection() {
           <code className="break-all font-mono text-xs">{d.radio.public_key}</code>
         </Row>
         <Row k="Model">{String(d.radio.device_info.model ?? "—")}</Row>
-        <Row k="Firmware">{String(d.radio.device_info.firmware ?? "—")}</Row>
+        <Row k="Firmware">
+          <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+            {String(d.radio.device_info.firmware ?? "—")}
+            <Link to="/settings/updates" title="Radio firmware">
+              <FirmwareBadge s={firmware.data} />
+            </Link>
+          </span>
+        </Row>
         <Row k="RF">
           {rf.freq_mhz ? `${rf.freq_mhz} MHz · BW ${rf.bw_khz} kHz · SF${rf.sf} · CR${rf.cr} · ${rf.tx_power_dbm} dBm` : "—"}
         </Row>

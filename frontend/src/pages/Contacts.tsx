@@ -10,7 +10,6 @@ import {
   Copy,
   Info,
   MessageSquare,
-  RefreshCw,
   Route,
   RouteOff,
   Search,
@@ -80,7 +79,6 @@ function useDebounced<T>(value: T, ms = 250): T {
 }
 
 export function Contacts() {
-  const qc = useQueryClient();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<string>("");
@@ -125,11 +123,6 @@ export function Contacts() {
     if (data && page > pages) setPage(pages);
   }, [data, page, pages]);
 
-  const refresh = useMutation({
-    mutationFn: () => api<{ count: number }>("/api/contacts/refresh", { method: "POST" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["contacts"] }),
-  });
-
   const actions = useContactActions();
   const trigger = useContextTrigger();
   const from = data && data.total ? (page - 1) * pageSize + 1 : 0;
@@ -145,11 +138,8 @@ export function Contacts() {
         >
           <ChevronLeft className="size-6" />
         </Link>
-        <h2 className="flex-1 px-1 text-base font-semibold">Contacts</h2>
-        <Button onClick={() => refresh.mutate()} disabled={refresh.isPending} title="Re-read contacts from the radio">
-          <RefreshCw className={cx("size-4", refresh.isPending && "animate-spin")} aria-hidden />
-          <span className="hidden sm:inline">Refresh from radio</span>
-        </Button>
+        {/* No refresh button: the list follows the radio's adverts (and re-reads every 30 minutes). */}
+        <h2 className="flex-1 px-1 py-2 text-base font-semibold">Contacts</h2>
       </header>
 
       {/* Toolbar: search, filters, sort */}
@@ -224,7 +214,7 @@ export function Contacts() {
 
       {/* Table */}
       <div className="relative min-h-0 flex-1 overflow-y-auto">
-        <ErrorText error={refresh.error ?? list.error} />
+        <ErrorText error={list.error} />
         <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
             <col />

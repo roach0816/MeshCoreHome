@@ -7,6 +7,7 @@ import { useUpdateInfo } from "../lib/queries";
 import { Badge, Button, Card, ErrorText } from "../components/ui";
 import { Dialog } from "../components/Dialog";
 import { MarkdownLite } from "../components/MarkdownLite";
+import { RadioFirmwareSection } from "../components/RadioFirmware";
 import { cx, formatDateTime, relativeSeconds } from "../lib/util";
 
 const ACTIVE: UpdateState[] = ["queued", "downloading", "installing", "migrating", "restarting"];
@@ -168,6 +169,8 @@ export function Updates() {
               <StatusDetail st={d.status} />
             </Section>
           )}
+
+          <RadioFirmwareSection />
         </div>
       </div>
 

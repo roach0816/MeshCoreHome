@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.7.10"
+APP_VERSION = "0.7.11"
 
 
 class Settings(BaseSettings):
@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     # MeshCore's suggested radio presets (refreshed daily; a bundled copy is used offline). Empty: bundled only.
     radio_presets_url: str = Field(default="https://api.meshcore.nz/api/v1/config", alias="RADIO_PRESETS_URL")
     update_api_url: str = Field(default="https://api.github.com", alias="UPDATE_API_URL")
+    # Where MeshCore companion firmware is released (GitHub "owner/repo"), for the radio update check.
+    firmware_repo: str = Field(default="meshcore-dev/MeshCore", alias="FIRMWARE_REPO")
 
     # Directory holding the built frontend. Empty disables static serving (dev uses the Vite server).
     static_dir: str = Field(default="app/static", alias="STATIC_DIR")
