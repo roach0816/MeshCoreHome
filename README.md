@@ -196,7 +196,7 @@ sudo meshcore-home security-updates   turn on automatic OS security updates
 sudo meshcore-home radio-hat set up the RAK6421 radio HAT (also: radio-hat remove | restart | logs)
 meshcore-home logs [-f]      application log
 sudo meshcore-home update    upgrade to the latest release (same wizard, with a database backup)
-sudo meshcore-home backup    back up the database now
+sudo meshcore-home backup    dump the database now (for repairs; see "Backup and restore")
 sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
 ```
 
@@ -344,6 +344,42 @@ Kubernetes) also shows when an update is available, but is updated by redeployin
 **Radio firmware:** the same page compares the radio's MeshCore firmware version with MeshCore's
 latest companion release on GitHub, and **Settings → Device** shows *Up to date* or *vX.Y.Z
 available* next to the firmware version. MeshCore Home does not install radio firmware.
+
+### Backup and restore
+
+**Settings → Backup & restore** makes one file that holds the whole installation:
+
+- the owner account and API keys (password hashes only);
+- all settings, including the radio connection, map, notifications, bot and weather station;
+- the message archive, contacts, channels and the repeater-admin history;
+- on a native install, also this Pi's network and HTTPS settings, the HTTPS certificate and key,
+  the DNS provider credentials, and the radio HAT's identity, contacts and channels (ZephCore).
+
+The file is always encrypted with a passphrase you choose (AES-256-GCM, key derived with scrypt).
+It can't be opened without the passphrase, and MeshCore Home doesn't store it. On a native install,
+backups are kept in `/var/lib/meshcore-home/user-backups` until you delete them. Download copies
+and keep them off the Pi: `uninstall --purge` deletes that folder. Container installs hand you the
+file to download straight away.
+
+**Restoring** works from Settings, or from the first-run setup wizard (**Restore a backup
+instead**, with the setup token). Upload the file and enter the passphrase. MeshCore Home checks
+the backup before anything changes and lists what will be restored and what won't, for example:
+
+- A backup from a newer MeshCore Home is refused until you update. An older backup works (new
+  settings take their defaults).
+- **Native to container:** network, HTTPS and the radio HAT aren't restored, because the cluster's
+  Ingress handles HTTPS and HATs need a Pi. A radio connection set to the HAT is cleared.
+- **Container to native:** the Pi keeps its own network and HTTPS settings.
+- **Native to native:** the certificate and DNS credentials are put back and the network settings
+  are applied. No new certificate is requested, so point the hostname at the new Pi if it moved.
+  The HAT identity is restored too; if no HAT is set up yet, setting it up uses it.
+
+A restore replaces all data, and everyone signs in again with the backup's account. In Settings, a
+copy of the data being replaced is saved first, encrypted with the same passphrase. On native
+installs, the replaced certificate folder and HAT data are kept as `*.before-restore`.
+
+`sudo meshcore-home backup` is different: an unencrypted database dump, used before upgrades and
+for repairs.
 
 ## Quick start with Docker Compose
 

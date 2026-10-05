@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Check, Cpu, FlaskConical, KeyRound, Radio, RadioTower, UserRound, WifiOff } from "lucide-react";
+import { ArchiveRestore, Check, Cpu, FlaskConical, KeyRound, Radio, RadioTower, UserRound, WifiOff } from "lucide-react";
 import { api, type Me, type RadioMode } from "../lib/api";
 import { Button, Card, ErrorText, Field, Input } from "../components/ui";
 import { cx } from "../lib/util";
 import { useSetupStatus } from "../lib/queries";
+import { RestoreFlow } from "../components/BackupRestore";
 
 const STEPS = [
   { title: "Verify", icon: KeyRound },
@@ -55,6 +56,7 @@ export function SetupWizard() {
   const [host, setHost] = useState("");
   const [port, setPort] = useState("5000");
   const [touched, setTouched] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const setupStatus = useSetupStatus();
   const hatReady = !!setupStatus.data?.radio_hat_ready;
   const modes = hatReady ? [HAT_MODE, ...MODES] : MODES;
@@ -312,6 +314,24 @@ export function SetupWizard() {
             </div>
           </form>
         </Card>
+        {step === 0 && (
+          <Card className="mt-4 p-5 sm:p-6">
+            {restoring ? (
+              token.trim() ? (
+                <RestoreFlow setupToken={token.trim()} onCancel={() => setRestoring(false)} />
+              ) : (
+                <p className="text-sm">Enter the setup token above first; restoring needs it too.</p>
+              )
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted">Moving from another MeshCore Home, or reinstalling?</p>
+                <Button type="button" onClick={() => setRestoring(true)}>
+                  <ArchiveRestore className="size-4" aria-hidden /> Restore a backup instead
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
       </div>
     </div>
   );

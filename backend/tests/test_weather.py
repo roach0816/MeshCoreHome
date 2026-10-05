@@ -6,9 +6,8 @@ import httpx
 import pytest
 
 from app.radio.base import IncomingMessage
-from app.radio.supervisor import supervisor
 from app.services import bot, weather
-from tests.conftest import csrf, do_setup, wait_for
+from tests.conftest import csrf, do_setup, radio_adapter, wait_for
 from tests.test_api import _connected_conversations
 
 REAL_CLIENT = httpx.AsyncClient  # kept: tests patch httpx.AsyncClient more than once
@@ -157,7 +156,7 @@ async def test_bot_weather_command(client, monkeypatch):
     async def ask(text: str) -> str:
         bot._last_reply.clear()
         before = len(await bot_replies())
-        supervisor.adapter.inject(
+        (await radio_adapter()).inject(
             IncomingMessage(
                 kind="dm",
                 text=text,

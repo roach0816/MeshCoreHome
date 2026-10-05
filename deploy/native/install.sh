@@ -1813,6 +1813,155 @@ https_disable() {
   ok "HTTPS disabled — $APP_NAME is on $(public_url)"
 }
 
+# ---- backup and restore: the system files the app cannot read ----------------------------------
+# The web app makes the database part of a backup itself. These two helper actions pack and unpack
+# what only root can read: the network settings, the HTTPS certificate and key, the DNS provider
+# credentials (all in $ACME_DIR) and the radio HAT's data ($HAT_DATA). The archive is handed over in
+# $STATE_DIR, readable only by the app user, which encrypts it into the backup file at once.
+SYSTEM_EXPORT=$STATE_DIR/system-export.tar.gz
+SYSTEM_RESTORE=$STATE_DIR/system-restore.tar.gz
+NETWORK_KEYS=(HTTPS_ENABLED HTTPS_HOST PORT HTTPS_PORT HTTPS_REDIRECT CERTBOT_EMAIL CERTBOT_STAGING CF_PROPAGATION ACME_CLIENT ACME_PROVIDER)
+
+system_export() {
+  local tmp k v hat=0 was=0 cert="" host
+  tmp=$(mktemp -d) || return 1
+  chmod 700 "$tmp"
+  for k in "${NETWORK_KEYS[@]}"; do
+    v=$(env_get "$k"); [[ -n $v ]] && printf '%s=%s\n' "$k" "$v"
+  done >"$tmp/network.env"
+  if [[ -d $ACME_DIR ]]; then cp -a "$ACME_DIR" "$tmp/acme"; fi
+  if [[ -d $HAT_DATA ]] && [[ -n $(ls -A "$HAT_DATA" 2>/dev/null) ]]; then
+    # A consistent copy: ZephCore writes its files while running.
+    systemctl is-active --quiet "$HAT_SERVICE" 2>/dev/null && was=1
+    ((was)) && systemctl stop "$HAT_SERVICE" >>"$LOG_FILE" 2>&1
+    cp -a "$HAT_DATA" "$tmp/radio-hat" && hat=1
+    ((was)) && systemctl start "$HAT_SERVICE" >>"$LOG_FILE" 2>&1
+  fi
+  host=$(env_get HTTPS_HOST)
+  [[ -n $host && -f $(acme_cert_path "$host") ]] && cert=$(acme_cert_path "$host")
+  python3 - "$tmp/system-manifest.json" "$(env_get HTTPS_ENABLED)" "$host" "$(env_get ACME_CLIENT)" \
+    "$(env_get ACME_PROVIDER)" "$( [[ -n $(env_get ACME_PROVIDER) ]] && acme_provider_name "$(env_get ACME_PROVIDER)")" \
+    "$cert" "$hat" "$(hat_installed_version 2>/dev/null || true)" "$(installed_version)" <<'PY'
+import json, ssl, sys, time
+out, https, host, client, provider, pname, cert, hat, zeph, app = sys.argv[1:11]
+not_after = None
+if cert:
+    try:
+        not_after = ssl._ssl._test_decode_cert(cert).get("notAfter")  # e.g. "Jan  5 12:00:00 2027 GMT"
+    except Exception:
+        pass
+json.dump({
+    "https": https == "1", "https_host": host or None, "acme_client": client or None,
+    "provider": provider or None, "provider_name": pname or None,
+    "cert_included": bool(cert) and client == "lego", "cert_not_after": not_after,
+    "hat_data": hat == "1", "zephcore_version": zeph or None, "app_version": app or None,
+    "created_at": time.time(),
+}, open(out, "w"), indent=1)
+PY
+  tar -C "$tmp" --numeric-owner -czf "$SYSTEM_EXPORT.tmp" . || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+  chown "$APP_USER:$APP_USER" "$SYSTEM_EXPORT.tmp"; chmod 600 "$SYSTEM_EXPORT.tmp"
+  mv -f "$SYSTEM_EXPORT.tmp" "$SYSTEM_EXPORT"
+}
+
+system_restore() {  # system_restore SHA256 — unpack a backup's system part and apply it
+  local want=$1 tmp parsed
+  if [[ ! -f $SYSTEM_RESTORE || -L $SYSTEM_RESTORE || $(stat -c %U "$SYSTEM_RESTORE") != "$APP_USER" ]]; then
+    warn "No backup system archive to restore"; return 1
+  fi
+  if [[ $(sha256sum "$SYSTEM_RESTORE" | cut -d' ' -f1) != "$want" ]]; then
+    warn "The backup system archive does not match its checksum"; rm -f "$SYSTEM_RESTORE"; return 1
+  fi
+  tmp=$(mktemp -d) || return 1
+  chmod 700 "$tmp"
+  # Only regular files and folders, under the expected names, are accepted.
+  if ! python3 - "$SYSTEM_RESTORE" "$tmp" <<'PY'
+import re, sys, tarfile
+src, dest = sys.argv[1:3]
+ok = re.compile(r"^(\./)?(network\.env|system-manifest\.json|acme(/[A-Za-z0-9._@+=-]+)*|radio-hat(/[A-Za-z0-9._@+=-]+)*)/?$")
+total = 0
+with tarfile.open(src, "r:gz") as tar:
+    members = []
+    for m in tar:
+        if m.name in (".", "./"):
+            continue
+        if not (m.isfile() or m.isdir()) or not ok.match(m.name) or ".." in m.name.split("/"):
+            sys.exit(f"unexpected entry in the backup: {m.name!r}")
+        total += m.size
+        if total > 200 * 1024 * 1024:
+            sys.exit("the backup's system files are too large")
+        m.uid = m.gid = 0
+        m.uname = m.gname = "root"
+        members.append(m)
+    tar.extractall(dest, members=members, filter="data") if hasattr(tarfile, "data_filter") else tar.extractall(dest, members=members)
+PY
+  then
+    warn "The backup's system files were refused"; rm -rf "$tmp"; rm -f "$SYSTEM_RESTORE"; return 1
+  fi
+  rm -f "$SYSTEM_RESTORE"
+
+  # HTTPS certificate, key, account and DNS credentials. The current ones are kept beside them.
+  if [[ -d $tmp/acme ]]; then
+    rm -rf "$ACME_DIR.before-restore"
+    [[ -d $ACME_DIR ]] && mv "$ACME_DIR" "$ACME_DIR.before-restore"
+    cp -a "$tmp/acme" "$ACME_DIR"
+    chown -R root:root "$ACME_DIR"; chmod 700 "$ACME_DIR"
+    ok "Restored the HTTPS certificate and DNS credentials"
+  fi
+
+  # The radio HAT's identity, contacts and channels.
+  if [[ -d $tmp/radio-hat ]]; then
+    local was=0
+    systemctl is-active --quiet "$HAT_SERVICE" 2>/dev/null && was=1
+    ((was)) && systemctl stop "$HAT_SERVICE" >>"$LOG_FILE" 2>&1
+    rm -rf "$HAT_DATA.before-restore"
+    [[ -d $HAT_DATA ]] && mv "$HAT_DATA" "$HAT_DATA.before-restore"
+    cp -a "$tmp/radio-hat" "$HAT_DATA"
+    if id "$HAT_USER" >/dev/null 2>&1; then chown -R "$HAT_USER:$HAT_USER" "$HAT_DATA"; fi
+    chmod 750 "$HAT_DATA"
+    ((was)) && systemctl start "$HAT_SERVICE" >>"$LOG_FILE" 2>&1
+    ok "Restored the radio HAT's data"
+  fi
+
+  # Network settings: applied like a request from Settings → Network (validated, rolled back
+  # on failure). With the certificate restored, no new one is requested.
+  if [[ -f $tmp/network.env ]]; then
+    parsed=$(python3 - "$tmp/network.env" <<'PY'
+import re, shlex, sys
+allowed = {"HTTPS_ENABLED", "HTTPS_HOST", "PORT", "HTTPS_PORT", "HTTPS_REDIRECT", "CERTBOT_EMAIL",
+           "CERTBOT_STAGING", "CF_PROPAGATION", "ACME_CLIENT", "ACME_PROVIDER"}
+v = {}
+for line in open(sys.argv[1]):
+    k, sep, val = line.rstrip("\n").partition("=")
+    if sep and k in allowed and not re.search(r"[\x00-\x1f]", val) and len(val) < 300:
+        v[k] = val
+out = {
+    "NEW_HTTPS": "1" if v.get("HTTPS_ENABLED") == "1" else "0", "NEW_HOST": v.get("HTTPS_HOST", "").lower(),
+    "NEW_PORT": v.get("PORT", ""), "NEW_HTTPS_PORT": v.get("HTTPS_PORT", "443"),
+    "NEW_REDIRECT": "0" if v.get("HTTPS_REDIRECT") == "0" else "1", "NEW_EMAIL": v.get("CERTBOT_EMAIL", ""),
+    "NEW_STAGING": "1" if v.get("CERTBOT_STAGING") == "1" else "0", "NEW_PROPAGATION": v.get("CF_PROPAGATION", "0"),
+    "NEW_PROVIDER": v.get("ACME_PROVIDER", ""), "RESTORED_CLIENT": v.get("ACME_CLIENT", ""),
+}
+if not re.fullmatch(r"[a-z0-9]{0,32}", out["NEW_PROVIDER"]):
+    out["NEW_PROVIDER"] = ""
+for k, val in out.items():
+    print(f"{k}={shlex.quote(val)}")
+PY
+)
+    eval "$parsed"
+    NEW_CREDENTIALS="" NEW_TOKEN=""
+    if [[ $NEW_HTTPS == 1 && -d $tmp/acme && $RESTORED_CLIENT == lego ]]; then
+      # Same client and staging as when the certificate was issued: keep it.
+      env_set ACME_CLIENT lego
+      env_set CERTBOT_STAGING "$NEW_STAGING"
+      [[ -n $NEW_PROVIDER ]] && env_set ACME_PROVIDER "$NEW_PROVIDER"
+    fi
+    if ! apply_network_config; then rm -rf "$tmp"; return 1; fi
+  fi
+  rm -rf "$tmp"
+  write_network_snapshot
+}
+
 apply_config_request() {  # --apply-config: run by meshcore-home-config.service for the web UI
   [[ -f $CONFIG_REQUEST ]] || { log "no config request; nothing to do"; return 0; }
   local parsed
@@ -1830,7 +1979,11 @@ def flag(k, default):
     v = r.get(k, default)
     return "1" if v in (True, 1, "1") else "0"
 action = s("action", "apply")
-if action not in ("apply", "renew", "refresh", "hat-install", "hat-remove", "hat-restart", "reboot"):
+if action not in ("apply", "renew", "refresh", "hat-install", "hat-remove", "hat-restart", "reboot",
+                  "system-export", "system-restore"):
+    action = "invalid"
+digest = s("sha256").lower()
+if action == "system-restore" and not re.fullmatch(r"[0-9a-f]{64}", digest):
     action = "invalid"
 token = s("cf_token")
 if token and not re.fullmatch(r"[A-Za-z0-9_\-]{20,200}", token):
@@ -1847,7 +2000,7 @@ out = {
     "NEW_PORT": s("app_port"), "NEW_HTTPS": flag("https_enabled", False), "NEW_HOST": s("hostname").lower(),
     "NEW_HTTPS_PORT": s("https_port", "443"), "NEW_REDIRECT": flag("redirect_http", True),
     "NEW_EMAIL": s("email"), "NEW_STAGING": flag("staging", False), "NEW_PROPAGATION": s("propagation_seconds", "30"),
-    "NEW_TOKEN": token, "NEW_PROVIDER": provider,
+    "NEW_TOKEN": token, "NEW_PROVIDER": provider, "RESTORE_SHA256": digest,
 }
 for k, v in out.items():
     if re.search(r"[\x00-\x1f]", v):
@@ -1862,6 +2015,17 @@ PY
   STATUS_FILE=$CONFIG_STATUS
   case "${ACTION:-invalid}" in
     refresh) write_network_snapshot; return 0 ;;
+    system-export)
+      status applying "Packing the system settings for a backup"
+      if system_export; then status "done" "System settings packed"; else status failed "Could not pack the system settings"; return 1; fi ;;
+    system-restore)
+      status applying "Restoring the system settings from a backup"
+      if system_restore "$RESTORE_SHA256"; then
+        status "done" "System settings restored — $APP_NAME is on $(public_url)"
+      else
+        status failed "System settings were not restored; the previous configuration is still in place"
+        return 1
+      fi ;;
     hat-install)
       status applying "Setting up the radio HAT"
       if hat_install; then status "done" "Radio HAT set up"; else status failed "Radio HAT not set up"; return 1; fi ;;
@@ -2128,6 +2292,7 @@ hat_install() {  # interactive or web-UI setup; returns 1 (without exiting) if t
   fi
   usermod -aG spi,gpio "$HAT_USER"
   install -d -m 750 -o "$HAT_USER" -g "$HAT_USER" "$HAT_DATA"
+  chown -R "$HAT_USER:$HAT_USER" "$HAT_DATA"  # e.g. an identity restored from a backup before setup
   install -d -m 755 "$(dirname "$HAT_UDEV_RULE")"
   cat >"$HAT_UDEV_RULE" <<'RULE'
 # MeshCore Home radio HAT: the "spi" and "gpio" groups may use the radio's SPI bus and GPIO lines.

@@ -8,16 +8,15 @@ from sqlalchemy import select
 from app import db
 from app.models import Message
 from app.radio.base import IncomingMessage
-from app.radio.supervisor import supervisor
 from app.services import bot
-from tests.conftest import csrf, do_setup, wait_for
+from tests.conftest import csrf, do_setup, radio_adapter, wait_for
 from tests.test_api import _connected_conversations
 
 
-def _send_to_node(name_key: str, text: str, age: int = 0, meta: dict | None = None) -> None:
+async def _send_to_node(name_key: str, text: str, age: int = 0, meta: dict | None = None) -> None:
     from app.radio import simulated
 
-    supervisor.adapter.inject(
+    (await radio_adapter()).inject(
         IncomingMessage(
             kind="dm",
             text=text,
@@ -57,7 +56,7 @@ async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
     assert (await client.get("/api/settings/bot")).json() == {"enabled": False, "allow": "favorites"}
 
     # Off by default: the command is archived, nothing is sent.
-    _send_to_node("tracker", "/info")
+    await _send_to_node("tracker", "/info")
     await wait_for(lambda: _received("/info"))
     await _settle()
     assert await _bot_replies() == []
@@ -67,7 +66,7 @@ async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
     )
     assert r.status_code == 200
     # Not a favourite: ignored.
-    _send_to_node("neighbor", "/ping")
+    await _send_to_node("neighbor", "/ping")
     await wait_for(lambda: _received("/ping"))
     await _settle()
     assert await _bot_replies() == []
@@ -77,14 +76,14 @@ async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
         f"/api/contacts/{items[0]['id']}/favorite", headers=csrf(client), json={"favorite": True}
     )
 
-    _send_to_node("tracker", "/INFO please")
+    await _send_to_node("tracker", "/INFO please")
     replies = await wait_for(_bot_replies)
     info = replies[0]
     assert info.body.startswith("Home (simulated) · MeshCore Home ") and "contacts" in info.body
     assert len(info.body.encode()) <= 150 and info.meta == {"bot": "info"}
 
     # A quick follow-up command waits its turn (1.5 s here, 10 s for real) and is then answered.
-    _send_to_node("tracker", "/ping", meta={"SNR": 7.25, "RSSI": -80, "path_len": 2})
+    await _send_to_node("tracker", "/ping", meta={"SNR": 7.25, "RSSI": -80, "path_len": 2})
     await wait_for(lambda: _received("/ping"))
     await _settle()
     assert len(await _bot_replies()) == 1  # still waiting
@@ -100,14 +99,14 @@ async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
 
     # Old commands (e.g. collected after an outage) are not answered.
     bot._last_reply.clear()
-    _send_to_node("tracker", "/ping", age=3600)
+    await _send_to_node("tracker", "/ping", age=3600)
     await wait_for(lambda: _received("/ping"))
     await _settle()
     assert len(await _bot_replies()) == 2
 
     # Everyone: unknown commands get a hint.
     await client.put("/api/settings/bot", headers=csrf(client), json={"enabled": True, "allow": "everyone"})
-    _send_to_node("neighbor", "/forecast")
+    await _send_to_node("neighbor", "/forecast")
 
     async def three():
         r = await _bot_replies()

@@ -6,7 +6,7 @@ from app import db
 from app.models import Message
 from app.radio.supervisor import supervisor
 from app.services.messaging import States, mark_interrupted_sends_uncertain
-from tests.conftest import HEADERS, PASSWORD, csrf, do_setup, wait_for
+from tests.conftest import HEADERS, PASSWORD, csrf, do_setup, radio_adapter, wait_for
 
 
 async def test_setup_requires_token_and_runs_once(client):
@@ -563,7 +563,7 @@ async def test_contact_actions_and_block(client):
     await client.patch(f"/api/contacts/{cid}", headers=csrf(client), json={"blocked": True})
     from app.radio.base import IncomingMessage
 
-    supervisor.adapter.inject(
+    (await radio_adapter()).inject(
         IncomingMessage(
             kind="dm", text="spam spam", pubkey_prefix=tracker["public_key"][:12], sender_timestamp=1
         )
@@ -619,7 +619,7 @@ async def test_contacts_follow_radio_advert_pushes(client, monkeypatch):
     await _connected_conversations(client)
     newcomer = RadioContact(public_key=simulated._key("newcomer"), name="Newcomer (sim)", kind=1)
     monkeypatch.setattr(simulated, "SIM_CONTACTS", [*simulated.SIM_CONTACTS, newcomer])
-    await supervisor.adapter.on_contacts_changed()
+    await (await radio_adapter()).on_contacts_changed()
 
     async def listed():
         page = (await client.get("/api/contacts", params={"q": "Newcomer"})).json()

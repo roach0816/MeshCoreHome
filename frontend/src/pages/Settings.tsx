@@ -19,6 +19,7 @@ import { playChime, type SoundSetting } from "../lib/sound";
 import { useUpdateInfo } from "../lib/queries";
 import { NetworkSection } from "../components/NetworkSettings";
 import { ApiKeysSection } from "../components/ApiKeys";
+import { BackupSection } from "../components/BackupRestore";
 import { RadioHatPanel, useRadioHat } from "../components/RadioHat";
 import { FirmwareBadge, useRadioFirmware } from "../components/RadioFirmware";
 import { api, type Device, type MapConfig, type RadioConfig, type RadioMode } from "../lib/api";
@@ -72,6 +73,7 @@ export function Settings() {
           <NetworkSection />
           <SoftwareSection />
           <ApiKeysSection />
+          <BackupSection />
         </div>
       </div>
     </div>

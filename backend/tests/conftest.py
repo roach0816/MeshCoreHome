@@ -97,3 +97,14 @@ async def do_setup(c: AsyncClient, mode="simulated", **radio) -> None:
         },
     )
     assert r.status_code == 200, r.text
+
+
+async def radio_adapter():
+    """The connected radio adapter, waiting out a reconnect if one is in progress (the app
+    reconnects by itself; a test that injects traffic must not catch it mid-way)."""
+    from app.radio.supervisor import supervisor
+
+    async def ready():
+        return supervisor.adapter if supervisor.connected and supervisor.adapter is not None else None
+
+    return await wait_for(ready, timeout=20)

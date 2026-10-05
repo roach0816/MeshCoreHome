@@ -4,9 +4,8 @@ import time
 
 from app.radio import packets
 from app.radio.base import IncomingMessage
-from app.radio.supervisor import supervisor
 from app.services.msg_paths import PathTracker
-from tests.conftest import HEADERS, csrf, do_setup, wait_for
+from tests.conftest import HEADERS, csrf, do_setup, radio_adapter, wait_for
 from tests.test_api import _connected_conversations
 
 
@@ -87,7 +86,7 @@ async def test_paths_details_and_delete_end_to_end(client):
     await do_setup(client)
     convs = await _connected_conversations(client)
     public = next(c for c in convs if c["title"] == "Public")
-    supervisor.adapter.inject(
+    (await radio_adapter()).inject(
         IncomingMessage(
             kind="channel",
             text="hello over the hills",

@@ -6,6 +6,19 @@ export class ApiError extends Error {
   }
 }
 
+/** Headers a state-changing request from the browser needs (for requests not made with api()). */
+export function writeHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "X-Requested-With": "meshcore-home" };
+  const token = csrfToken();
+  if (token) h["X-CSRF-Token"] = token;
+  return h;
+}
+
+/** The message of a failed response's {"detail": ...}, as api() reports it. */
+export function errorDetail(body: unknown): string {
+  return describe((body as { detail?: unknown } | null)?.detail);
+}
+
 function csrfToken(): string {
   const m = document.cookie.match(/(?:^|;\s*)mch_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";

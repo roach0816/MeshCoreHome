@@ -11,7 +11,19 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import db
-from app.api import api_keys, auth, contacts, firmware, inbox, node_map, radio, radio_config, remote, system
+from app.api import (
+    api_keys,
+    auth,
+    backup,
+    contacts,
+    firmware,
+    inbox,
+    node_map,
+    radio,
+    radio_config,
+    remote,
+    system,
+)
 from app.api.deps import bearer_token, load_api_key, load_session
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
@@ -122,6 +134,7 @@ app.include_router(system.router)
 app.include_router(api_keys.router)
 app.include_router(remote.router)
 app.include_router(firmware.router)
+app.include_router(backup.router)
 
 
 # ---- health ------------------------------------------------------------------------------

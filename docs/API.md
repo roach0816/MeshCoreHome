@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.13**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.7.14**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -545,7 +545,8 @@ shape they return.
 `/test`), `/api/radio/pause`, `/api/radio/resume`, `/api/radio/test-connection`,
 `/api/radio/simulate-incoming`, `DELETE /api/simulated-data`, `POST /api/system/radio-hat`, and every `PUT`/`POST`/`DELETE`
 under `/api/radio/config`, `/api/radio/channels`, `/api/radio/custom-vars` and `/api/radio/actions`,
-and everything under `/api/remote` (remote administration of repeaters and room servers).
+everything under `/api/remote` (remote administration of repeaters and room servers), and
+`/api/backups` and `/api/restore` (encrypted backup and restore).
 
 ## 6. Realtime events (WebSocket)
 
