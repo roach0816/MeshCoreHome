@@ -1078,6 +1078,7 @@ uninstall() {
     [[ -f $CF_CREDENTIALS || -d $ACME_DIR ]] && note "  • The saved DNS provider credentials and HTTPS certificate"
   else
     note "${B}Kept:${N} the database, $CONF_DIR and $STATE_DIR (use --purge to delete them too)"
+    ((nginx)) && note "  The HTTPS settings and certificate are kept too: reinstalling puts HTTPS back as it was."
   fi
   note "${D}System packages (PostgreSQL, Python) are left installed.${N}"
   confirm "Uninstall $APP_NAME?"
@@ -1442,6 +1443,9 @@ retire_certbot_site() {  # retire_certbot_site HOST — stop certbot renewing a 
 acme_renew() {  # --acme-renew: run by the renewal timer; renews when due and reloads nginx
   [[ $(env_get ACME_CLIENT) == lego ]] && https_enabled || { log "acme renew: lego not in use"; return 0; }
   local host; host=$(env_get HTTPS_HOST)
+  # The client may be missing (removed with the app by a plain uninstall, or never downloaded when a
+  # kept or restored certificate was reused): fetch the pinned, checksum-verified version first.
+  lego_install >>"$LOG_FILE" 2>&1 || { log "acme renew: could not install lego"; return 1; }
   NEW_PROVIDER=$(env_get ACME_PROVIDER)
   acme_lego_args "$host" "$(env_get CERTBOT_EMAIL)" "$(env_get CERTBOT_STAGING)" "$(env_get CF_PROPAGATION)" || return 1
   [[ ${1:-} == force ]] && LEGO_ARGS+=(--renew-force)
@@ -1800,6 +1804,29 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
     return 1
   fi
   step_note "$(public_url) · $pname"
+}
+
+https_restore_kept() {  # reinstall after a plain uninstall: HTTPS is configured, its nginx site is gone
+  # The uninstall kept the settings and the certificate but removed the nginx site and the renewal
+  # timer, and the kept settings make the app listen on 127.0.0.1 only. Put HTTPS back from the kept
+  # settings (the kept certificate is reused); if that fails, switch to plain HTTP so the app is
+  # never left unreachable.
+  load_current_network
+  NEW_HTTPS=1
+  info "Restoring HTTPS for $NEW_HOST from the kept settings"
+  if apply_network_config; then
+    step_note "$(public_url) (restored)"
+    return 0
+  fi
+  warn "Could not restore HTTPS for $NEW_HOST; switching to plain HTTP so $APP_NAME stays reachable."
+  load_current_network
+  NEW_HTTPS=0
+  if apply_network_config; then
+    warn "Set HTTPS up again with: sudo meshcore-home https"
+  else
+    warn "Could not switch to plain HTTP either; see $LOG_FILE"
+  fi
+  return 1
 }
 
 https_disable() {
@@ -2569,7 +2596,13 @@ main() {
     fi
   fi
   step
-  if [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain and a DNS provider API key)" n; then
+  if https_enabled && [[ ! -f $NGINX_SITE ]]; then
+    # Kept from a plain uninstall: restore it rather than asking again.
+    https_restore_kept || step_skip "Plain HTTP"
+  elif https_enabled; then
+    ok "HTTPS is already set up for $(env_get HTTPS_HOST)"
+    step_note "$(public_url)"
+  elif [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain and a DNS provider API key)" n; then
     https_setup || step_skip "Not set up"
   else
     info "Skipped. You can add it later with: sudo meshcore-home https"

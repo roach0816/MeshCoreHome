@@ -83,6 +83,12 @@ sudo meshcore-home backup    dump the database now (for repairs; see docs/backup
 sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
 ```
 
+**Uninstalling** without `--purge` removes the app, its services and the HTTPS site, but keeps the
+database, settings, HTTPS certificate and DNS credentials. Reinstalling picks them all up again,
+including HTTPS. If HTTPS can't be restored (for example, the certificate is gone and a new one
+can't be obtained), the installer switches to plain HTTP so the app stays reachable, and
+`sudo meshcore-home https` sets HTTPS up again. `--purge` deletes everything.
+
 ## Diagnostics: `meshcore-home status`
 
 `meshcore-home status` checks every part of the installation and marks each line ✓ (fine),

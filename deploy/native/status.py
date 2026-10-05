@@ -800,6 +800,12 @@ def check_https(r: Report, env: dict[str, str]) -> None:
                 "Renewal",
                 "checked twice a day by lego; renews about 30 days before expiry",
             )
+        if not os.path.exists("/opt/meshcore-home-acme/lego"):
+            r.row(
+                INFO,
+                "Renewal client",
+                "lego isn't downloaded yet; the next renewal check fetches it (checksum verified)",
+            )
         return
     rc, _ = run("systemctl", "is-active", "--quiet", "certbot.timer")
     r.row(
