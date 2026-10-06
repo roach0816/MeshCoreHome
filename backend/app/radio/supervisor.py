@@ -387,7 +387,13 @@ class RadioSupervisor:
         if adapter is None or not self.connected:
             raise RadioError("radio is not connected")
         result = await self._cmd(adapter.configure, op, params, timeout=30)
-        if op in ("contact_favorite", "contact_reset_path", "contact_set_path", "contact_remove"):
+        if op in (
+            "contact_add",
+            "contact_favorite",
+            "contact_reset_path",
+            "contact_set_path",
+            "contact_remove",
+        ):
             await self.refresh_contacts()
         if op in ("identity", "radio", "channel", "channel_clear"):
             # Refresh what the archive knows: device name/location/RF and channel generations.

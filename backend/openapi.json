@@ -1436,6 +1436,48 @@
         }
       }
     },
+    "/api/contacts/import": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Import Contact",
+        "description": "Add a contact the radio hasn't heard an advert from yet. It starts with no path (flood)\nand no position; both arrive with the node's next advert.",
+        "operationId": "import_contact_api_contacts_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/contacts/{contact_id}/conversation": {
       "post": {
         "tags": [
@@ -4047,6 +4089,73 @@
           "messages_sent"
         ],
         "title": "ContactDetail"
+      },
+      "ContactImport": {
+        "properties": {
+          "uri": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uri"
+          },
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Key"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "kind": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Kind",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "title": "ContactImport",
+        "description": "A contact from a QR code (``uri``) or typed in (``public_key``, ``name``, ``kind``)."
+      },
+      "ContactImportResult": {
+        "properties": {
+          "contact": {
+            "$ref": "#/components/schemas/ContactOut"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contact",
+          "added"
+        ],
+        "title": "ContactImportResult"
       },
       "ContactOut": {
         "properties": {

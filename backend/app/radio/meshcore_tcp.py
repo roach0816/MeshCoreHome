@@ -511,6 +511,22 @@ class MeshCoreTcpRadio(RadioAdapter):
             await self._ok(c.remove_contact(key), "removing the contact")
         elif op == "contact_share":
             await self._ok(c.share_contact(key), "sharing the contact")
+        elif op == "contact_add":
+            # A contact from a QR code or typed in: no advert heard yet, so no path (flood) and no
+            # position. The radio fills in the rest when it hears the node's advert.
+            contact = {
+                "public_key": params["public_key"],
+                "type": params["kind"],
+                "flags": 0,
+                "out_path_len": -1,
+                "out_path": "",
+                "out_path_hash_mode": 0,
+                "adv_name": params["name"],
+                "last_advert": 0,
+                "adv_lat": 0.0,
+                "adv_lon": 0.0,
+            }
+            await self._ok(c.add_contact(contact), "adding the contact")
         elif op == "contact_export":
             res = await self._ok(c.export_contact(key), "exporting the contact")
             return {"uri": _payload(res).get("uri")}

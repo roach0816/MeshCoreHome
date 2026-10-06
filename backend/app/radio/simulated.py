@@ -89,6 +89,7 @@ def _initial_state() -> dict:
         "contact_flags": {},
         "contact_paths": {},  # public_key -> (path_len, path_hex)
         "removed_contacts": set(),
+        "added_contacts": {},  # public_key -> (name, kind), from contact_add
     }
 
 
@@ -171,6 +172,13 @@ class SimulatedRadio(RadioAdapter):
                     path_hex=path_hex,
                 )
             )
+        for key, (name, kind) in st["added_contacts"].items():
+            if key not in st["removed_contacts"]:
+                path_len, path_hex = st["contact_paths"].get(key, (-1, ""))
+                flags = st["contact_flags"].get(key, 0)
+                out.append(
+                    RadioContact(key, name, kind, None, flags=flags, path_len=path_len, path_hex=path_hex)
+                )
         return out
 
     def path_hash_size(self) -> int:
@@ -288,9 +296,14 @@ class SimulatedRadio(RadioAdapter):
             st["custom_vars"][params["key"]] = params["value"]
         elif op in ("advert", "sync_clock"):
             pass
+        elif op == "contact_add":
+            key = params["public_key"]
+            st["removed_contacts"].discard(key)
+            st["added_contacts"][key] = (params["name"], params["kind"])
         elif op.startswith("contact_"):
             key = params["public_key"]
-            if key in st["removed_contacts"] or not any(c.public_key == key for c in SIM_CONTACTS):
+            known = any(c.public_key == key for c in SIM_CONTACTS) or key in st["added_contacts"]
+            if key in st["removed_contacts"] or not known:
                 raise RadioError("this contact is no longer on the radio")
             if op == "contact_favorite":
                 flags = st["contact_flags"].get(key, 0)

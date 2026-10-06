@@ -43,3 +43,31 @@ def test_other_replies_match_by_tag():
     assert radio._match(_ticket("owner"), owner) == {"text": "Roof\nMe"}
     untagged = Event(EventType.BINARY_RESPONSE, {"data": "00"}, {})
     assert radio._match(_ticket("owner"), untagged) is None
+
+
+async def test_contact_add_builds_a_record_the_library_can_send():
+    """contact_add goes through meshcore's own update_contact packing (CMD_ADD_UPDATE_CONTACT)."""
+    from meshcore.commands import CommandHandler
+
+    sent: list[bytes] = []
+
+    class Commands:
+        async def send(self, data, expected):
+            sent.append(data)
+            return Event(EventType.OK, {})
+
+        async def add_contact(self, contact):
+            return await CommandHandler.update_contact(self, contact)
+
+    class MC:
+        is_connected = True
+        commands = Commands()
+
+    radio = MeshCoreTcpRadio("radio.invalid", 5000)
+    radio._mc = MC()
+    await radio.configure("contact_add", {"public_key": KEY, "name": "Trail Buddy", "kind": 2})
+    (data,) = sent
+    assert data[0] == 0x09 and data[1:33] == bytes.fromhex(KEY)
+    assert data[33] == 2 and data[34] == 0  # type, flags
+    assert data[35] == 255  # no path yet: flood
+    assert data[100:132].rstrip(b"\0") == b"Trail Buddy"

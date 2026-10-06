@@ -74,6 +74,6 @@ library. See [AGENTS.md](../AGENTS.md) for the project's working rules.
 
 ## Not yet included
 
-Bluetooth and USB-serial radio connections, installing radio firmware, contact-card import,
+Bluetooth and USB-serial radio connections, installing radio firmware, importing signed contact cards (`meshcore://<hex>`),
 Playwright tests in CI, NetworkPolicies, and verification on real hardware of: the radio HAT, remote
 node configuration, and message paths.

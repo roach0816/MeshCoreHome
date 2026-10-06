@@ -515,6 +515,7 @@ These act on the radio itself; it must be connected and the contact must still b
 | `PUT /api/contacts/{id}/path` | Set a fixed route: `{"hops": ["a1", "b2"]}`; `[]` means direct. `204`. |
 | `POST /api/contacts/{id}/reset-path` | Forget the route (back to flood). `204`. |
 | `DELETE /api/contacts/{id}` | Remove the contact from the radio. The archive keeps it and its messages. `204`. |
+| `POST /api/contacts/import` | Add a contact the radio hasn't heard an advert from: `{"uri": "meshcore://contact/add?name=…&public_key=…&type=1"}` (a [MeshCore contact QR code](https://docs.meshcore.io/qr_codes/)), or `{"public_key": "<64 hex>", "name": "…", "kind": 1}`. Returns `{"contact": {...}, "added": true}`; `added: false` if it was already a contact (left unchanged). Names are at most 31 bytes. |
 
 ### Map
 

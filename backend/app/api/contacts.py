@@ -8,6 +8,7 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -317,6 +318,86 @@ async def refresh_contacts(ctx: AuthContext = Depends(require_auth)):
     except (RadioError, TimeoutError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Could not refresh contacts: {exc}") from exc
     return {"count": n}
+
+
+class ContactImport(BaseModel):
+    """A contact from a QR code (``uri``) or typed in (``public_key``, ``name``, ``kind``)."""
+
+    uri: str | None = Field(default=None, max_length=1024)
+    public_key: str | None = Field(default=None, max_length=64)
+    name: str | None = Field(default=None, max_length=64)
+    kind: int = Field(default=1, ge=1, le=4)
+
+
+class ContactImportResult(BaseModel):
+    contact: ContactOut
+    added: bool  # false: it was already one of your contacts (left unchanged)
+
+
+def _parse_contact_uri(uri: str) -> tuple[str, str, int]:
+    """meshcore://contact/add?name=…&public_key=<64 hex>&type=1 (docs.meshcore.io/qr_codes)."""
+    parts = urlsplit(uri.strip())
+    if parts.scheme != "meshcore" or f"{parts.netloc}{parts.path}" != "contact/add":
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That isn't a MeshCore contact code")
+    q = {k: v[0] for k, v in parse_qs(parts.query).items()}
+    try:
+        kind = int(q.get("type", "1"))
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "The contact code has an invalid type"
+        ) from None
+    return q.get("public_key", ""), q.get("name", ""), kind
+
+
+@router.post("/import", response_model=ContactImportResult)
+async def import_contact(
+    body: ContactImport, ctx: AuthContext = Depends(require_auth), db: AsyncSession = Depends(get_db)
+) -> ContactImportResult:
+    """Add a contact the radio hasn't heard an advert from yet. It starts with no path (flood)
+    and no position; both arrive with the node's next advert."""
+    if body.uri:
+        key, name, kind = _parse_contact_uri(body.uri)
+    else:
+        key, name, kind = body.public_key or "", body.name or "", body.kind
+    key = key.strip().lower()
+    name = name.strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", key):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "The public key must be 64 hexadecimal characters"
+        )
+    if not name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Enter the contact's name")
+    if len(name.encode()) > 31:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The name is too long (at most 31 bytes)")
+    if kind not in (1, 2, 3, 4):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown contact type")
+    radio = supervisor.radio
+    if radio is None or not supervisor.connected:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The radio is not connected")
+    if radio.public_key and radio.public_key.lower() == key:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That's this radio's own contact code")
+
+    async def find() -> Contact | None:
+        return (
+            await db.execute(select(Contact).where(Contact.radio_id == radio.id, Contact.public_key == key))
+        ).scalar_one_or_none()
+
+    existing = await find()
+    if existing is not None and existing.on_radio:
+        return ContactImportResult(contact=_out(existing, radio.is_simulated, None), added=False)
+    try:
+        await supervisor.configure_node("contact_add", {"public_key": key, "name": name, "kind": kind})
+    except NotSupported as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except (RadioError, TimeoutError) as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"The radio did not accept this: {exc}") from exc
+    db.add(AuditEvent(kind="node.contact_add", detail={"contact": key[:12]}))
+    await db.commit()
+    db.expire_all()
+    added = await find()
+    if added is None:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The radio accepted the contact but doesn't list it")
+    return ContactImportResult(contact=_out(added, radio.is_simulated, None), added=True)
 
 
 @router.post("/{contact_id}/conversation")

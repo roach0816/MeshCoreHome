@@ -59,6 +59,10 @@ it. Right-click or long-press a contact for:
 - **Remove contact:** removes it from the radio. The archive keeps the conversation.
 - **Remote manage** (repeaters and room servers), below.
 
+**Adding contacts:** in the iPhone app, **Contacts → +** scans someone's MeshCore contact QR code or
+takes their public key and name, so you can message them before the radio hears their advert. **Settings
+→ My contact code** in the app shows your own radio's code, in the format MeshCore apps use.
+
 **Blocked** and **Removed from radio** are different: *Blocked* is MeshHome's own setting (the
 contact stays on the radio), while *Removed from radio* means the contact is no longer in the radio's
 contact list (removed by you, by another app, or dropped by the radio when its list was full).

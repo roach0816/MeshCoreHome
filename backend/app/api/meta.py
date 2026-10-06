@@ -23,6 +23,7 @@ FEATURES = [
     "weather",
     "firmware_check",
     "api_keys",
+    "contact_import",
 ]
 # Only on native (Debian / Raspberry Pi) installs, which have the root helper.
 NATIVE_FEATURES = ["software_updates", "network_settings", "radio_hat", "system_backup"]
