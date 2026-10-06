@@ -75,7 +75,7 @@ LOCK_CANDIDATES = (
 
 
 def pinned() -> dict[str, str]:
-    """The ZephCore release this MeshCore Home release installs (deploy/native/zephcore.lock)."""
+    """The ZephCore release this MeshHome release installs (deploy/native/zephcore.lock)."""
     out: dict[str, str] = {}
     lock = next((p for p in LOCK_CANDIDATES if p.is_file()), None)
     if lock is None:
@@ -154,7 +154,7 @@ async def info() -> dict[str, Any]:
         reason = (
             "The radio software (ZephCore) needs Raspberry Pi OS 13 “Trixie” or Debian 13 "
             f"(glibc {min_glibc} or newer); this Pi has glibc {glibc}. Re-image the SD card with the "
-            "current 64-bit Raspberry Pi OS, then install MeshCore Home again."
+            "current 64-bit Raspberry Pi OS, then install MeshHome again."
         )
     elif st.get("state") == "unsupported":
         reason = st.get("message")

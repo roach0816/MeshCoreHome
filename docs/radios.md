@@ -1,6 +1,6 @@
 # Radios
 
-MeshCore Home talks to one **MeshCore companion radio**, the same kind of radio the MeshCore phone
+MeshHome talks to one **MeshCore companion radio**, the same kind of radio the MeshCore phone
 and desktop apps use, over the companion protocol carried on a TCP socket (port `5000` by default).
 
 - [Which radios work](#which-radios-work)
@@ -27,17 +27,17 @@ appear if the gateway has the same channel configured (same name and key) and ca
 
 - Flash MeshCore **companion** firmware with TCP/Ethernet support for your board.
 - Attach the antenna before transmitting.
-- Choose your region's radio preset, a name and channels. You can do all of this from MeshCore Home
+- Choose your region's radio preset, a name and channels. You can do all of this from MeshHome
   once it's connected (**Settings → Configure node settings**), or with a MeshCore client first.
 
 ### 2. Give it a stable address and make it reachable
 
 - Create a **DHCP reservation** (or static IP) for the gateway, and note its IP or hostname.
-- MeshCore Home connects **out** to the gateway over plain unicast TCP. In Kubernetes this works with
+- MeshHome connects **out** to the gateway over plain unicast TCP. In Kubernetes this works with
   normal pod networking: no `hostNetwork`, multicast, or mDNS. Use an IP address, or a DNS name the
   server can resolve. `.local` names will not resolve inside pods.
 - **Firewall:** the gateway's TCP port gives full control of the radio and has no password. Allow it
-  only from the MeshCore Home server (in Kubernetes, pod traffic usually leaves through the node's IP)
+  only from the MeshHome server (in Kubernetes, pod traffic usually leaves through the node's IP)
   and from any maintenance machine. Never expose it to the internet or to guest networks.
 
 ### 3. Connect it in the app
@@ -57,7 +57,7 @@ sample conversations. This option is available once the mode is no longer *Simul
 ## Radio HAT on a Raspberry Pi
 
 On a native install, a Raspberry Pi 4 or 5 can carry the radio itself (RAK6421 HAT with a RAK13300
-module), and MeshCore Home installs and runs the radio software for you. See
+module), and MeshHome installs and runs the radio software for you. See
 [Radio HAT on the Pi](install-native.md#radio-hat-on-the-pi-rak6421).
 
 ## Troubleshooting
@@ -87,7 +87,7 @@ maintenance**, which releases the TCP connection. Resume when you're done.
 MeshCore's latest companion release, and **Settings → Device** shows *Up to date* or *… available*
 next to the firmware version.
 
-MeshCore Home does not install radio firmware. Companion firmware has no network update path (the
+MeshHome does not install radio firmware. Companion firmware has no network update path (the
 Wi-Fi update mode exists only in repeater and room-server firmware), so update the radio over USB
 from a computer, for example with MeshCore's web flasher. nRF52 boards can also update over Bluetooth.
-The radio HAT's ZephCore is the exception: it updates together with MeshCore Home.
+The radio HAT's ZephCore is the exception: it updates together with MeshHome.

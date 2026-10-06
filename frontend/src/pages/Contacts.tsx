@@ -36,7 +36,7 @@ type SortKey = "name" | "kind" | "last_heard";
 type Dir = "asc" | "desc";
 // The direction a column starts in when first clicked: newest first for "last heard", A→Z otherwise.
 const FIRST_DIR: Record<SortKey, Dir> = { name: "asc", kind: "asc", last_heard: "desc" };
-const PREFS_KEY = "mch.contacts.sort";
+const PREFS_KEY = "mh.contacts.sort";
 
 type SortPrefs = { sort: SortKey; dir: Dir; favoritesFirst: boolean };
 function loadSortPrefs(): SortPrefs {

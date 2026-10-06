@@ -12,7 +12,7 @@ const STATE_LABEL: Record<string, string> = {
   applying: "Applying settings…",
   installing: "Installing nginx and certbot…",
   certificate: "Requesting the certificate (the DNS check takes a little while)…",
-  restarting: "Restarting MeshCore Home…",
+  restarting: "Restarting MeshHome…",
 };
 
 export function useNetworkInfo() {
@@ -332,7 +332,7 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
     >
       {step === "edit" && (
         <div className="space-y-5">
-          <Group title="Web server" description="The port MeshCore Home itself listens on.">
+          <Group title="Web server" description="The port MeshHome itself listens on.">
             <Field label="App port" htmlFor="net-port" error={errors.app_port} hint={f.https_enabled ? "Only reachable from this device; nginx forwards HTTPS to it." : "Browsers connect to this port directly."}>
               <Input id="net-port" inputMode="numeric" className="max-w-40" value={f.app_port} onChange={(e) => set("app_port", e.target.value)} />
             </Field>
@@ -489,10 +489,10 @@ function NetworkDialog({ info, config, onClose }: { info: NetworkInfo; config: N
               <li key={c}>{c}</li>
             ))}
           </ul>
-          {restarts && <p className="text-muted">MeshCore Home restarts once; this page reconnects by itself.</p>}
+          {restarts && <p className="text-muted">MeshHome restarts once; this page reconnects by itself.</p>}
           {addressChanges && (
             <p className="rounded-lg bg-warn/10 px-3 py-2">
-              Afterwards, open MeshCore Home at <strong>{newUrl}</strong>
+              Afterwards, open MeshHome at <strong>{newUrl}</strong>
               {f.https_enabled && " (make sure that name points to this device on your network)"}.
             </p>
           )}
@@ -566,7 +566,7 @@ function Progress({ since, newUrl, addressChanges, onDone }: { since: number; ne
         <>
           <p className="flex items-center gap-2">
             <RefreshCw className="size-4 animate-spin text-accent" aria-hidden />
-            {offlineSince ? "MeshCore Home is restarting — reconnecting…" : st ? STATE_LABEL[st.state] ?? st.message : "Waiting for the system helper…"}
+            {offlineSince ? "MeshHome is restarting — reconnecting…" : st ? STATE_LABEL[st.state] ?? st.message : "Waiting for the system helper…"}
           </p>
           {!offlineSince && st?.message && ACTIVE.includes(st.state) && <p className="text-muted">{st.message}</p>}
           {longOffline && addressChanges && (

@@ -1,12 +1,12 @@
-# MeshCore Home
+# MeshHome
 
-A self-hosted web inbox for your [MeshCore](https://meshcore.io) radio. MeshCore Home keeps one
+A self-hosted web inbox for your [MeshCore](https://meshcore.io) radio. MeshHome keeps one
 connection to a MeshCore companion radio, archives every message it hears in PostgreSQL (even when no
 browser is open), and gives you a fast chat interface for channels and direct messages from any phone,
 tablet or computer on your network.
 
 <!-- SCREENSHOT: save a screenshot of the inbox as docs/images/inbox.png, then replace the line below with:
-     ![MeshCore Home inbox](docs/images/inbox.png) -->
+     ![MeshHome inbox](docs/images/inbox.png) -->
 > 📸 *Screenshot coming soon: the inbox on desktop and phone.*
 
 ## What it does
@@ -50,7 +50,7 @@ with 64-bit Raspberry Pi OS, or any 64-bit Debian system.
 1. **Download and run the installer** on the Pi:
 
    ```bash
-   curl -fsSLo install.sh https://github.com/roach0816/MeshCoreHome/releases/latest/download/install.sh
+   curl -fsSLo install.sh https://github.com/roach0816/MeshHome/releases/latest/download/install.sh
    sudo bash install.sh
    ```
 
@@ -78,7 +78,7 @@ Afterwards, `sudo meshcore-home status` checks the whole installation, and updat
 1. Clone this repository and create the environment file:
 
    ```bash
-   git clone https://github.com/roach0816/MeshCoreHome.git && cd MeshCoreHome
+   git clone https://github.com/roach0816/MeshHome.git && cd MeshHome
    cp .env.example .env        # set POSTGRES_PASSWORD to a long random value
    ```
 
@@ -119,7 +119,7 @@ image: it all lives in your database.
 flowchart LR
     mesh(("MeshCore mesh<br/>radios and repeaters"))
     radio["Companion radio<br/>(TCP gateway, or radio HAT on the Pi)"]
-    subgraph server["MeshCore Home server"]
+    subgraph server["MeshHome server"]
         supervisor["Radio supervisor<br/>(the only radio connection)"]
         app["Web app and API<br/>(FastAPI: REST + WebSocket)"]
         db[("PostgreSQL<br/>message archive and settings")]
@@ -151,7 +151,7 @@ flowchart LR
 - Everything stays on your server: messages, contacts and settings are stored in your own database.
 - Backups are always encrypted with your passphrase. Passwords are stored only as hashes, API keys as
   fingerprints, and DNS credentials only in a root-only file.
-- The radio's TCP port has no password, so allow it only from the MeshCore Home server.
+- The radio's TCP port has no password, so allow it only from the MeshHome server.
 - Outbound connections are listed in [Configuration](docs/configuration.md#outbound-connections).
 
 ## Documentation
@@ -164,14 +164,20 @@ flowchart LR
 | [Kubernetes install](docs/install-kubernetes.md) | Step-by-step K3s and Rancher setup, operations, forks |
 | [Backup and restore](docs/backup-restore.md) | What's backed up, encryption, restoring between installations |
 | [Configuration](docs/configuration.md) | Environment variables, map tiles and privacy, outbound connections |
-| [API](docs/API.md) | Using MeshCore Home from other services with an API key |
+| [API](docs/API.md) | Using MeshHome from other services with an API key |
 | [Development](docs/development.md) | Running locally, tests, code layout, releases |
 
 ## Status
 
-MeshCore Home is in active development and used daily with a real MeshCore radio over Ethernet. Some
+MeshHome is in active development and used daily with a real MeshCore radio over Ethernet. Some
 features have so far been tested only with the simulated radio or simulated hardware, and are marked
 as such in the docs. Please report what works and what doesn't on your hardware.
+
+## Name and affiliation
+
+MeshHome was called *MeshCore Home* until version 0.9. It is an independent project, not made or
+endorsed by the MeshCore project. "MeshCore" is used only to say which radios and firmware it
+works with.
 
 ## License
 

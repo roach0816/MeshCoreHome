@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# meshcore-home — manage a native MeshCore Home install.
+# meshcore-home — manage a native MeshHome install.
 set -euo pipefail
 PREFIX=/opt/meshcore-home
 STATE_DIR=/var/lib/meshcore-home

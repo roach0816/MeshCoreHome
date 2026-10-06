@@ -1,5 +1,5 @@
 [Unit]
-Description=Watch for MeshCore Home upgrade requests from the web interface
+Description=Watch for MeshHome upgrade requests from the web interface
 
 [Path]
 # Written by the (unprivileged) app when you click "Install update".

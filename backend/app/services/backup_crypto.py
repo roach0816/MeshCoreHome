@@ -2,7 +2,7 @@
 
 File layout:
 
-    b"MCHBACKUP1\\n"
+    b"MHBACKUP1\\n"   (b"MCHBACKUP1\\n" in files made before the rename to MeshHome)
     header line: JSON {"kdf": "scrypt", "n", "r", "p", "salt", "nonce", "chunk"} + "\\n"
     chunks:      [4-byte big-endian length][AES-256-GCM ciphertext + 16-byte tag] ...
 
@@ -24,7 +24,8 @@ from typing import BinaryIO
 
 from Crypto.Cipher import AES
 
-MAGIC = b"MCHBACKUP1\n"
+MAGIC = b"MHBACKUP1\n"
+LEGACY_MAGIC = b"MCHBACKUP1\n"
 CHUNK = 1024 * 1024
 TAG = 16
 SCRYPT = {"n": 2**15, "r": 8, "p": 1}
@@ -75,8 +76,8 @@ def encrypt(src: BinaryIO, dst: BinaryIO, passphrase: str) -> None:
 
 
 def decrypt(src: BinaryIO, dst: BinaryIO, passphrase: str) -> None:
-    if src.read(len(MAGIC)) != MAGIC:
-        raise BackupError("This is not a MeshCore Home backup file.")
+    if src.readline(len(LEGACY_MAGIC)) not in (MAGIC, LEGACY_MAGIC):
+        raise BackupError("This is not a MeshHome backup file.")
     header = src.readline(MAX_HEADER).rstrip(b"\n")
     try:
         h = json.loads(header)

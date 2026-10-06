@@ -1,6 +1,6 @@
 # Third-party notices
 
-MeshCore Home depends on third-party packages that are installed at build time and are not vendored in
+MeshHome depends on third-party packages that are installed at build time and are not vendored in
 this repository. The main ones are listed below. Full license texts ship with each package.
 
 | Package | License |
@@ -28,10 +28,10 @@ No third-party source code is copied into this repository (see `docs/upstream-re
 
 When you turn on **HTTPS**, the installer downloads a prebuilt [lego](https://github.com/go-acme/lego)
 binary (MIT licence) from its GitHub releases to get and renew the certificate. It is not distributed
-with MeshCore Home; the version and SHA-256 checksums are pinned in `deploy/native/lego.lock`.
+with MeshHome; the version and SHA-256 checksums are pinned in `deploy/native/lego.lock`.
 
 When you set up the **radio HAT**, the installer downloads a prebuilt
 [ZephCore](https://github.com/liquidraver/ZephCore) binary (MIT licence; it includes Monocypher,
 BSD-2-Clause OR CC0-1.0, and is built on Zephyr RTOS, Apache-2.0) from its GitHub releases. It is
-not distributed with MeshCore Home; the exact version and SHA-256 checksums are pinned in
+not distributed with MeshHome; the exact version and SHA-256 checksums are pinned in
 `deploy/native/zephcore.lock`.

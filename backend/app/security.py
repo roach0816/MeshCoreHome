@@ -7,21 +7,28 @@ from collections import defaultdict, deque
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-SESSION_COOKIE = "mch_session"
-CSRF_COOKIE = "mch_csrf"
+SESSION_COOKIE = "mh_session"
+CSRF_COOKIE = "mh_csrf"
+# Names from before the rename to MeshHome (0.8 and earlier): still read, so nobody is signed out.
+LEGACY_SESSION_COOKIE = "mch_session"
+LEGACY_CSRF_COOKIE = "mch_csrf"
 CSRF_HEADER = "x-csrf-token"
 # Every mutating request must carry this header. Browsers cannot attach custom headers to
 # cross-site requests without a CORS preflight (which we never grant), so this blocks CSRF
 # even before a session exists (login, setup).
 REQUESTED_WITH_HEADER = "x-requested-with"
-REQUESTED_WITH_VALUE = "meshcore-home"
+REQUESTED_WITH_VALUE = "meshhome"
+# Still accepted: a page loaded before an upgrade sends the old value until it reloads.
+REQUESTED_WITH_VALUES = (REQUESTED_WITH_VALUE, "meshcore-home")
 
 MIN_PASSWORD_LENGTH = 10
-# API keys: "mch_" + 256 random bits. Only a SHA-256 digest is stored.
-API_KEY_PREFIX = "mch_"
-# Sessions signed in from the mobile apps: "mchd_" + 256 random bits, sent as
+# API keys: "mh_" + 256 random bits. Only a SHA-256 digest is stored. Keys made before the
+# rename to MeshHome start with "mch_" and keep working.
+API_KEY_PREFIX = "mh_"
+API_KEY_PREFIXES = (API_KEY_PREFIX, "mch_")
+# Sessions signed in from the mobile apps: "mhd_" + 256 random bits, sent as
 # "Authorization: Bearer". Only a SHA-256 digest is stored, as for browser sessions.
-APP_TOKEN_PREFIX = "mchd_"
+APP_TOKEN_PREFIX = "mhd_"
 
 _hasher = PasswordHasher()
 

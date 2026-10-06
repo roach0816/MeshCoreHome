@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# MeshCore Home — installer, upgrader and uninstaller for Debian-based systems
+# MeshHome — installer, upgrader and uninstaller for Debian-based systems
 # (Raspberry Pi OS / Debian 12 "bookworm", Debian 13 "trixie"; 64-bit ARM or x86-64).
 #
 #   Install (latest release):
-#     curl -fsSLo install.sh https://github.com/roach0816/MeshCoreHome/releases/latest/download/install.sh
+#     curl -fsSLo install.sh https://github.com/roach0816/MeshHome/releases/latest/download/install.sh
 #     sudo bash install.sh
 #
 #   Options:
@@ -35,8 +35,8 @@ set -Eeuo pipefail
 umask 022
 
 # ---- constants -----------------------------------------------------------------------------
-APP_NAME="MeshCore Home"
-REPO="${MESHCORE_HOME_REPO:-roach0816/MeshCoreHome}"
+APP_NAME="MeshHome"
+REPO="${MESHCORE_HOME_REPO:-roach0816/MeshHome}"
 PREFIX=/opt/meshcore-home
 CONF_DIR=/etc/meshcore-home
 ENV_FILE=$CONF_DIR/meshcore-home.env
@@ -934,7 +934,7 @@ ensure_database() {
 write_env() {
   if [[ -f $ENV_FILE ]]; then ok "Keeping existing configuration $ENV_FILE"; return; fi
   cat >"$ENV_FILE" <<EOF
-# MeshCore Home (native install). Created by install.sh; keep this file private.
+# MeshHome (native install). Created by install.sh; keep this file private.
 # The owner account and radio settings live in the database (first-run setup wizard).
 DATABASE_URL=postgresql+asyncpg://$APP_USER@/$DB_NAME?host=/var/run/postgresql
 HOST=0.0.0.0
@@ -1320,7 +1320,7 @@ elif action == "write":  # write ID JSON — validate, merge with the saved valu
         if v:
             values[k] = v
     os.makedirs(acme_dir, mode=0o700, exist_ok=True)
-    out = [f"# provider={pid}", f"# {p['name']} credentials for lego (MeshCore Home). Root only; never shown again."]
+    out = [f"# provider={pid}", f"# {p['name']} credentials for lego (MeshHome). Root only; never shown again."]
     for env, f in fields.items():
         v = values.get(env, "")
         if f.get("kind") == "json":
@@ -1490,7 +1490,7 @@ write_nginx_site() {  # write_nginx_site HOST HTTPS_PORT REDIRECT(0/1) APP_PORT 
   local host=$1 hport=$2 redirect=$3 aport=$4 cert=$5 key=$6 target="https://\$host"
   [[ $hport != 443 ]] && target="https://\$host:$hport"
   {
-    printf '# MeshCore Home — HTTPS front end. Managed by install.sh (Settings → Network & HTTPS).\n'
+    printf '# MeshHome — HTTPS front end. Managed by install.sh (Settings → Network & HTTPS).\n'
     printf 'map $http_upgrade $meshcore_connection_upgrade {\n    default upgrade;\n    %s      close;\n}\n' "''"
     if [[ $redirect == 1 ]]; then
       printf 'server {\n    listen 80;\n    listen [::]:80;\n    server_name %s;\n' "$host"
@@ -2122,9 +2122,9 @@ sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartP
 
 # ---- optional radio HAT (RAK6421 + RAK13300) driven by ZephCore --------------------------------
 # ZephCore is a port of the MeshCore firmware that runs as a Linux program: it drives the SX1262 on
-# the HAT over SPI and serves the MeshCore companion protocol on TCP port 5000, where MeshCore Home
+# the HAT over SPI and serves the MeshCore companion protocol on TCP port 5000, where MeshHome
 # connects ("Radio HAT on this Pi"). It runs as its own unprivileged service that only this Pi can
-# reach. The radio's settings, contacts and channels are managed from MeshCore Home.
+# reach. The radio's settings, contacts and channels are managed from MeshHome.
 HAT_DIR=/opt/meshcore-home-radio
 HAT_DATA=/var/lib/meshcore-home-radio
 HAT_USER=meshcore-radio
@@ -2235,7 +2235,7 @@ hat_check() {  # sets HAT_PROBLEM and returns 1 if the radio HAT software cannot
   fi
   local g; g=$(glibc_version)
   if ! version_ge "${g:-0}" "$ZEPHCORE_MIN_GLIBC"; then
-    HAT_PROBLEM="The radio software (ZephCore) needs Raspberry Pi OS 13 \"Trixie\" or Debian 13 (glibc $ZEPHCORE_MIN_GLIBC or newer); this system has glibc ${g:-unknown}. Re-image the SD card with the current 64-bit Raspberry Pi OS, then install MeshCore Home again."
+    HAT_PROBLEM="The radio software (ZephCore) needs Raspberry Pi OS 13 \"Trixie\" or Debian 13 (glibc $ZEPHCORE_MIN_GLIBC or newer); this system has glibc ${g:-unknown}. Re-image the SD card with the current 64-bit Raspberry Pi OS, then install MeshHome again."
     return 1
   fi
   if meshtastic_present; then
@@ -2304,7 +2304,7 @@ hat_install() {  # interactive or web-UI setup; returns 1 (without exiting) if t
   note "  • Create the system user $HAT_USER, allowed to use the SPI and GPIO devices and nothing else"
   note "  • Install the service $HAT_SERVICE: starts at boot, restarts if it stops, and only this Pi can connect to it (port $ZEPHCORE_PORT)"
   note "  • Keep the radio's identity, contacts and channels in $HAT_DATA"
-  note "${Y}ZephCore starts on 869.618 MHz, the EU/UK frequency.${N} Before using it, set your region's frequency in MeshCore Home → Settings → Node settings."
+  note "${Y}ZephCore starts on 869.618 MHz, the EU/UK frequency.${N} Before using it, set your region's frequency in MeshHome → Settings → Node settings."
   ask_yn "Set up the radio HAT?" y || { info "Skipped. Set it up later with: sudo meshcore-home radio-hat"; hat_status absent "Not set up"; return 1; }
 
   hat_status installing "Downloading ZephCore $ZEPHCORE_VERSION"
@@ -2322,7 +2322,7 @@ hat_install() {  # interactive or web-UI setup; returns 1 (without exiting) if t
   chown -R "$HAT_USER:$HAT_USER" "$HAT_DATA"  # e.g. an identity restored from a backup before setup
   install -d -m 755 "$(dirname "$HAT_UDEV_RULE")"
   cat >"$HAT_UDEV_RULE" <<'RULE'
-# MeshCore Home radio HAT: the "spi" and "gpio" groups may use the radio's SPI bus and GPIO lines.
+# MeshHome radio HAT: the "spi" and "gpio" groups may use the radio's SPI bus and GPIO lines.
 KERNEL=="spidev*", GROUP="spi", MODE="0660"
 SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
 RULE
@@ -2337,7 +2337,7 @@ RULE
       warn "No boot configuration file found: turn on SPI with raspi-config (Interface Options → SPI)"
     else
       cp -p "$bootcfg" "$bootcfg.meshcore-home.bak"
-      printf '\n# Added by MeshCore Home for the radio HAT (SPI bus for the LoRa module)\n[all]\ndtparam=spi=on\n' >>"$bootcfg"
+      printf '\n# Added by MeshHome for the radio HAT (SPI bus for the LoRa module)\n[all]\ndtparam=spi=on\n' >>"$bootcfg"
       ok "Turned on SPI in $bootcfg (previous version saved as $bootcfg.meshcore-home.bak)"
     fi
   fi
@@ -2494,7 +2494,7 @@ main() {
       [[ -f $HAT_UNIT ]] || { ok "The radio HAT is not set up"; return 0; }
       tui_start "Radio HAT"; plan "Remove the radio HAT software"; step
       note "${B}This will remove${N} the radio HAT service and ZephCore$( ((PURGE)) && echo ", and delete the radio's identity, contacts and channels" || echo "; the radio's identity is kept in $HAT_DATA")."
-      note "SPI stays turned on. Switch MeshCore Home to another radio in Settings → Radio connection."
+      note "SPI stays turned on. Switch MeshHome to another radio in Settings → Radio connection."
       confirm "Remove the radio HAT software?"
       hat_lock || true
       hat_remove "$PURGE"; steps_done; tui_end
@@ -2505,7 +2505,7 @@ main() {
     plan "Set up the radio HAT"; step
     if hat_install; then
       steps_done; tui_end
-      printf '\n  %s✓ Radio HAT set up.%s In MeshCore Home choose %sSettings → Radio connection → Radio HAT on this Pi%s.\n' "$G" "$N" "$B" "$N"
+      printf '\n  %s✓ Radio HAT set up.%s In MeshHome choose %sSettings → Radio connection → Radio HAT on this Pi%s.\n' "$G" "$N" "$B" "$N"
       [[ -e $HAT_SPIDEV ]] || hat_test_mode || printf '  %sRestart the Pi first (SPI was just turned on): sudo reboot%s\n' "$Y" "$N"
       printf '\n'
     else

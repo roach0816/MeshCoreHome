@@ -58,7 +58,7 @@ class ReleaseCatalog:
                 timeout=TIMEOUT,
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "User-Agent": f"MeshCoreHome/{APP_VERSION} (+https://github.com/roach0816/MeshCoreHome)",
+                    "User-Agent": f"MeshHome/{APP_VERSION} (+https://github.com/roach0816/MeshHome)",
                 },
             ) as client:
                 r = await client.get(self._url())

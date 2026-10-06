@@ -398,7 +398,7 @@ function LoginCard({ id, state }: { id: string; state: RemoteState }) {
         <Field
           label="Password"
           htmlFor="remote-password"
-          hint="Sent to the node encrypted, over the mesh. MeshCore Home does not store it. New repeaters use the admin password “password” until it is changed."
+          hint="Sent to the node encrypted, over the mesh. MeshHome does not store it. New repeaters use the admin password “password” until it is changed."
         >
           <Input
             id="remote-password"
@@ -639,7 +639,7 @@ function SettingsTab({ id, state }: { id: string; state: RemoteState }) {
             <AdminPassword id={id} />
           </Tool>
           <Tool icon={<Users />} title="Guest password" summary="Read-only access for others">
-            <CliSetting id={id} state={state} setting="guest.password" label="Guest password" secret hint="Leave as it is if you don't want guests. Read and saved values are not stored by MeshCore Home." />
+            <CliSetting id={id} state={state} setting="guest.password" label="Guest password" secret hint="Leave as it is if you don't want guests. Read and saved values are not stored by MeshHome." />
           </Tool>
           <Tool icon={<Fingerprint />} title="Change identity key" summary="Give the node a new key, with a prefix you choose">
             <IdentityTool id={id} />

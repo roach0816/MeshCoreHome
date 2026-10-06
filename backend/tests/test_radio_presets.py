@@ -102,7 +102,7 @@ async def test_live_refresh_and_fallback(monkeypatch):
     cat = radio_presets.PresetCatalog()
     live = await cat.get()
     assert live["source"] == "live" and [p["title"] for p in live["presets"]] == ["Testland"]
-    assert calls[0].startswith("MeshCoreHome/")
+    assert calls[0].startswith("MeshHome/")
     # Cached for a day; a failed refresh keeps the last good list.
     assert (await cat.get())["presets"][0]["title"] == "Testland" and len(calls) == 1
     cat._next_fetch = 0

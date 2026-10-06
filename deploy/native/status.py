@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`meshcore-home status`: a diagnostic report for a native MeshCore Home install.
+"""`meshcore-home status`: a diagnostic report for a native MeshHome install.
 
 Run as root (the meshcore-home command takes care of that). It combines the app's own health
 snapshot (<state dir>/diagnostics.json, written every 30 s) with system checks: the service, web
@@ -401,7 +401,7 @@ def check_radio(r: Report, snap: dict | None) -> None:
         r.row(
             BAD,
             "Connection",
-            "another MeshCore Home instance using this database owns the radio",
+            "another MeshHome instance using this database owns the radio",
             "Run only one instance per database (stop the other one).",
         )
     elif state == "disabled":
@@ -1041,7 +1041,7 @@ def main() -> int:
     snap = read_json(f"{STATE_DIR}/diagnostics.json")
     r = Report()
     r.text(
-        paint("1", "MeshCore Home status")
+        paint("1", "MeshHome status")
         + f" · {socket.gethostname()} · {now_text('%Y-%m-%d %H:%M:%S')}"
     )
     check_app(r, env, snap)

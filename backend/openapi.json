@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "MeshCore Home",
+    "title": "MeshHome",
     "version": "api-1"
   },
   "paths": {
@@ -5036,9 +5036,9 @@
         "properties": {
           "product": {
             "type": "string",
-            "const": "meshcore-home",
+            "const": "meshhome",
             "title": "Product",
-            "default": "meshcore-home"
+            "default": "meshhome"
           },
           "version": {
             "type": "string",
@@ -6022,7 +6022,7 @@
       "ApiKey": {
         "type": "http",
         "scheme": "bearer",
-        "description": "An API key from Settings → API keys (mch_...). See docs/API.md."
+        "description": "An API key from Settings → API keys (mh_...). See docs/API.md."
       }
     }
   },

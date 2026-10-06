@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# certbot deploy hook for MeshCore Home (also run once after HTTPS setup): reload nginx so a
+# certbot deploy hook for MeshHome (also run once after HTTPS setup): reload nginx so a
 # renewed certificate is used, and record the certificate's expiry for the app to display.
 set -euo pipefail
 ENV_FILE=/etc/meshcore-home/meshcore-home.env

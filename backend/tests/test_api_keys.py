@@ -30,7 +30,7 @@ async def test_api_key_lifecycle_and_permissions(client):
 
     read = await _create(client, "read")
     write = await _create(client, "write", expires_in_days=30)
-    assert read["key"].startswith("mch_") and len(read["key"]) > 40
+    assert read["key"].startswith("mh_") and len(read["key"]) > 40
     assert write["api_key"]["expires_at"] is not None
 
     # The list never contains the key itself, only its prefix.
@@ -77,7 +77,7 @@ async def test_api_key_lifecycle_and_permissions(client):
             assert r.status_code == 403, (method, path, r.status_code, r.text)
 
         # Unknown and malformed keys.
-        assert (await svc.get("/api/conversations", headers=bearer("mch_nope"))).status_code == 401
+        assert (await svc.get("/api/conversations", headers=bearer("mh_nope"))).status_code == 401
         assert (await svc.get("/api/conversations", headers=bearer("not-a-key"))).status_code == 401
 
         # Expired keys stop working.

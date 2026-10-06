@@ -191,7 +191,7 @@ function UserPanel({ me }: { me: Me }) {
                 title="Software updates and release notes"
                 className="text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
               >
-                MeshCore Home v{version}
+                MeshHome v{version}
               </Link>
             ))}
         </div>

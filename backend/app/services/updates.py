@@ -66,8 +66,9 @@ class UpdateChecker:
         s = get_settings()
         url = f"{s.update_api_url.rstrip('/')}/repos/{s.update_repo}/releases/{which}"
         async with httpx.AsyncClient(
+            follow_redirects=True,
             timeout=10,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": f"MeshCoreHome/{APP_VERSION}"},
+            headers={"Accept": "application/vnd.github+json", "User-Agent": f"MeshHome/{APP_VERSION}"},
         ) as client:
             r = await client.get(url)
             r.raise_for_status()

@@ -1,7 +1,7 @@
 """MeshCore's suggested radio presets (frequency, bandwidth, spreading factor, coding rate).
 
 The MeshCore project publishes them from its app API server so they can change without app
-releases (docs/radio_presets.md in the MeshCore repository). MeshCore Home ships a snapshot
+releases (docs/radio_presets.md in the MeshCore repository). MeshHome ships a snapshot
 (app/data/radio_presets.json) and refreshes it from the server at most once a day; if the server
 cannot be reached, the snapshot (or the last good copy) is used. Every key may be missing from
 the server's answer, so entries are validated one by one and bad ones skipped.
@@ -92,9 +92,7 @@ class PresetCatalog:
         try:
             async with httpx.AsyncClient(
                 timeout=TIMEOUT,
-                headers={
-                    "User-Agent": f"MeshCoreHome/{APP_VERSION} (+https://github.com/roach0816/MeshCoreHome)"
-                },
+                headers={"User-Agent": f"MeshHome/{APP_VERSION} (+https://github.com/roach0816/MeshHome)"},
             ) as client:
                 r = await client.get(url)
                 r.raise_for_status()

@@ -8,7 +8,7 @@ the destination) and record its path. Copies of that packet heard later through 
 
 Matching is by channel or sender plus timing, so two messages on one channel within the same
 second could be confused; that is rare, and the paths are labelled as heard by this radio.
-Messages the radio stored while MeshCore Home was not connected have no paths.
+Messages the radio stored while MeshHome was not connected have no paths.
 """
 
 from __future__ import annotations

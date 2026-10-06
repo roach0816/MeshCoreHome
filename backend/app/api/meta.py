@@ -29,7 +29,7 @@ NATIVE_FEATURES = ["software_updates", "network_settings", "radio_hat", "system_
 
 
 class Meta(BaseModel):
-    product: Literal["meshcore-home"] = "meshcore-home"
+    product: Literal["meshhome"] = "meshhome"
     version: str
     api_version: int
     install_kind: Literal["native", "container"]

@@ -86,9 +86,26 @@ export function stateTone(state: MessageState): "muted" | "ok" | "warn" | "dange
   return "muted";
 }
 
+// ---- this browser's storage -----------------------------------------------------------------
+
+/** Move settings stored before the rename to MeshHome ("mch.*") to their new keys ("mh.*"). */
+export function migrateLocalStorage() {
+  try {
+    const old = Object.keys(localStorage).filter((k) => k.startsWith("mch."));
+    for (const k of old) {
+      const next = "mh." + k.slice(4);
+      const v = localStorage.getItem(k);
+      if (v !== null && localStorage.getItem(next) === null) localStorage.setItem(next, v);
+      localStorage.removeItem(k);
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 // ---- drafts (local to this browser, kept separate from authoritative history) -------------
 
-const DRAFT_PREFIX = "mch.draft.";
+const DRAFT_PREFIX = "mh.draft.";
 
 export function loadDraft(convId: string): string {
   try {
@@ -113,7 +130,7 @@ export type ThemePref = "system" | "light" | "dark";
 
 export function getThemePref(): ThemePref {
   try {
-    const v = localStorage.getItem("mch.theme");
+    const v = localStorage.getItem("mh.theme");
     return v === "light" || v === "dark" ? v : "system";
   } catch {
     return "system";
@@ -124,8 +141,8 @@ export function applyTheme(pref: ThemePref) {
   const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   try {
-    if (pref === "system") localStorage.removeItem("mch.theme");
-    else localStorage.setItem("mch.theme", pref);
+    if (pref === "system") localStorage.removeItem("mh.theme");
+    else localStorage.setItem("mh.theme", pref);
   } catch {
     /* ignore */
   }

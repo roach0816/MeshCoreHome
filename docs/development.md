@@ -43,6 +43,9 @@ API change, regenerate it with `python -m app.openapi_export --write` in `backen
 it is out of date. CI also compares it with the last release using
 [oasdiff](https://github.com/oasdiff/oasdiff) and fails on breaking changes, because apps in
 people's hands use the released API. Keep changes additive: new endpoints and new optional fields.
+A deliberate break that no released app depends on can be allowed for one release by adding
+oasdiff's message to `backend/openapi-allowed-breaks.txt`. Empty that file again in the next
+release.
 
 ## Code layout
 

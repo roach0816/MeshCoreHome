@@ -1,7 +1,7 @@
 """API keys for other services and scripts. Managed from a signed-in browser only.
 
 A key is shown once when it is created; only its SHA-256 digest is stored. Requests use
-"Authorization: Bearer mch_...". See docs/API.md.
+"Authorization: Bearer mh_...". See docs/API.md.
 """
 
 import uuid
@@ -22,7 +22,7 @@ from app.security import new_api_key, token_digest
 router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
 
 MAX_KEYS = 25
-PREFIX_CHARS = 12  # "mch_" + 8 characters, enough to tell keys apart
+PREFIX_CHARS = 12  # "mh_" + 9 characters, enough to tell keys apart
 
 
 class ApiKeyOut(BaseModel):

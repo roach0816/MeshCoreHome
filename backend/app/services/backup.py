@@ -10,7 +10,7 @@ A backup is one passphrase-encrypted file (see backup_crypto) holding a gzipped 
                        installer's root helper (the app itself cannot read those files)
 
 Restoring replaces all data. Migrations only ever add tables and columns, so a backup from an
-older MeshCore Home loads into a newer one (new columns take their defaults); a backup from a
+older MeshHome loads into a newer one (new columns take their defaults); a backup from a
 newer one is refused. Before anything changes, the backup is decrypted and checked, and what will
 and won't be restored here is listed (inspect()).
 """
@@ -48,12 +48,14 @@ from app.services import app_settings, backup_crypto
 
 log = logging.getLogger(__name__)
 
-FORMAT = "meshcore-home-backup"
+FORMAT = "meshhome-backup"
+# Backups made before the rename to MeshHome.
+LEGACY_FORMATS = ("meshcore-home-backup",)
 FORMAT_VERSION = 1
 SKIP_TABLES = {"sessions"}  # sign-ins are not carried over: everyone signs in again
 INSERT_BATCH = 500
 MAX_MEMBER = 2 * 1024**3
-NAME = re.compile(r"^meshcore-home-[0-9]{8}-[0-9]{6}(-[a-z0-9-]{1,40})?\.mchb$")
+NAME = re.compile(r"^(meshhome|meshcore-home)-[0-9]{8}-[0-9]{6}(-[a-z0-9-]{1,40})?\.(mhb|mchb)$")
 _MIGRATIONS = Path(__file__).resolve().parents[2] / "migrations"
 
 
@@ -64,7 +66,7 @@ def backup_dir() -> Path:
     """Native installs keep backups in the state directory; containers have no persistent disk
     of their own, so their backups are kept briefly in a temporary folder for download."""
     d = get_settings().state_dir
-    path = Path(d) / "user-backups" if d else Path(tempfile.gettempdir()) / "meshcore-home-backups"
+    path = Path(d) / "user-backups" if d else Path(tempfile.gettempdir()) / "meshhome-backups"
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
 
@@ -75,14 +77,16 @@ def persistent() -> bool:
 
 def staging_dir() -> Path:
     d = get_settings().state_dir
-    path = Path(d) / "restore-staging" if d else Path(tempfile.gettempdir()) / "meshcore-home-restore"
+    path = Path(d) / "restore-staging" if d else Path(tempfile.gettempdir()) / "meshhome-restore"
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
 
 
 def list_backups() -> list[dict[str, Any]]:
     out = []
-    for p in sorted(backup_dir().glob("*.mchb"), reverse=True):
+    files = [*backup_dir().glob("*.mhb"), *backup_dir().glob("*.mchb")]
+    # Newest first, by the time stamp in the name (old and new names mixed).
+    for p in sorted(files, key=lambda f: re.sub(r"^(meshhome|meshcore-home)-", "", f.name), reverse=True):
         if NAME.match(p.name):
             st = p.stat()
             out.append(
@@ -151,7 +155,7 @@ async def schema_revision(s: AsyncSession) -> str | None:
 
 
 def known_revisions() -> list[str]:
-    """Revisions this version of MeshCore Home knows, oldest first."""
+    """Revisions this version of MeshHome knows, oldest first."""
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory(str(_MIGRATIONS))
@@ -191,7 +195,7 @@ async def create(passphrase: str, *, system_archive: Path | None = None, label: 
             f"Use a passphrase of at least {backup_crypto.MIN_PASSPHRASE} characters."
         )
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    name = f"meshcore-home-{stamp}{'-' + label if label else ''}.mchb"
+    name = f"meshhome-{stamp}{'-' + label if label else ''}.mhb"
     target = backup_dir() / name
     digests: dict[str, str] = {}
     counts: dict[str, int] = {}
@@ -270,11 +274,11 @@ def open_backup(path: Path, passphrase: str) -> Opened:
         if "manifest.json" not in members:
             raise backup_crypto.BackupError("The backup has no manifest.")
         manifest = json.loads(members["manifest.json"].read_text())
-        if manifest.get("format") != FORMAT:
-            raise backup_crypto.BackupError("This is not a MeshCore Home backup.")
+        if manifest.get("format") not in (FORMAT, *LEGACY_FORMATS):
+            raise backup_crypto.BackupError("This is not a MeshHome backup.")
         if int(manifest.get("format_version") or 0) > FORMAT_VERSION:
             raise backup_crypto.BackupError(
-                f"This backup was made by a newer MeshCore Home (v{manifest.get('app_version')}). Update first."
+                f"This backup was made by a newer MeshHome (v{manifest.get('app_version')}). Update first."
             )
         for name, digest in (manifest.get("sha256") or {}).items():
             p = members.get(name)
@@ -318,7 +322,7 @@ def inspect(opened: Opened) -> dict[str, Any]:
     rev = m.get("schema_revision")
     if rev and rev not in revisions:
         errors.append(
-            f"This backup was made by a newer MeshCore Home (v{m.get('app_version')}). Update this installation first."
+            f"This backup was made by a newer MeshHome (v{m.get('app_version')}). Update this installation first."
         )
     current = {t.name: t for t in Base.metadata.sorted_tables}
     for name in m.get("counts") or {}:

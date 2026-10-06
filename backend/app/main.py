@@ -25,14 +25,13 @@ from app.api import (
     remote,
     system,
 )
-from app.api.deps import bearer_token, load_bearer, load_session
+from app.api.deps import bearer_token, load_bearer, load_session, session_cookie
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
-from app.security import SESSION_COOKIE
 from app.services import app_settings, diagnostics, updates
 
-log = logging.getLogger("meshcore_home")
+log = logging.getLogger("meshhome")
 
 WS_HEARTBEAT_SECONDS = 25
 
@@ -51,7 +50,7 @@ async def lifespan(app: FastAPI):
         auth.SetupToken.write_file()
         banner = "=" * 64
         log.warning(
-            "\n%s\n  MeshCore Home first-run setup\n  Open the web UI and enter this setup token:\n\n      %s\n%s",
+            "\n%s\n  MeshHome first-run setup\n  Open the web UI and enter this setup token:\n\n      %s\n%s",
             banner,
             token,
             banner,
@@ -78,7 +77,7 @@ async def _update_check_loop() -> None:
 
 
 app = FastAPI(
-    title="MeshCore Home",
+    title="MeshHome",
     version=APP_VERSION,
     lifespan=lifespan,
     docs_url="/api/docs",
@@ -95,7 +94,7 @@ def _openapi_schema() -> dict:
         "ApiKey": {
             "type": "http",
             "scheme": "bearer",
-            "description": "An API key from Settings → API keys (mch_...). See docs/API.md.",
+            "description": "An API key from Settings → API keys (mh_...). See docs/API.md.",
         }
     }
     schema["security"] = [{"ApiKey": []}]
@@ -180,7 +179,7 @@ async def websocket(ws: WebSocket):
             await ws.close(code=4403)
             return
         async with db.session_factory()() as s:
-            ctx = await load_session(s, ws.cookies.get(SESSION_COOKIE))
+            ctx = await load_session(s, session_cookie(ws.cookies))
     if ctx is None:
         await ws.close(code=4401)
         return

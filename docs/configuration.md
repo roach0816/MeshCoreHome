@@ -15,8 +15,8 @@ the repository or the image. Environment variables only cover deployment plumbin
 | `SESSION_DAYS` | Sign-in lifetime. App sign-ins renew while in use, so this is how long an unused app stays signed in. | `30` |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` | `INFO` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
-| `MESHCORE_INSTALL_KIND` | `native` enables in-place upgrades and system settings from the UI (set by the installer) | `container` |
-| `MESHCORE_STATE_DIR` | Writable state directory for a native install | — |
+| `MESHHOME_INSTALL_KIND` | `native` enables in-place upgrades and system settings from the UI (set by the installer). The older name `MESHCORE_INSTALL_KIND` also works. | `container` |
+| `MESHHOME_STATE_DIR` | Writable state directory for a native install. The older name `MESHCORE_STATE_DIR` also works. | — |
 | `UPDATE_REPO` | GitHub `owner/repo` checked for new releases; empty disables update checks | this repo |
 | `RELEASE_NOTES_URL` | Where the version number links (`{version}` is substituted); empty for no link | this repo's GitHub releases |
 | `RADIO_PRESETS_URL` | Where MeshCore's region presets are fetched; empty uses the built-in list only | MeshCore's server |
@@ -38,9 +38,9 @@ requests, point **Settings → Map** at a self-hosted XYZ tile server.
 
 ## Outbound connections
 
-Besides the radio, MeshCore Home connects out to:
+Besides the radio, MeshHome connects out to:
 
-- GitHub, every few hours, to check for MeshCore Home releases and MeshCore firmware releases
+- GitHub, every few hours, to check for MeshHome releases and MeshCore firmware releases
   (`UPDATE_REPO`, `FIRMWARE_REPO`; empty values turn the checks off);
 - MeshCore's server, once a day, for the region presets (`RADIO_PRESETS_URL`);
 - your Ecowitt gateway on the local network, only when the bot answers `/weather`;

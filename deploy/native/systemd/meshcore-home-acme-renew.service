@@ -1,5 +1,5 @@
 [Unit]
-Description=MeshCore Home: renew the HTTPS certificate (lego, DNS-01)
+Description=MeshHome: renew the HTTPS certificate (lego, DNS-01)
 After=network-online.target
 Wants=network-online.target
 

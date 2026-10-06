@@ -1,4 +1,4 @@
-# ZephCore release that MeshCore Home installs for the "Radio HAT on this Pi" option
+# ZephCore release that MeshHome installs for the "Radio HAT on this Pi" option
 # (RAKwireless RAK6421 WisMesh Pi HAT + RAK13300/RAK13302 in IO slot 1).
 #
 # ZephCore (https://github.com/liquidraver/ZephCore, MIT licence) is a port of the MeshCore

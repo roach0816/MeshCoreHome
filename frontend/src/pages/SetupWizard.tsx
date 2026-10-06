@@ -116,7 +116,7 @@ export function SetupWizard() {
         <div className="mb-6 flex items-center gap-3">
           <img src="/favicon.svg" alt="" className="size-10" />
           <div>
-            <h1 className="text-xl font-semibold">Set up MeshCore Home</h1>
+            <h1 className="text-xl font-semibold">Set up MeshHome</h1>
             <p className="text-sm text-muted">Takes about a minute. Everything stays on your server.</p>
           </div>
         </div>
@@ -324,7 +324,7 @@ export function SetupWizard() {
               )
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-muted">Moving from another MeshCore Home, or reinstalling?</p>
+                <p className="text-sm text-muted">Moving from another MeshHome, or reinstalling?</p>
                 <Button type="button" onClick={() => setRestoring(true)}>
                   <ArchiveRestore className="size-4" aria-hidden /> Restore a backup instead
                 </Button>

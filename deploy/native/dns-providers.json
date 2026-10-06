@@ -1,5 +1,5 @@
 {
-  "about": "DNS providers MeshCore Home offers for HTTPS certificates (DNS-01 via lego). Field env names are lego's; see each provider's docs link.",
+  "about": "DNS providers MeshHome offers for HTTPS certificates (DNS-01 via lego). Field env names are lego's; see each provider's docs link.",
   "providers": [
     {
       "id": "cloudflare",

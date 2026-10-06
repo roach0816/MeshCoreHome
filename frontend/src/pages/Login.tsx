@@ -29,7 +29,7 @@ export function Login() {
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <img src="/favicon.svg" alt="" className="size-12" />
-          <h1 className="text-xl font-semibold">MeshCore Home</h1>
+          <h1 className="text-xl font-semibold">MeshHome</h1>
         </div>
         <Card className="p-5 sm:p-6">
           <form onSubmit={submit} className="space-y-4">

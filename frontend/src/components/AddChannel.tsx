@@ -133,7 +133,7 @@ function Menu({ onPick }: { onPick: (k: "create" | "private" | "public" | "hasht
     { k: "private", icon: KeyRound, title: "Join a private channel", text: "Enter the name and secret key someone shared with you." },
     { k: "public", icon: Globe, title: "Join the Public channel", text: "The open channel every MeshCore radio starts with." },
     { k: "hashtag", icon: Hash, title: "Join a hashtag channel", text: "Anyone who knows the name can join, because the key comes from the name." },
-    { k: "scan", icon: ScanQrCode, title: "Scan a QR code", text: "Join a channel shared from the MeshCore app or another MeshCore Home." },
+    { k: "scan", icon: ScanQrCode, title: "Scan a QR code", text: "Join a channel shared from the MeshCore app or another MeshHome." },
   ] as const;
   return (
     <ul className="-mx-2 space-y-1">
@@ -380,7 +380,7 @@ function ScanStep({ back, onScanned }: { back: ReactNode; onScanned: (text: stri
   const [attempt, setAttempt] = useState(0);
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted">Scan a channel QR code from the MeshCore app or from another MeshCore Home.</p>
+      <p className="text-sm text-muted">Scan a channel QR code from the MeshCore app or from another MeshHome.</p>
       {error ? (
         <div className="space-y-3">
           <p role="alert" className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">

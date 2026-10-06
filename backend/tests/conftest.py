@@ -27,7 +27,7 @@ from app.api.auth import SetupToken  # noqa: E402
 from app.main import app  # noqa: E402
 from app.radio.supervisor import supervisor  # noqa: E402
 
-HEADERS = {"X-Requested-With": "meshcore-home"}
+HEADERS = {"X-Requested-With": "meshhome"}
 PASSWORD = "correct horse battery"
 
 
@@ -82,7 +82,7 @@ async def wait_for(predicate, timeout=8.0, interval=0.1):
 
 
 def csrf(c: AsyncClient) -> dict:
-    return {**HEADERS, "X-CSRF-Token": c.cookies.get("mch_csrf", "")}
+    return {**HEADERS, "X-CSRF-Token": c.cookies.get("mh_csrf", "")}
 
 
 async def do_setup(c: AsyncClient, mode="simulated", **radio) -> None:

@@ -87,7 +87,7 @@ async def _info(s, radio: Radio, connected_since: float | None) -> str:
             .where(Contact.radio_id == radio.id, Contact.on_radio.is_(True))
         )
     ).scalar_one()
-    parts = [radio.name or "MeshCore Home", f"MeshCore Home {APP_VERSION}"]
+    parts = [radio.name or "MeshHome", f"MeshHome {APP_VERSION}"]
     if connected_since:
         parts.append(f"up {_duration(time.time() - connected_since)}")
     if rf.get("freq_mhz"):

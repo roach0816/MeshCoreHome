@@ -2,7 +2,7 @@
 export function browserLocation(): Promise<{ lat: number; lon: number; accuracy: number }> {
   return new Promise((resolve, reject) => {
     if (!window.isSecureContext) {
-      reject(new Error("Browsers only share location with HTTPS pages. Open MeshCore Home over HTTPS, or pick the spot on the map."));
+      reject(new Error("Browsers only share location with HTTPS pages. Open MeshHome over HTTPS, or pick the spot on the map."));
       return;
     }
     if (!("geolocation" in navigator)) {

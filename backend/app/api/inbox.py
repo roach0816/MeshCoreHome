@@ -575,7 +575,7 @@ async def export_archive(ctx: AuthContext = Depends(require_auth), db: AsyncSess
         by_conv.setdefault(m.conversation_id, []).append(MessageOut.model_validate(m).model_dump(mode="json"))
     payload = {
         "exported_at": utcnow().isoformat(),
-        "format": "meshcore-home-export/1",
+        "format": "meshhome-export/1",
         "conversations": [
             {**c.model_dump(mode="json", exclude={"preview"}), "messages": by_conv.get(c.id, [])}
             for c in convs
@@ -583,7 +583,7 @@ async def export_archive(ctx: AuthContext = Depends(require_auth), db: AsyncSess
     }
     stamp = utcnow().strftime("%Y%m%d-%H%M%S")
     return JSONResponse(
-        payload, headers={"Content-Disposition": f'attachment; filename="meshcore-home-export-{stamp}.json"'}
+        payload, headers={"Content-Disposition": f'attachment; filename="meshhome-export-{stamp}.json"'}
     )
 
 

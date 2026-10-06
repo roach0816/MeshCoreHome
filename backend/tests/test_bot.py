@@ -79,7 +79,7 @@ async def test_bot_answers_commands_from_allowed_contacts(client, monkeypatch):
     await _send_to_node("tracker", "/INFO please")
     replies = await wait_for(_bot_replies)
     info = replies[0]
-    assert info.body.startswith("Home (simulated) · MeshCore Home ") and "contacts" in info.body
+    assert info.body.startswith("Home (simulated) · MeshHome ") and "contacts" in info.body
     assert len(info.body.encode()) <= 150 and info.meta == {"bot": "info"}
 
     # A quick follow-up command waits its turn (1.5 s here, 10 s for real) and is then answered.

@@ -29,7 +29,7 @@ export function App() {
   if (setup.isError)
     return (
       <div className="app-height flex items-center justify-center p-6 text-center text-sm text-muted">
-        Cannot reach the MeshCore Home server. Check that it is running, then reload.
+        Cannot reach the MeshHome server. Check that it is running, then reload.
       </div>
     );
   if (setup.data.needs_setup) {

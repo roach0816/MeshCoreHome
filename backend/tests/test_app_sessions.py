@@ -31,7 +31,7 @@ async def app_login(client, platform="ios", name="Test iPhone") -> str:
     assert not r.cookies, "apps get a token, not cookies"
     body = r.json()
     assert body["username"] == "owner"
-    assert body["token"].startswith("mchd_")
+    assert body["token"].startswith("mhd_")
     return body["token"]
 
 
@@ -46,7 +46,7 @@ async def test_meta_before_and_after_setup(client):
     r = await client.get("/api/meta")
     assert r.status_code == 200
     meta = r.json()
-    assert meta["product"] == "meshcore-home"
+    assert meta["product"] == "meshhome"
     assert meta["api_version"] == 1
     assert meta["needs_setup"] is True
     assert meta["install_kind"] == "container"
@@ -64,7 +64,7 @@ async def test_browser_sign_in_is_unchanged(client):
     )
     assert r.status_code == 200
     assert r.json()["token"] is None
-    assert "mch_session" in r.cookies
+    assert "mh_session" in r.cookies
 
 
 async def test_setup_from_an_app_returns_a_token(client):
@@ -102,7 +102,7 @@ async def test_app_token_has_owner_rights_without_csrf(client):
         assert (await phone.get("/api/auth/sessions", headers=bearer(token))).status_code == 200
 
         # Garbage and look-alike tokens are refused.
-        r = await phone.get("/api/auth/me", headers=bearer("mchd_" + "x" * 43))
+        r = await phone.get("/api/auth/me", headers=bearer("mhd_" + "x" * 43))
         assert r.status_code == 401
         assert r.json()["detail"] == "Signed out; sign in again"
 
@@ -112,11 +112,11 @@ async def test_each_session_kind_only_works_the_way_it_was_issued(client):
     token = await app_login(client)
     async with fresh_client() as phone:
         # An app token sent as a cookie would need CSRF protection again: refused.
-        phone.cookies.set("mch_session", token)
+        phone.cookies.set("mh_session", token)
         assert (await phone.get("/api/auth/me")).status_code == 401
     async with fresh_client() as other:
         # A browser cookie replayed as a Bearer token: refused.
-        browser_token = client.cookies.get("mch_session")
+        browser_token = client.cookies.get("mh_session")
         assert (await other.get("/api/auth/me", headers=bearer(browser_token))).status_code == 401
 
 

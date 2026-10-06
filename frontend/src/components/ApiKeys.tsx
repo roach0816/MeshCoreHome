@@ -25,7 +25,7 @@ function useApiKeys() {
   return useQuery({ queryKey: ["api-keys"], queryFn: () => api<ApiKey[]>("/api/api-keys") });
 }
 
-/** Settings → API keys: keys that let other services and scripts use this MeshCore Home. */
+/** Settings → API keys: keys that let other services and scripts use this MeshHome. */
 export function ApiKeysSection() {
   const keys = useApiKeys();
   const [creating, setCreating] = useState(false);
@@ -188,7 +188,7 @@ function NewKeyDialog({ created, onClose }: { created: ApiKeyCreated; onClose: (
       <div className="space-y-4 text-sm">
         <p>
           Copy this key now and store it somewhere safe, such as the other service's secret settings.{" "}
-          <strong>It is shown only once</strong>: MeshCore Home keeps only a fingerprint of it.
+          <strong>It is shown only once</strong>: MeshHome keeps only a fingerprint of it.
         </p>
         <div className="flex items-center gap-1">
           <code className="min-w-0 flex-1 select-all break-all rounded-md bg-surface-2 px-2 py-2 font-mono text-xs">{created.key}</code>

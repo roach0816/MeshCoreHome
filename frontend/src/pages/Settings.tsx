@@ -87,7 +87,7 @@ function SoftwareSection() {
     <Section title="Software">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm">
-          MeshCore Home v{d?.current_version ?? "…"}
+          MeshHome v{d?.current_version ?? "…"}
           {d?.update_available && d.latest && (
             <Badge tone="accent" className="ml-2">
               v{d.latest.version} available
@@ -195,7 +195,7 @@ function RadioSection() {
             [
               ["simulated", "Simulated", "Sample traffic, no hardware"],
               ["tcp", "MeshCore TCP", "Ethernet companion radio"],
-              ...(offerHat ? [["hat", "Radio HAT on this Pi", "RAK6421 LoRa HAT, run by MeshCore Home"]] : []),
+              ...(offerHat ? [["hat", "Radio HAT on this Pi", "RAK6421 LoRa HAT, run by MeshHome"]] : []),
               ["none", "None", "No radio connection"],
             ] as [RadioMode, string, string][]
           ).map(([m, title, sub]) => (
@@ -478,7 +478,7 @@ function NotificationsSection() {
   return (
     <Section
       title="Notification sounds"
-      description="Plays a short chime for new incoming messages while MeshCore Home is open in a browser tab. Right-click a conversation to mute or unmute it individually."
+      description="Plays a short chime for new incoming messages while MeshHome is open in a browser tab. Right-click a conversation to mute or unmute it individually."
     >
       <fieldset className="grid gap-2 sm:grid-cols-3">
         <legend className="sr-only">Play a sound for</legend>
@@ -521,7 +521,7 @@ function NotificationsSection() {
 type BotConfig = { enabled: boolean; allow: "favorites" | "everyone" };
 
 const BOT_COMMANDS: [string, string][] = [
-  ["/info", "This node's name, MeshCore Home version, time online, radio settings and number of contacts."],
+  ["/info", "This node's name, MeshHome version, time online, radio settings and number of contacts."],
   ["/ping", "\u201cpong\u201d with how your message arrived: signal (SNR, RSSI) and hops."],
   ["/weather", "Outdoor temperature, humidity, wind, 24-hour rain and air quality from your weather station (set up below)."],
   ["/help", "The list of commands."],
@@ -637,7 +637,7 @@ function WeatherStation() {
       <Field
         label="Weather station for /weather"
         htmlFor="weather-host"
-        hint="The IP address or hostname of your Ecowitt gateway or Wi-Fi console (GW1100, GW2000, GW3000, …) on your network, e.g. 192.168.1.50. MeshCore Home reads its live data directly; nothing goes through the Ecowitt cloud. Leave empty to turn /weather off."
+        hint="The IP address or hostname of your Ecowitt gateway or Wi-Fi console (GW1100, GW2000, GW3000, …) on your network, e.g. 192.168.1.50. MeshHome reads its live data directly; nothing goes through the Ecowitt cloud. Leave empty to turn /weather off."
       >
         <Input
           id="weather-host"
@@ -708,7 +708,7 @@ function DataSection() {
   });
   const simActive = status.data?.radio_config.mode === "simulated";
   return (
-    <Section title="Data" description={`MeshCore Home v${status.data?.app.version ?? ""} · ${status.data?.database.messages ?? 0} messages archived.`}>
+    <Section title="Data" description={`MeshHome v${status.data?.app.version ?? ""} · ${status.data?.database.messages ?? 0} messages archived.`}>
       <div className="flex flex-wrap gap-2">
         <a
           href="/api/export"

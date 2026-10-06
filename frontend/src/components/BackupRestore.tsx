@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArchiveRestore, CheckCircle2, Download, FileUp, Loader2, Lock, Trash2, XCircle } from "lucide-react";
-import { api, ApiError, errorDetail, writeHeaders } from "../lib/api";
+import { api, ApiError, errorDetail, REQUESTED_WITH, writeHeaders } from "../lib/api";
 import { cx, formatDateTime } from "../lib/util";
 import { Dialog } from "./Dialog";
 import { Badge, Button, Card, ErrorText, Field, IconButton, Input } from "./ui";
@@ -80,7 +80,7 @@ export function BackupSection() {
         </div>
         <p className="flex items-start gap-2 text-xs text-muted">
           <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          The backup is encrypted with this passphrase and can't be opened without it. Keep it somewhere safe: MeshCore Home
+          The backup is encrypted with this passphrase and can't be opened without it. Keep it somewhere safe: MeshHome
           doesn't store it.
         </p>
         <ErrorText error={create.error} />
@@ -174,7 +174,7 @@ export function RestoreFlow({ setupToken, onCancel, onDone }: { setupToken?: str
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [agree, setAgree] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const headers = setupToken ? { "X-Requested-With": "meshcore-home", "X-Setup-Token": setupToken } : writeHeaders();
+  const headers = setupToken ? { "X-Requested-With": REQUESTED_WITH, "X-Setup-Token": setupToken } : writeHeaders();
 
   const check = useMutation({
     mutationFn: async () => {
@@ -212,7 +212,7 @@ export function RestoreFlow({ setupToken, onCancel, onDone }: { setupToken?: str
         <input
           ref={fileRef}
           type="file"
-          accept=".mchb,application/octet-stream"
+          accept=".mhb,.mchb,application/octet-stream"
           className="sr-only"
           id="restore-file"
           onChange={(e) => {
@@ -316,7 +316,7 @@ function Summary({ s }: { s: RestoreSummary }) {
   return (
     <div className="space-y-3 rounded-lg border border-line p-3 text-sm">
       <p>
-        Backup of <strong>{s.home_name}</strong> made {formatDateTime(s.created_at)} by MeshCore Home v{s.app_version} (
+        Backup of <strong>{s.home_name}</strong> made {formatDateTime(s.created_at)} by MeshHome v{s.app_version} (
         {s.install_kind === "native" ? "Raspberry Pi / Debian install" : "container"}).
       </p>
       {s.errors.length > 0 && <List tone="danger" items={s.errors} />}

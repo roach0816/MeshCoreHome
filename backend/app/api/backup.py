@@ -31,12 +31,13 @@ from app.api.deps import (
     require_csrf,
     require_requested_with,
     require_session,
+    session_cookie,
 )
 from app.config import get_settings
 from app.db import get_db
 from app.models import AuditEvent
 from app.radio.supervisor import supervisor
-from app.security import SESSION_COOKIE, constant_time_equals
+from app.security import constant_time_equals
 from app.services import app_settings, backup, backup_crypto, remote_admin, system_config
 
 log = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ async def _restore_auth(request: Request, db: AsyncSession) -> str:
             if await load_app_session(db, raw) is None:
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
             return "owner"
-        ctx = await load_session(db, request.cookies.get(SESSION_COOKIE))
+        ctx = await load_session(db, session_cookie(request.cookies))
         if ctx is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
         require_csrf(request, ctx.session)
@@ -190,7 +191,7 @@ async def delete_backup(name: str, ctx: AuthContext = Depends(require_session)):
 def _upload_path(upload_id: str) -> Path:
     if not UPLOAD_ID.match(upload_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Upload not found; upload the backup again")
-    p = backup.staging_dir() / f"{upload_id}.mchb"
+    p = backup.staging_dir() / f"{upload_id}.mhb"
     if not p.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Upload not found; upload the backup again")
     return p
@@ -201,7 +202,7 @@ async def upload(request: Request, who: str = Depends(restore_auth)):
     """The backup file as the raw request body (application/octet-stream)."""
     backup.prune_temporary()
     upload_id = uuid.uuid4().hex
-    target = backup.staging_dir() / f"{upload_id}.mchb"
+    target = backup.staging_dir() / f"{upload_id}.mhb"
     size = 0
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:

@@ -58,7 +58,7 @@ def test_encryption_roundtrip_and_tamper_detection(monkeypatch):
     flipped[header_end + chunk + 30] ^= 1
     with pytest.raises(backup_crypto.BackupError, match="damaged or was changed"):
         dec(bytes(flipped))
-    with pytest.raises(backup_crypto.BackupError, match="not a MeshCore Home backup"):
+    with pytest.raises(backup_crypto.BackupError, match="not a MeshHome backup"):
         dec(b"PK\x03\x04zipfile")
 
 
@@ -236,7 +236,7 @@ async def test_newer_backup_is_refused(client, fast_kdf):
             f"/api/restore/{upload_id}/inspect", headers=csrf(client), json={"passphrase": PASS}
         )
     ).json()
-    assert summary["can_restore"] is False and "newer MeshCore Home (v9.9.9)" in summary["errors"][0]
+    assert summary["can_restore"] is False and "newer MeshHome (v9.9.9)" in summary["errors"][0]
     r = await client.post(f"/api/restore/{upload_id}/apply", headers=csrf(client), json={"passphrase": PASS})
     assert r.status_code == 409
 

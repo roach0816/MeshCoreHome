@@ -153,7 +153,7 @@ function MessageDialog({
       {view === "block" && info.data && <BlockText info={info.data} />}
       {view === "delete" && (
         <p className="text-sm">
-          Delete this message from MeshCore Home's archive? It is not removed from anyone's radio, and others still have their
+          Delete this message from MeshHome's archive? It is not removed from anyone's radio, and others still have their
           copies.
         </p>
       )}
@@ -260,7 +260,7 @@ function Paths({ paths }: { paths: MessagePath[] }) {
     return (
       <p className="text-sm text-muted">
         No paths were recorded for this message. Paths are captured as the radio hears a message, so they are missing for messages
-        received while MeshCore Home wasn't connected (or before this version).
+        received while MeshHome wasn't connected (or before this version).
       </p>
     );
   }
@@ -307,7 +307,7 @@ function BlockText({ info }: { info: MessageInfo }) {
     return (
       <p className="text-sm">
         <strong>{info.sender.label ?? "This sender"}</strong> isn't one of your radio's contacts, so it can't be blocked. MeshCore
-        radios can't block traffic; MeshCore Home blocks contacts, hiding their direct messages and channel messages under their
+        radios can't block traffic; MeshHome blocks contacts, hiding their direct messages and channel messages under their
         name.
       </p>
     );

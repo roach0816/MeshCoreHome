@@ -9,12 +9,14 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import ApiKey, Session, User, utcnow
 from app.security import (
-    API_KEY_PREFIX,
+    API_KEY_PREFIXES,
     APP_TOKEN_PREFIX,
     CSRF_COOKIE,
     CSRF_HEADER,
+    LEGACY_CSRF_COOKIE,
+    LEGACY_SESSION_COOKIE,
     REQUESTED_WITH_HEADER,
-    REQUESTED_WITH_VALUE,
+    REQUESTED_WITH_VALUES,
     SESSION_COOKIE,
     api_key_failures,
     constant_time_equals,
@@ -61,7 +63,7 @@ def cookie_secure(request: Request) -> bool:
 def require_requested_with(request: Request) -> None:
     if (
         request.method not in SAFE_METHODS
-        and request.headers.get(REQUESTED_WITH_HEADER) != REQUESTED_WITH_VALUE
+        and request.headers.get(REQUESTED_WITH_HEADER) not in REQUESTED_WITH_VALUES
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing request header")
 
@@ -97,6 +99,7 @@ async def create_session(
         return token
     secure = cookie_secure(request)
     max_age = days * 86400
+    _delete_legacy_cookies(response)
     response.set_cookie(
         SESSION_COOKIE, token, max_age=max_age, httponly=True, secure=secure, samesite="strict", path="/"
     )
@@ -116,17 +119,28 @@ async def create_session(
 def clear_session_cookies(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
+    _delete_legacy_cookies(response)
+
+
+def _delete_legacy_cookies(response: Response) -> None:
+    response.delete_cookie(LEGACY_SESSION_COOKIE, path="/")
+    response.delete_cookie(LEGACY_CSRF_COOKIE, path="/")
+
+
+def session_cookie(cookies) -> str | None:
+    """The browser's session token: the current cookie, or the one set before the rename."""
+    return cookies.get(SESSION_COOKIE) or cookies.get(LEGACY_SESSION_COOKIE)
 
 
 async def load_session(db: AsyncSession, token: str | None) -> AuthContext | None:
-    """A browser session, from the mch_session cookie."""
+    """A browser session, from the session cookie."""
     if not token:
         return None
     return await _load_session(db, token, app=False)
 
 
 async def load_app_session(db: AsyncSession, token: str) -> AuthContext | None:
-    """An app session, from "Authorization: Bearer mchd_...". Its expiry slides while in use."""
+    """An app session, from "Authorization: Bearer mhd_...". Its expiry slides while in use."""
     if not token.startswith(APP_TOKEN_PREFIX):
         return None
     ctx = await _load_session(db, token, app=True)
@@ -166,14 +180,15 @@ async def touch_session(db: AsyncSession, sess: Session) -> None:
 
 
 def bearer_token(headers) -> str | None:
-    """The token from "Authorization: Bearer ...": an API key (mch_) or an app session (mchd_)."""
+    """The token from "Authorization: Bearer ...": an API key (mh_, or mch_ from before the rename)
+    or an app session (mhd_)."""
     scheme, _, value = headers.get("authorization", "").partition(" ")
     value = value.strip()
     return value if scheme.lower() == "bearer" and value else None
 
 
 async def load_api_key(db: AsyncSession, raw: str) -> AuthContext | None:
-    if not raw.startswith(API_KEY_PREFIX):
+    if not raw.startswith(API_KEY_PREFIXES):
         return None
     row = (
         await db.execute(
@@ -225,7 +240,7 @@ async def require_auth(request: Request, db: AsyncSession = Depends(get_db)) -> 
     raw = bearer_token(request.headers)
     if raw is not None:
         return await _bearer_auth(request, db, raw)
-    ctx = await load_session(db, request.cookies.get(SESSION_COOKIE))
+    ctx = await load_session(db, session_cookie(request.cookies))
     if ctx is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     if request.method not in SAFE_METHODS:

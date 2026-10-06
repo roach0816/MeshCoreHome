@@ -20,7 +20,7 @@ contacts and settings, which live on the radio.
 
 Every backup is encrypted with a passphrase you choose (at least 10 characters): AES-256-GCM with
 the key derived using scrypt, sealed in authenticated chunks so a damaged, cut-off or altered file is
-detected. The file can't be opened without the passphrase, and MeshCore Home doesn't store it. Keep
+detected. The file can't be opened without the passphrase, and MeshHome doesn't store it. Keep
 the passphrase somewhere safe: a lost passphrase means a lost backup.
 
 ## Where backups are kept
@@ -35,7 +35,7 @@ the passphrase somewhere safe: a lost passphrase means a lost backup.
 
 Restore from **Settings → Backup & restore → Restore a backup…**, or on a fresh installation from the
 setup wizard with **Restore a backup instead** (using the setup token). Upload the file and enter the
-passphrase. MeshCore Home decrypts and checks the backup **before anything changes**, and lists what
+passphrase. MeshHome decrypts and checks the backup **before anything changes**, and lists what
 will be restored, what won't be restored here and why, and anything to do afterwards. Then you
 confirm.
 

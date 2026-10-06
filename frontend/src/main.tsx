@@ -3,11 +3,12 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
-import { applyTheme, getThemePref } from "./lib/util";
+import { applyTheme, getThemePref, migrateLocalStorage } from "./lib/util";
 import { ApiError } from "./lib/api";
 import { installAudioUnlock } from "./lib/sound";
 import "./index.css";
 
+migrateLocalStorage();
 applyTheme(getThemePref());
 installAudioUnlock();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(getThemePref()));

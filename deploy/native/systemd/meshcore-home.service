@@ -1,6 +1,6 @@
 [Unit]
-Description=MeshCore Home (web inbox for a MeshCore radio)
-Documentation=https://github.com/roach0816/MeshCoreHome
+Description=MeshHome (web inbox for a MeshCore radio)
+Documentation=https://github.com/roach0816/MeshHome
 After=network-online.target postgresql.service
 Wants=network-online.target
 Requires=postgresql.service

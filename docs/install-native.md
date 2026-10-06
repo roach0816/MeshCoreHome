@@ -23,7 +23,7 @@ has the short version.
 ## What the installer does
 
 ```bash
-curl -fsSLo install.sh https://github.com/roach0816/MeshCoreHome/releases/latest/download/install.sh
+curl -fsSLo install.sh https://github.com/roach0816/MeshHome/releases/latest/download/install.sh
 sudo bash install.sh
 ```
 
@@ -48,7 +48,7 @@ pipes, and `--plain` get plain line-by-line output instead.
 9. **Radio HAT (optional, Raspberry Pi 4/5):** see [Radio HAT](#radio-hat-on-the-pi-rak6421).
 10. **HTTPS (optional):** see [HTTPS](#https).
 11. **Automatic security updates (optional, recommended):** turns on Debian's `unattended-upgrades` so
-    OS security fixes install daily. It never upgrades MeshCore Home itself.
+    OS security fixes install daily. It never upgrades MeshHome itself.
 
 Answering **n** at any prompt cancels the installation. Re-running the installer is safe: it picks up
 where a failed attempt stopped, and repairs a broken install. `--yes` answers every question with its
@@ -115,7 +115,7 @@ Instead of a separate radio on your network, a Raspberry Pi 4 or 5 can carry the
 **RAKwireless WisMesh Pi HAT (RAK6421)** with a **RAK13300** (or RAK13302) LoRa module in **IO slot 1**
 and an antenna for your region. Nothing needs flashing: the radio module has no firmware of its own.
 
-MeshCore Home installs and manages the radio software for you. It uses
+MeshHome installs and manages the radio software for you. It uses
 [ZephCore](https://github.com/liquidraver/ZephCore) (MIT licence), the MeshCore firmware ported to
 Linux, which drives the radio over SPI and serves the standard MeshCore companion protocol.
 
@@ -129,15 +129,15 @@ Linux, which drives the radio over SPI and serves the standard MeshCore companio
     use the SPI and GPIO devices.
   - Limits the companion port (5000) to the Pi itself: it has no password, so other devices on your
     network cannot connect.
-- **Configure the radio** from MeshCore Home's **Node settings**: name, frequency, power, and channels.
+- **Configure the radio** from MeshHome's **Node settings**: name, frequency, power, and channels.
   **ZephCore starts on the EU/UK frequency (869.618 MHz)**, so outside Europe set your region's
   preset before sending.
-- **Updates and removal:** MeshCore Home upgrades bring tested ZephCore updates, and keep the previous
+- **Updates and removal:** MeshHome upgrades bring tested ZephCore updates, and keep the previous
   version if a new one does not start. Removing the HAT keeps the radio's identity, contacts, and
   channels; `uninstall --purge` deletes them. [Backups](backup-restore.md) include them too.
 - **Requirements:** a Raspberry Pi 4 or 5 running **64-bit Raspberry Pi OS 13 "Trixie"** (or
   Debian 13). ZephCore's builds need glibc 2.38, so Raspberry Pi OS 12 "Bookworm" is not supported;
-  MeshCore Home explains this instead of offering setup. Do not install Meshtastic (`meshtasticd`): it
+  MeshHome explains this instead of offering setup. Do not install Meshtastic (`meshtasticd`): it
   would take over the radio.
 
 The radio HAT has been tested end to end in Debian 13 containers against the real ZephCore software,
@@ -227,5 +227,5 @@ root-owned `meshcore-home-update` unit double-checks it against the official rel
 installing anything. Migrations only ever add to the database, so rolling back is always safe.
 
 The same page also compares the **radio's MeshCore firmware** with MeshCore's latest companion
-release. MeshCore Home does not install radio firmware; companion firmware is updated over USB (see
+release. MeshHome does not install radio firmware; companion firmware is updated over USB (see
 [Radios](radios.md#firmware)).

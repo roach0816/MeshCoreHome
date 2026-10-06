@@ -35,7 +35,7 @@ async def _status(db: AsyncSession, force: bool = False) -> dict:
         pinned = radio_hat.pinned().get("ZEPHCORE_VERSION")
         return {
             "available": False,
-            "reason": "The radio HAT runs ZephCore, the MeshCore firmware for Linux. MeshCore Home installs it "
+            "reason": "The radio HAT runs ZephCore, the MeshCore firmware for Linux. MeshHome installs it "
             f"and updates it with its own updates{f' (pinned: {pinned})' if pinned else ''}.",
         }
     info = radio.device_info or {}

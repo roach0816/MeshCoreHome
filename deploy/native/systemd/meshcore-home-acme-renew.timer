@@ -1,5 +1,5 @@
 [Unit]
-Description=MeshCore Home: check the HTTPS certificate for renewal twice a day
+Description=MeshHome: check the HTTPS certificate for renewal twice a day
 
 [Timer]
 OnCalendar=*-*-* 00,12:00:00

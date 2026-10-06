@@ -69,7 +69,7 @@ export function RadioHatPanel({ connected }: { connected: boolean }) {
       {h.available && h.phase === "absent" && (
         <div className="space-y-2 text-sm">
           <p>
-            MeshCore Home installs <strong>ZephCore</strong>, the MeshCore firmware ported to Linux, to drive the
+            MeshHome installs <strong>ZephCore</strong>, the MeshCore firmware ported to Linux, to drive the
             RAK6421 HAT. Nothing else to install by hand:
           </p>
           <ul className="list-disc space-y-1 pl-5 text-muted">
@@ -169,7 +169,7 @@ export function RadioHatPanel({ connected }: { connected: boolean }) {
           }
         >
           <p className="text-sm">
-            MeshCore Home and the radio are unavailable for about a minute while the Pi restarts. Messages sent to you
+            MeshHome and the radio are unavailable for about a minute while the Pi restarts. Messages sent to you
             meanwhile may be missed.
           </p>
         </Dialog>
@@ -191,7 +191,7 @@ export function RadioHatPanel({ connected }: { connected: boolean }) {
           }
         >
           <p className="text-sm">
-            ZephCore and its service are removed, and MeshCore Home loses its radio until you choose another one. The
+            ZephCore and its service are removed, and MeshHome loses its radio until you choose another one. The
             radio's identity, contacts and channels are kept, so setting it up again restores them.
           </p>
         </Dialog>

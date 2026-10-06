@@ -1,6 +1,6 @@
 # Features
 
-A tour of everything MeshCore Home does. The [README](../README.md#what-it-does) has the summary.
+A tour of everything MeshHome does. The [README](../README.md#what-it-does) has the summary.
 
 - [Messaging](#messaging)
 - [Contacts](#contacts)
@@ -30,7 +30,7 @@ A tour of everything MeshCore Home does. The [README](../README.md#what-it-does)
   - **Message details:** when it was sent and received, hops, path hash size, SNR and RSSI.
   - **Sender info:** the sender's contact. For channels this is matched by name, which isn't verified.
   - **View message paths:** the route of every copy your radio heard, with the repeaters named from
-    your contacts. Paths are recorded from the radio's packet log while MeshCore Home is connected.
+    your contacts. Paths are recorded from the radio's packet log while MeshHome is connected.
   - **Copy text**, **Block sender**, and **Delete** (removes the message from the archive only).
 - **Conversation menu** (right-click or long-press a conversation): info, mark as read, favorite, mute
   or unmute, and delete or clear history.
@@ -59,7 +59,7 @@ it. Right-click or long-press a contact for:
 - **Remove contact:** removes it from the radio. The archive keeps the conversation.
 - **Remote manage** (repeaters and room servers), below.
 
-**Blocked** and **Removed from radio** are different: *Blocked* is MeshCore Home's own setting (the
+**Blocked** and **Removed from radio** are different: *Blocked* is MeshHome's own setting (the
 contact stays on the radio), while *Removed from radio* means the contact is no longer in the radio's
 contact list (removed by you, by another app, or dropped by the radio when its list was full).
 
@@ -101,10 +101,10 @@ private-key export/import are deliberately left out; use official MeshCore tools
 **Settings → Bot** (off by default) lets you query your home node from another radio by direct
 message:
 
-- `/info`: the node's name, MeshCore Home version, time online, radio settings and contact count.
+- `/info`: the node's name, MeshHome version, time online, radio settings and contact count.
 - `/ping`: how your message arrived (SNR, RSSI, hops or direct route).
 - `/weather`: outdoor temperature, humidity, wind, 24-hour rain and air quality from an Ecowitt
-  weather station (e.g. a WS90 through a GW1100/GW2000/GW3000 gateway) on your network. MeshCore Home
+  weather station (e.g. a WS90 through a GW1100/GW2000/GW3000 gateway) on your network. MeshHome
   reads the gateway's local live data directly, without the Ecowitt cloud. Set the gateway's address
   in Settings and use **Test station** to preview the reply.
 - `/help`: the list of commands.

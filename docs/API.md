@@ -1,16 +1,16 @@
-# MeshCore Home API
+# MeshHome API
 
-MeshCore Home archives the messages of a MeshCore companion radio and lets you send messages
+MeshHome archives the messages of a MeshCore companion radio and lets you send messages
 through it. This document describes the HTTP and WebSocket API that other services and scripts
 can use with an **API key**. It is written so that a program (or an AI agent) can use it without
 further context.
 
-- **Base URL:** wherever the owner's MeshCore Home is served, for example
+- **Base URL:** wherever the owner's MeshHome is served, for example
   `https://<YOUR_HOST>` or `http://<PI_ADDRESS>:8080`. All paths below start with `/api`.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.8.0**. `GET /api/status` reports the
+- **Version:** this document matches MeshHome **v0.9.0**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -33,7 +33,7 @@ The owner creates a key in the web interface under **Settings → API keys**, ch
 (read only, or read & write) and, optionally, an expiry. The key looks like this:
 
 ```
-mch_Q2xU8...  (the prefix "mch_" followed by 43 random characters)
+mh_Q2xU8...  (the prefix "mh_" followed by 43 random characters)
 ```
 
 Send it on every request in the `Authorization` header:
@@ -41,15 +41,16 @@ Send it on every request in the `Authorization` header:
 ```http
 GET /api/conversations HTTP/1.1
 Host: <YOUR_HOST>
-Authorization: Bearer mch_Q2xU8...
+Authorization: Bearer mh_Q2xU8...
 ```
 
 ```bash
-curl -H "Authorization: Bearer $MESHCORE_HOME_API_KEY" https://<YOUR_HOST>/api/status
+curl -H "Authorization: Bearer $MESHHOME_API_KEY" https://<YOUR_HOST>/api/status
 ```
 
 - Keep the key secret (environment variable or secret store). It is shown to the owner only once;
   the server stores only a SHA-256 fingerprint.
+- Keys created before the project was renamed to MeshHome start with `mch_` and keep working.
 - Requests with an API key need **no** cookies, CSRF token or `X-Requested-With` header. Those are
   only for the browser interface.
 - Use HTTPS whenever the server offers it; over plain HTTP the key crosses the network in the clear.
@@ -125,12 +126,12 @@ channel slots) or a **direct message** thread with one contact (`kind: "dm"`).
 
 ### Messages and delivery states
 
-`direction` is `"in"` (received) or `"out"` (sent from MeshCore Home). Outgoing messages move
+`direction` is `"in"` (received) or `"out"` (sent from MeshHome). Outgoing messages move
 through these `state` values:
 
 | `state` | Meaning |
 | --- | --- |
-| `queued` | Accepted by MeshCore Home and waiting for the radio. |
+| `queued` | Accepted by MeshHome and waiting for the radio. |
 | `sending` | Being handed to the radio now. |
 | `accepted` | The radio transmitted it. **Final for channel messages**: channels have no delivery receipts. For a DM this means "sent, waiting for acknowledgement". |
 | `acknowledged` | DM only: the recipient's radio returned an acknowledgement. This is a delivery receipt, not a read receipt. The web interface shows it as **Delivered**, like the MeshCore apps. |
@@ -140,7 +141,7 @@ through these `state` values:
 | `expired` | It could not be sent within 60 seconds (e.g. the radio was busy or offline). |
 
 Incoming messages have `state: "received"`. `failed`, `uncertain`, `no_ack` and `expired`
-messages can be retried. MeshCore Home never resends anything automatically.
+messages can be retried. MeshHome never resends anything automatically.
 
 ### Idempotent sending
 
@@ -351,7 +352,7 @@ Without `before`/`after` you get the newest `limit` messages.
 ```
 
 - `sender_timestamp` is the sender's clock in Unix seconds and can be wrong; `created_at` is when
-  MeshCore Home stored the message.
+  MeshHome stored the message.
 - `sender_key_prefix` is the sender's public-key prefix for DMs; `null` for channels.
 - `duplicate_count` counts extra copies of the same message heard via other paths.
 - `meta` holds radio details when available (`SNR`, `RSSI`, `path_len` hops). Treat every field
@@ -400,7 +401,7 @@ One message with what is known about its delivery and sender:
   is none.
 - `paths` lists each copy of the message the radio heard, with its route, first repeater first.
   `names` are contacts whose key starts with the hop's hash; there may be none or several. Paths
-  are only recorded while MeshCore Home is connected.
+  are only recorded while MeshHome is connected.
 - `received.route` is `"direct"` when the message followed a known route; `hops` is then `null`.
 
 #### `DELETE /api/messages/{message_id}` — write
@@ -437,7 +438,7 @@ Returns a list of messages (same shape as above) each with an extra `conversatio
 #### `GET /api/export` — read
 
 The whole archive as one JSON document
-(`{"exported_at", "format": "meshcore-home-export/1", "conversations": [ {...conversation, "messages": [...]} ]}`).
+(`{"exported_at", "format": "meshhome-export/1", "conversations": [ {...conversation, "messages": [...]} ]}`).
 This can be large; prefer the paged endpoints for regular syncing.
 
 ### Contacts
@@ -559,7 +560,7 @@ clients.
 import asyncio, json, os, websockets  # pip install websockets
 
 async def listen():
-    headers = {"Authorization": f"Bearer {os.environ['MESHCORE_HOME_API_KEY']}"}
+    headers = {"Authorization": f"Bearer {os.environ['MESHHOME_API_KEY']}"}
     async with websockets.connect("wss://<YOUR_HOST>/ws", additional_headers=headers) as ws:
         async for raw in ws:
             print(json.loads(raw))
@@ -607,7 +608,7 @@ of messages a minute at most.
 ### Send a DM to a contact by name
 
 ```bash
-KEY="Authorization: Bearer $MESHCORE_HOME_API_KEY"
+KEY="Authorization: Bearer $MESHHOME_API_KEY"
 BASE=https://<YOUR_HOST>
 
 # 1. Find the contact
@@ -627,7 +628,7 @@ import os, time, uuid, requests
 
 BASE = "https://<YOUR_HOST>"
 S = requests.Session()
-S.headers["Authorization"] = f"Bearer {os.environ['MESHCORE_HOME_API_KEY']}"
+S.headers["Authorization"] = f"Bearer {os.environ['MESHHOME_API_KEY']}"
 
 convs = S.get(f"{BASE}/api/conversations", timeout=10).json()
 public = next(c for c in convs if c["kind"] == "channel" and c["title"] == "Public" and not c["archived"])
@@ -677,19 +678,19 @@ message on your side and try again later rather than retrying in a tight loop.
 
 ## 9. Apps that sign in as the owner
 
-API keys are for other services. Native apps, such as a MeshCore Home mobile app, instead sign in
+API keys are for other services. Native apps, such as a MeshHome mobile app, instead sign in
 with the owner's **username and password**, and can then do everything the web interface can,
 including the owner-only endpoints listed under
 [Not available to API keys](#not-available-to-api-keys). The app never stores the password.
 
 ### Discover the server
 
-`GET /api/meta` needs no sign-in. Call it first to check that the address is a MeshCore Home
+`GET /api/meta` needs no sign-in. Call it first to check that the address is a MeshHome
 server and what it supports:
 
 ```json
 {
-  "product": "meshcore-home",
+  "product": "meshhome",
   "version": "0.8.0",
   "api_version": 1,
   "install_kind": "native",
@@ -712,7 +713,7 @@ server and what it supports:
 
 ```http
 POST /api/auth/login
-X-Requested-With: meshcore-home
+X-Requested-With: meshhome
 Content-Type: application/json
 
 {"username": "owner", "password": "…", "client": "ios", "device_name": "<PHONE_NAME>"}
@@ -720,11 +721,11 @@ Content-Type: application/json
 
 - `client` is `"ios"` or `"android"`. `device_name` is optional (at most 64 characters) and is
   shown to the owner under **Account → Signed-in devices**.
-- The response is `{"username", "home_name", "token"}`. The token starts with `mchd_`. It is shown
+- The response is `{"username", "home_name", "token"}`. The token starts with `mhd_`. It is shown
   only this once, and the server stores only a SHA-256 fingerprint. Keep it in the platform's
   secure storage (Keychain or Keystore).
 - No cookies are set. Send the token on every request, and on the `/ws` WebSocket, as
-  `Authorization: Bearer mchd_…`. No CSRF token or `X-Requested-With` header is needed on those
+  `Authorization: Bearer mhd_…`. No CSRF token or `X-Requested-With` header is needed on those
   requests.
 - Failed sign-ins: `401 Incorrect username or password`. After 5 failures from one address in a
   minute: `429`.

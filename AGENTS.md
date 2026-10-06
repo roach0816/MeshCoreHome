@@ -1,4 +1,4 @@
-# Agent notes for MeshCore Home
+# Agent notes for MeshHome
 
 ## Ground rules
 - **Public repository.** Never commit secrets or installation specifics: no passwords, radio IPs,

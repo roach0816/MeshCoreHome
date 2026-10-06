@@ -7,8 +7,10 @@ export class ApiError extends Error {
 }
 
 /** Headers a state-changing request from the browser needs (for requests not made with api()). */
+export const REQUESTED_WITH = "meshhome";
+
 export function writeHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "X-Requested-With": "meshcore-home" };
+  const h: Record<string, string> = { "X-Requested-With": REQUESTED_WITH };
   const token = csrfToken();
   if (token) h["X-CSRF-Token"] = token;
   return h;
@@ -20,7 +22,8 @@ export function errorDetail(body: unknown): string {
 }
 
 function csrfToken(): string {
-  const m = document.cookie.match(/(?:^|;\s*)mch_csrf=([^;]+)/);
+  // mch_csrf: a sign-in from before the rename to MeshHome, still valid.
+  const m = document.cookie.match(/(?:^|;\s*)mh_csrf=([^;]+)/) ?? document.cookie.match(/(?:^|;\s*)mch_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";
 }
 
@@ -39,7 +42,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const method = (rest.method ?? (json !== undefined ? "POST" : "GET")).toUpperCase();
   const h = new Headers(headers);
   if (method !== "GET") {
-    h.set("X-Requested-With", "meshcore-home");
+    h.set("X-Requested-With", REQUESTED_WITH);
     const token = csrfToken();
     if (token) h.set("X-CSRF-Token", token);
   }

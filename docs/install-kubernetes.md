@@ -96,7 +96,7 @@ cluster. Then **Add Repository**:
 | Field | Value |
 | --- | --- |
 | Name | `meshcore-home` |
-| Repository URL | `https://github.com/roach0816/MeshCoreHome.git` (or your fork) |
+| Repository URL | `https://github.com/roach0816/MeshHome.git` (or your fork) |
 | Branch | `main` |
 | Paths | `deploy/k8s` |
 | Deploy To | your K3s cluster |
@@ -113,7 +113,7 @@ metadata:
   name: meshcore-home
   namespace: fleet-default          # or fleet-local
 spec:
-  repo: https://github.com/roach0816/MeshCoreHome.git
+  repo: https://github.com/roach0816/MeshHome.git
   branch: main
   paths: [deploy/k8s]
   targets:

@@ -63,7 +63,7 @@ class Session(Base):
 
 
 class ApiKey(Base):
-    """A key for other services and scripts (Authorization: Bearer mch_...)."""
+    """A key for other services and scripts (Authorization: Bearer mh_...)."""
 
     __tablename__ = "api_keys"
 

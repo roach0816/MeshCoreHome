@@ -1,5 +1,5 @@
 [Unit]
-Description=MeshCore Home network/HTTPS settings (requested from the web interface)
+Description=MeshHome network/HTTPS settings (requested from the web interface)
 After=network-online.target
 Wants=network-online.target
 

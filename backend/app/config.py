@@ -9,10 +9,10 @@ database, so nothing installation-specific needs to be committed to the repo.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 # The API contract the mobile apps depend on (GET /api/meta). Changes stay additive; this only
 # goes up for a change that older apps can't handle, which should be (almost) never.
 API_VERSION = 1
@@ -41,17 +41,22 @@ class Settings(BaseSettings):
     # Where the version number in the UI links to. "{version}" is replaced (e.g. 0.4.0). Forks can
     # point this at their own repository; set it empty to show the version without a link.
     release_notes_url: str = Field(
-        default="https://github.com/roach0816/MeshCoreHome/releases/tag/v{version}", alias="RELEASE_NOTES_URL"
+        default="https://github.com/roach0816/MeshHome/releases/tag/v{version}", alias="RELEASE_NOTES_URL"
     )
 
     # ---- updates / native install ----------------------------------------------------------
     # "native" (Debian/Raspberry Pi install via deploy/native/install.sh) enables in-place
     # upgrades from the web UI; "container" (Docker/Kubernetes) only reports new versions.
-    install_kind: Literal["native", "container"] = Field(default="container", alias="MESHCORE_INSTALL_KIND")
+    # MESHCORE_*: the names from before the rename to MeshHome, still set by existing installs.
+    install_kind: Literal["native", "container"] = Field(
+        default="container", validation_alias=AliasChoices("MESHHOME_INSTALL_KIND", "MESHCORE_INSTALL_KIND")
+    )
     # Writable state directory for a native install (update requests/status, setup token file).
-    state_dir: str = Field(default="", alias="MESHCORE_STATE_DIR")
+    state_dir: str = Field(
+        default="", validation_alias=AliasChoices("MESHHOME_STATE_DIR", "MESHCORE_STATE_DIR")
+    )
     # GitHub "owner/repo" whose releases are checked for updates. Empty disables update checks.
-    update_repo: str = Field(default="roach0816/MeshCoreHome", alias="UPDATE_REPO")
+    update_repo: str = Field(default="roach0816/MeshHome", alias="UPDATE_REPO")
     # MeshCore's suggested radio presets (refreshed daily; a bundled copy is used offline). Empty: bundled only.
     radio_presets_url: str = Field(default="https://api.meshcore.nz/api/v1/config", alias="RADIO_PRESETS_URL")
     update_api_url: str = Field(default="https://api.github.com", alias="UPDATE_API_URL")

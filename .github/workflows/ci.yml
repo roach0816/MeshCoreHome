@@ -67,7 +67,10 @@ jobs:
             exit 0
           fi
           echo "Comparing with $base"
-          ./oasdiff breaking /tmp/base.json backend/openapi.json --fail-on ERR
+          # Deliberate breaks for this release only, one oasdiff message per line (see docs/development.md).
+          touch backend/openapi-allowed-breaks.txt
+          ./oasdiff breaking /tmp/base.json backend/openapi.json --fail-on ERR \
+            --err-ignore backend/openapi-allowed-breaks.txt
 
   frontend:
     runs-on: ubuntu-latest

@@ -1,4 +1,4 @@
-# lego release that MeshCore Home installs to get and renew HTTPS certificates (DNS-01) on
+# lego release that MeshHome installs to get and renew HTTPS certificates (DNS-01) on
 # native installs. lego (https://github.com/go-acme/lego, MIT licence) supports the DNS providers
 # listed in dns-providers.json.
 #

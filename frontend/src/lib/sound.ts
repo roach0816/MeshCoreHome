@@ -66,7 +66,7 @@ export function soundDefaultFor(global: SoundSetting, kind: "dm" | "channel"): b
  */
 export function claimChime(messageId: string): boolean {
   try {
-    const key = "mch.lastChime";
+    const key = "mh.lastChime";
     if (localStorage.getItem(key) === messageId) return false;
     localStorage.setItem(key, messageId);
     return true;

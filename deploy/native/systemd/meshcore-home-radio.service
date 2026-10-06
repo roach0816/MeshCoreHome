@@ -1,5 +1,5 @@
 [Unit]
-Description=MeshCore Home radio HAT (ZephCore: MeshCore on the RAK6421 LoRa HAT)
+Description=MeshHome radio HAT (ZephCore: MeshCore on the RAK6421 LoRa HAT)
 Documentation=https://github.com/liquidraver/ZephCore
 After=local-fs.target systemd-udevd.service
 # The SPI bus only appears after "dtparam=spi=on" and a restart of the Pi.
