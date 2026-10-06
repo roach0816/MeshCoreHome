@@ -69,6 +69,12 @@ class SimRepeater:
         if password == self.settings["guest.password"] and password:
             self.sessions[requester] = False
             return {"ok": True, "admin": False, "permissions": 0}
+        if not password and requester[:12] in self.acl:
+            # As the firmware does: a node on the access list logs in with a blank password and
+            # gets its listed rights.
+            perm = self.acl[requester[:12]]
+            self.sessions[requester] = perm == 3
+            return {"ok": True, "admin": perm == 3, "permissions": perm}
         return {"ok": False, "admin": False, "permissions": None}
 
     def logged_in(self, requester: str) -> bool:

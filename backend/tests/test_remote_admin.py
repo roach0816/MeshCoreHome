@@ -141,3 +141,14 @@ def test_identity_key_matches_meshcore_format():
     g = ECC.EccPoint(curve.Gx, curve.Gy, curve="ed25519")
     scalar = int.from_bytes(bytes.fromhex(prv)[:32], "little")
     assert ECC.EccKey(curve="Ed25519", point=g * scalar).export_key(format="raw").hex() == pub
+
+
+def test_access_list_allows_blank_password_login():
+    """A node on the repeater's access list logs in with a blank password (as the firmware does)."""
+    node = sim_repeater.SimRepeater("ab" * 32, "Test Repeater", None, None)
+    me = "cd" * 32
+    assert node.login(me, "")["ok"] is False  # not on the list yet
+    node.acl[me[:12]] = 2  # read/write
+    out = node.login(me, "")
+    assert out == {"ok": True, "admin": False, "permissions": 2}
+    assert node.login(me, "wrong password")["ok"] is False  # a wrong password is still refused
