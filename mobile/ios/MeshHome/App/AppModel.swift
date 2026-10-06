@@ -92,6 +92,27 @@ final class AppModel {
         start(APIClient(base: server, token: token))
     }
 
+    /// After a username change.
+    func setMe(_ new: Me) { me = new }
+
+    /// The server moved (HTTPS turned on, hostname changed): check the new address with this
+    /// sign-in, then switch to it. The old address is kept if the new one doesn't answer.
+    func moveServer(to url: URL) async throws {
+        guard let api, let token = api.token else { return }
+        let moved = APIClient(base: url, token: token)
+        _ = try await moved.me()
+        Keychain.delete(for: api.base.absoluteString)
+        Keychain.save(token, for: url.absoluteString)
+        UserDefaults.standard.set(url.absoluteString, forKey: Self.serverKey)
+        live.stop()
+        self.api = moved
+        live.start(moved)
+        await refreshAll()
+    }
+
+    /// After a restore: sign-ins aren't part of a backup, so the server no longer knows this one.
+    func signedOutAfterRestore() { forget() }
+
     func signOut() async {
         if let api { try? await api.signOut() }
         forget()

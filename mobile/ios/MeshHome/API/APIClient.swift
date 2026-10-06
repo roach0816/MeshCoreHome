@@ -34,8 +34,20 @@ struct APIClient: Sendable {
         let _: Empty = try await request(method, path, query: [], body: body)
     }
 
+    /// A JSON body sent exactly as given (no key conversion), e.g. DNS credentials whose names
+    /// must keep their capitals.
+    func sendRawJSON(_ method: String, _ path: String, json: Data) async throws {
+        let _: Empty = try await request(method, path, query: [], bodyData: json)
+    }
+
     private func request<T: Decodable, B: Encodable>(
         _ method: String, _ path: String, query: [URLQueryItem], body: B?
+    ) async throws -> T {
+        try await request(method, path, query: query, bodyData: try body.map { try JSON.encoder.encode($0) })
+    }
+
+    private func request<T: Decodable>(
+        _ method: String, _ path: String, query: [URLQueryItem], bodyData: Data?
     ) async throws -> T {
         var components = URLComponents(url: base.appending(path: path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }
@@ -45,9 +57,9 @@ struct APIClient: Sendable {
         // Required on sign-in and setup; harmless elsewhere.
         req.setValue("meshhome", forHTTPHeaderField: "X-Requested-With")
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let body {
+        if let bodyData {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSON.encoder.encode(body)
+            req.httpBody = bodyData
         }
         let (data, response) = try await Self.session.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -69,7 +81,7 @@ struct APIClient: Sendable {
         return nil
     }
 
-    struct Empty: Decodable {}
+    struct Empty: Decodable, Sendable {}
 }
 
 // MARK: - Endpoints

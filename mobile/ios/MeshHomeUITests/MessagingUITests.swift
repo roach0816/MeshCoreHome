@@ -275,6 +275,71 @@ final class MessagingUITests: XCTestCase {
         shot(app, "18-one-unread-keyboard")
     }
 
+    /// Settings: radio connection, devices, bot, API keys, backup, updates and export.
+    func testSettingsAdministration() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+        app.buttons["Settings"].tap()
+        let back = { app.navigationBars.buttons.element(boundBy: 0).tap() }
+
+        app.buttons["Radio connection"].tap()
+        XCTAssertTrue(any(app, containing: "Messages").waitForExistence(timeout: 15), "no radio status")
+        shot(app, "20-radio-connection")
+        back()
+
+        app.buttons["Signed-in devices"].tap()
+        XCTAssertTrue(app.staticTexts["This phone"].waitForExistence(timeout: 10))
+        back()
+
+        app.buttons["Bot"].tap()
+        let toggle = app.switches.firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        toggle.tap()
+        sleep(1)
+        toggle.tap()
+        back()
+
+        app.swipeUp()
+        app.buttons["API keys"].tap()
+        app.buttons["Create API key…"].tap()
+        let name = app.textFields["Name, e.g. Home Assistant"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("UI test key")
+        app.buttons["Create"].tap()
+        XCTAssertTrue(any(app, containing: "only time the key is shown").waitForExistence(timeout: 10), "key not shown")
+        app.buttons["Done"].tap()
+        let row = any(app, containing: "UI test key")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.swipeLeft()
+        app.buttons["Revoke"].tap()
+        app.buttons["Revoke key"].tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 10), "key not revoked")
+        back()
+
+        app.buttons["Backup and restore"].tap()
+        let p1 = app.secureTextFields["Passphrase (at least 10 characters)"]
+        XCTAssertTrue(p1.waitForExistence(timeout: 10))
+        p1.tap(); p1.typeText("ui-test-passphrase")
+        app.secureTextFields["Repeat passphrase"].tap(); app.secureTextFields["Repeat passphrase"].typeText("ui-test-passphrase")
+        app.buttons["Create backup"].tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 30) || app.buttons["Close"].waitForExistence(timeout: 5),
+                      "share sheet for the new backup didn't open")
+        shot(app, "21-backup-share")
+        app.swipeDown(velocity: .fast)
+        sleep(1)
+        back()
+
+        app.buttons["Software updates"].tap()
+        XCTAssertTrue(any(app, containing: "Installed").waitForExistence(timeout: 15))
+        shot(app, "22-updates")
+        back()
+
+        app.buttons["Export and data"].tap()
+        app.buttons["Export all messages (JSON)"].tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 30) || app.buttons["Close"].waitForExistence(timeout: 5),
+                      "share sheet for the export didn't open")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
