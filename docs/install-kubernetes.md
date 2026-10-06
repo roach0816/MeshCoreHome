@@ -226,7 +226,9 @@ The CI workflow (`.github/workflows/ci.yml`) handles forks automatically. On eac
    installer.
 2. Builds and publishes `ghcr.io/<owner>/<repo>:<commit-sha>` (plus `:latest`) for `linux/amd64` and
    `linux/arm64`.
-3. Commits that image reference into `deploy/k8s/deployment.yaml` as `github-actions[bot]`, with
+3. Checks that the image can be pulled without credentials. If it can't (a new GHCR package is
+   private), it stops with instructions, so Fleet keeps running the previous image.
+4. Commits that image reference into `deploy/k8s/deployment.yaml` as `github-actions[bot]`, with
    `[skip ci]`. This step is skipped if `main` has moved on since the build started.
 
 To deploy from a fork:
@@ -240,6 +242,8 @@ To deploy from a fork:
     --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<READ_PACKAGES_TOKEN>
   kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
   ```
+  With a pull secret, set the repository variable `ALLOW_PRIVATE_IMAGE` to `true` (**Settings →
+  Secrets and variables → Actions → Variables**), so CI pins private images.
 - **Release notes link:** set `RELEASE_NOTES_URL` on the app container (for example
   `https://github.com/<owner>/<repo>/releases/tag/v{version}`) so the version number in the app links
   to your fork's releases.

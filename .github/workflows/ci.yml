@@ -144,6 +144,23 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - name: Check the cluster can pull the image
+        # A new GHCR package (e.g. after renaming or forking the repository) starts out private.
+        # Pinning it would make Fleet replace the running pod with one that can't pull its image.
+        # Clusters that use a pull secret instead: set the repository variable ALLOW_PRIVATE_IMAGE=true.
+        if: vars.ALLOW_PRIVATE_IMAGE != 'true'
+        run: |
+          set -euo pipefail
+          name="${GITHUB_REPOSITORY,,}"
+          token=$(curl -sS "https://ghcr.io/token?scope=repository:$name:pull" | jq -r '.token // empty' || true)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json' "https://ghcr.io/v2/$name/manifests/$GITHUB_SHA")
+          if [ "$code" != 200 ]; then
+            echo "::error::ghcr.io/$name can't be pulled anonymously (HTTP $code), so the deployment was not pinned."
+            echo "::error::Make the package public (GitHub → Packages → ${name#*/} → Package settings → Change visibility), then re-run this job."
+            exit 1
+          fi
+          echo "ghcr.io/$name:$GITHUB_SHA is publicly pullable"
       - name: Pin deployment to this commit's image
         run: |
           set -euo pipefail
