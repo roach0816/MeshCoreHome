@@ -84,11 +84,11 @@ private struct RemoteLoginView: View {
                 } label: {
                     HStack { Text("Log in"); if store.busy { Spacer(); ProgressView() } }
                 }
-                .disabled(password.isEmpty || store.busy)
+                .disabled(store.busy)  // a blank password is fine: the node may already list this radio
             } header: {
                 Text("Log in to this node")
             } footer: {
-                Text("The admin password gives full control; a guest password (if set) allows reading its status. Sent encrypted over the mesh and never stored. New repeaters use the admin password “password” until it's changed.")
+                Text("The admin password gives full control; a guest password (if set) allows reading its status. Leave it blank if the node already grants your radio access (its access list). Sent encrypted over the mesh and never stored. New repeaters use the admin password “password” until it's changed.")
             }
         }
     }

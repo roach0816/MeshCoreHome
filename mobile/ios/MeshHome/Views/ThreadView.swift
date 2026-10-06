@@ -115,6 +115,7 @@ struct ThreadView: View {
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)  // the conversation gets the whole screen
         .sheet(item: $infoFor) { m in MessageInfoView(message: m, kind: conversation.kind) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

@@ -22,7 +22,10 @@ final class AppModel {
 
     // Navigation shared between tabs (Contacts opens a conversation in the Conversations tab).
     var tab: Tab = .conversations
-    var selectedConversation: String?
+    var selectedConversation: String? {
+        // Deselected (e.g. the channel was removed): close the open thread on iPhone too.
+        didSet { if selectedConversation == nil, !conversationPath.isEmpty { conversationPath = [] } }
+    }
     /// iPhone navigation (the open thread), kept here so it survives the tab's view being rebuilt,
     /// which happens whenever the unread badge changes.
     var conversationPath: [String] = [] {
