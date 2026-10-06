@@ -212,6 +212,21 @@ final class MessagingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Saved to the radio."].waitForExistence(timeout: 15), "telemetry not saved")
     }
 
+    /// Opening a busy channel loads its history even while events keep arriving (run with a script
+    /// posting /api/radio/simulate-incoming), and never shows "cancelled".
+    func testBusyChannelLoads() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+        let publicRow = app.staticTexts["Public"]
+        XCTAssertTrue(publicRow.waitForExistence(timeout: 15))
+        publicRow.tap()
+        XCTAssertTrue(any(app, containing: "Signal looks good").waitForExistence(timeout: 20), "history didn't load")
+        sleep(8)  // events keep arriving
+        XCTAssertFalse(app.staticTexts["cancelled"].exists, "a load was cancelled")
+        XCTAssertTrue(any(app, containing: "Signal looks good").exists)
+        shot(app, "14-busy-channel")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")

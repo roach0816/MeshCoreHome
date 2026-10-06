@@ -23,6 +23,11 @@ final class AppModel {
     // Navigation shared between tabs (Contacts opens a conversation in the Conversations tab).
     var tab: Tab = .conversations
     var selectedConversation: String?
+    /// iPhone navigation (the open thread), kept here so it survives the tab's view being rebuilt,
+    /// which happens whenever the unread badge changes.
+    var conversationPath: [String] = [] {
+        didSet { if selectedConversation != conversationPath.last { selectedConversation = conversationPath.last } }
+    }
     /// A server address from a scanned pairing QR code, for the connect screen.
     var pairingAddress: String?
 
@@ -121,7 +126,10 @@ final class AppModel {
     func refreshConversations() async {
         guard let api else { return }
         do {
-            conversations = try await api.conversations()
+            // Only publish real changes: every assignment re-renders the list (and, on iPhone, the
+            // open thread), which on a busy mesh would happen with every event.
+            let fresh = try await api.conversations()
+            if fresh != conversations { conversations = fresh }
             Cache.save(conversations, "conversations")
             listError = nil
             offline = false

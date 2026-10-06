@@ -78,13 +78,7 @@ struct MeshMapView: View {
                 }
             }
             .sheet(item: Binding(get: { selected.map { IDString(id: $0.id) } }, set: { if $0 == nil { selected = nil } })) { s in
-                if let node = data?.nodes.first(where: { $0.id == s.id }) {
-                    if node.kind == 2 || node.kind == 3 {
-                        RemoteManageView(contactID: node.id)
-                    } else {
-                        ContactActionsView(contactID: node.id)
-                    }
-                }
+                if let node = data?.nodes.first(where: { $0.id == s.id }) { ContactActionsView(contactID: node.id) }
             }
             .task { await load() }
             .onChange(of: model.contactChanges) { _, _ in Task { await load() } }

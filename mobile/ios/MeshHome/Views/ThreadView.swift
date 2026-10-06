@@ -11,6 +11,8 @@ struct ThreadView: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var infoFor: Message?
+    /// The first load scrolls straight to the bottom; later new messages animate in.
+    @State private var settled = false
     @State private var showInfo = false
     @State private var contactID: String?
     @State private var deleting: Message?
@@ -61,7 +63,8 @@ struct ThreadView: View {
             .overlay { if loading && messages.isEmpty { ProgressView() } }
             .safeAreaInset(edge: .bottom) { composer(proxy) }
             .onChange(of: messages.last?.id) { _, id in
-                if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                guard let id else { return }
+                if settled { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } else { proxy.scrollTo(id, anchor: .bottom) }
             }
         }
         .navigationTitle(conversation.title)
@@ -83,7 +86,10 @@ struct ThreadView: View {
         }
         .task {
             if messages.isEmpty, let cached = Cache.load([Message].self, cacheName) { messages = cached; loading = false }
-            await refresh()
+            // Not tied to this view's task: SwiftUI may cancel and restart it as the list re-renders,
+            // which would otherwise abort the load half-way ("cancelled").
+            await Task { await refresh() }.value
+            settled = true
         }
         .onChange(of: model.changes) { _, _ in
             if model.lastChangedConversation == nil || model.lastChangedConversation == conversation.id {
@@ -136,6 +142,10 @@ struct ThreadView: View {
             if messages.count <= page.messages.count { hasMore = page.hasMore }
             error = nil
             if let last = messages.last { await model.markRead(conversation, position: last.position) }
+        } catch is CancellationError {
+            // superseded by a newer load
+        } catch let e as URLError where e.code == .cancelled {
+            // superseded by a newer load
         } catch {
             self.error = error.localizedDescription
         }

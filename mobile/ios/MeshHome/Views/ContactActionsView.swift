@@ -12,6 +12,7 @@ struct ContactActionsView: View {
     @State private var notice: String?
     @State private var confirmRemove = false
     @State private var editingPath = false
+    @State private var managing = false
 
     var body: some View {
         NavigationStack {
@@ -31,6 +32,7 @@ struct ContactActionsView: View {
                     }
                 }
             }
+            .sheet(isPresented: $managing) { RemoteManageView(contactID: contactID) }
             .task { await load() }
         }
     }
@@ -39,10 +41,13 @@ struct ContactActionsView: View {
         Section {
             LabeledContent("Type", value: kindLabel(d.kind))
             LabeledContent("Last heard", value: d.lastAdvertAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
+            if let lat = d.lat, let lon = d.lon {
+                LabeledContent("Position", value: String(format: "%.5f, %.5f", lat, lon))
+            }
             LabeledContent("Messages", value: "\(d.messagesReceived) received · \(d.messagesSent) sent")
             if !d.onRadio { Text("Removed from the radio. The archive keeps the conversation.").foregroundStyle(.secondary) }
             if (d.kind == 2 || d.kind == 3), d.onRadio {
-                NavigationLink { RemoteManageView(contactID: d.id) } label: { Label("Remote manage", systemImage: "slider.horizontal.3") }
+                Button { managing = true } label: { Label("Log in to manage", systemImage: "lock.open") }
             }
             if d.kind == 1, d.onRadio {
                 Button { dismiss(); Task { await model.openConversation(with: asContact(d)) } } label: {

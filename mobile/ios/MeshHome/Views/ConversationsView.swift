@@ -9,6 +9,7 @@ struct ConversationsView: View {
     @State private var openAfterAdd: String?
     @State private var filter: Filter = .all
     @State private var showSettings = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var deleteTitle: String {
         guard let d = deleting else { return "" }
@@ -25,10 +26,32 @@ struct ConversationsView: View {
         }
     }
 
+    /// iPhone: a push stack keyed by conversation, so list updates (frequent on a busy mesh)
+    /// never close the open thread. iPad: the list beside the thread.
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
-            List(selection: $model.selectedConversation) {
+        if sizeClass == .compact {
+            NavigationStack(path: $model.conversationPath) {
+                list(compact: true)
+                    .navigationDestination(for: String.self) { id in ThreadContainer(id: id) }
+            }
+            .onChange(of: model.selectedConversation) { _, id in
+                // Opened from elsewhere (Contacts, Add channel): show it.
+                if let id, model.conversationPath.last != id { model.conversationPath = [id] }
+            }
+        } else {
+            NavigationSplitView {
+                list(compact: false)
+            } detail: {
+                if let id = model.selectedConversation { ThreadContainer(id: id).id(id) }
+                else { ContentUnavailableView("Select a conversation", systemImage: "bubble.left.and.bubble.right") }
+            }
+        }
+    }
+
+    @ViewBuilder private func list(compact: Bool) -> some View {
+        @Bindable var model = model
+            List(selection: compact ? nil : $model.selectedConversation) {  // iPhone: no selection, or List pops the stack
                 Picker("Show", selection: $filter) {
                     ForEach(Filter.allCases, id: \.self) { Text($0.rawValue) }
                 }
@@ -42,8 +65,13 @@ struct ConversationsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 ForEach(shown) { c in
-                    ConversationRow(conversation: c)
-                        .tag(c.id)
+                    Group {
+                        if compact {
+                            NavigationLink(value: c.id) { ConversationRow(conversation: c) }
+                        } else {
+                            ConversationRow(conversation: c).tag(c.id)
+                        }
+                    }
                         .swipeActions(edge: .leading) {
                             if c.unread > 0 {
                                 Button { Task { await model.markRead(c) } } label: {
@@ -115,12 +143,19 @@ struct ConversationsView: View {
                      ? "Removes this channel's messages from MeshHome's archive. The channel stays on the radio."
                      : "Removes this conversation from MeshHome's archive. Nothing is sent, and it reappears if \(c.title) writes again.")
             }
-        } detail: {
-            if let id = model.selectedConversation, let c = model.conversations.first(where: { $0.id == id }) {
-                ThreadView(conversation: c).id(c.id)
-            } else {
-                ContentUnavailableView("Select a conversation", systemImage: "bubble.left.and.bubble.right")
-            }
+    }
+}
+
+/// The thread for a conversation id, following the live list (title, read position, etc.).
+private struct ThreadContainer: View {
+    let id: String
+    @Environment(AppModel.self) private var model
+    var body: some View {
+        if let c = model.conversations.first(where: { $0.id == id }) {
+            ThreadView(conversation: c)
+        } else {
+            ContentUnavailableView("Conversation not found", systemImage: "bubble.left.and.bubble.right",
+                                   description: Text("It may have been deleted."))
         }
     }
 }
