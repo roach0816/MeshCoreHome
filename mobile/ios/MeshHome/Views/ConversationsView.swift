@@ -5,6 +5,8 @@ struct ConversationsView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
     @State private var deleting: Conversation?
+    @State private var addingChannel = false
+    @State private var openAfterAdd: String?
     @State private var filter: Filter = .all
     @State private var showSettings = false
 
@@ -84,11 +86,24 @@ struct ConversationsView: View {
             .navigationTitle(model.me?.homeName ?? "MeshHome")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { addingChannel = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Add channel")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $addingChannel, onDismiss: {
+                // Open the new channel only after the sheet is gone, or iPhone navigation drops the push.
+                guard let id = openAfterAdd else { return }
+                openAfterAdd = nil
+                Task {
+                    await model.refreshConversations()
+                    model.selectedConversation = id
+                }
+            }) { AddChannelView { openAfterAdd = $0 } }
             .confirmationDialog(deleteTitle, isPresented: .constant(deleting != nil), titleVisibility: .visible, presenting: deleting) { c in
                 Button(c.kind == .channel ? "Clear history" : "Delete conversation", role: .destructive) {
                     Task { await model.delete(c) }

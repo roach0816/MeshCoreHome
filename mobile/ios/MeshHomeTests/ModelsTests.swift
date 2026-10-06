@@ -34,4 +34,14 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(stateLabel(p.messages[0].state, kind: .channel), "Sent by radio")
         XCTAssertEqual(stateLabel(p.messages[0].state, kind: .dm), "Sent · awaiting delivery")
     }
+
+    func testChannelLinksRoundTrip() {
+        let link = ChannelCode.Link(name: "#hikers & friends", secret: String(repeating: "ab", count: 16), scope: "us-md")
+        let uri = ChannelCode.uri(link)
+        XCTAssertTrue(uri.hasPrefix("meshcore://channel/add?name=%23hikers%20%26%20friends&secret="))
+        XCTAssertEqual(ChannelCode.parse(uri), link)
+        XCTAssertNil(ChannelCode.parse("meshcore://channel/add?name=X&secret=short"))
+        XCTAssertNil(ChannelCode.parse("meshcore://contact/add?name=X&public_key=00"))
+        XCTAssertEqual(ChannelCode.parse("meshcore://channel/add?name=Public&secret=8B3387E9C5CDEA6AC9E5EDBAA115CD72&region_scope=%23md")?.scope, "md")
+    }
 }

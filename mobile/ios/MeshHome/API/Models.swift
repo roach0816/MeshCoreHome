@@ -144,6 +144,78 @@ struct ContactImportResult: Decodable, Sendable {
     let added: Bool
 }
 
+struct ContactDetail: Decodable, Sendable {
+    let id: String
+    let publicKey: String
+    let name: String
+    let alias: String?
+    let kind: Int
+    let lastAdvertAt: Date?
+    let onRadio: Bool
+    let favorite: Bool
+    let blocked: Bool
+    let lat: Double?
+    let lon: Double?
+    /// -1: no known route (flood); 0: direct; n: n repeater hops, listed in pathHops (hash prefixes).
+    let pathLen: Int
+    let pathHops: [String]
+    let pathHashSize: Int
+    let messagesReceived: Int
+    let messagesSent: Int
+
+    var displayName: String { alias ?? name }
+}
+
+struct ConversationInfo: Decodable, Sendable {
+    struct Channel: Decodable, Sendable {
+        let slot: Int
+        let name: String
+        let active: Bool
+        let floodScope: String?
+    }
+    struct ContactRef: Decodable, Sendable { let id: String }
+    let channel: Channel?
+    let contact: ContactRef?
+}
+
+struct ChannelAdded: Decodable, Sendable {
+    struct Share: Decodable, Sendable { let hex: String }
+    let slot: Int
+    let name: String
+    let conversationId: String?
+    /// Only for a newly created private channel: its key, shown once.
+    let share: Share?
+}
+
+/// MeshCore channel links (docs.meshcore.io/qr_codes): meshcore://channel/add?name=…&secret=<32 hex>[&region_scope=…]
+enum ChannelCode {
+    static let publicKeyHex = "8b3387e9c5cdea6ac9e5edbaa115cd72"
+
+    struct Link: Hashable, Sendable { var name: String; var secret: String; var scope: String }
+
+    static func uri(_ l: Link) -> String {
+        var c = URLComponents()
+        c.scheme = "meshcore"; c.host = "channel"; c.path = "/add"
+        var q = [URLQueryItem(name: "name", value: l.name), URLQueryItem(name: "secret", value: l.secret.lowercased())]
+        if !l.scope.isEmpty { q.append(URLQueryItem(name: "region_scope", value: l.scope)) }
+        c.queryItems = q
+        // URLComponents leaves "#" and "&" in values alone; encode them so every reader round-trips.
+        c.percentEncodedQuery = c.percentEncodedQuery?.replacingOccurrences(of: "#", with: "%23")
+        return c.string ?? ""
+    }
+
+    static func parse(_ text: String) -> Link? {
+        guard let c = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              c.scheme == "meshcore", c.host == "channel", c.path == "/add" else { return nil }
+        let q = Dictionary((c.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        let name = (q["name"] ?? "").trimmingCharacters(in: .whitespaces)
+        let secret = (q["secret"] ?? "").lowercased()
+        guard !name.isEmpty, secret.count == 32, secret.allSatisfy(\.isHexDigit) else { return nil }
+        let scope = (q["region_scope"] ?? "").trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
+        return Link(name: name, secret: secret, scope: scope)
+    }
+}
+
 /// A 64-character key as two 32-character lines: iOS would otherwise wrap it with a hyphen.
 func keyLines(_ key: String) -> String {
     key.count > 32 ? String(key.prefix(32)) + "\n" + String(key.dropFirst(32)) : key

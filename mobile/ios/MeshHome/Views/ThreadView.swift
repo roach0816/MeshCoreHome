@@ -11,6 +11,8 @@ struct ThreadView: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var infoFor: Message?
+    @State private var showInfo = false
+    @State private var contactID: String?
     @State private var deleting: Message?
 
     private var days: [(day: Date, messages: [Message])] {
@@ -65,6 +67,14 @@ struct ThreadView: View {
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $infoFor) { m in MessageInfoView(message: m, kind: conversation.kind) }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { Task { await openInfo() } } label: { Image(systemName: "info.circle") }
+                    .accessibilityLabel(conversation.kind == .channel ? "Channel info" : "Contact info")
+            }
+        }
+        .sheet(isPresented: $showInfo) { ChannelInfoView(conversation: conversation) }
+        .sheet(item: Binding(get: { contactID.map(IDBox.init) }, set: { contactID = $0?.id })) { ContactActionsView(contactID: $0.id) }
         .confirmationDialog("Delete this message?", isPresented: .constant(deleting != nil), titleVisibility: .visible, presenting: deleting) { m in
             Button("Delete", role: .destructive) { Task { await delete(m) } }
             Button("Cancel", role: .cancel) { deleting = nil }
@@ -130,6 +140,17 @@ struct ThreadView: View {
             self.error = error.localizedDescription
         }
         loading = false
+    }
+
+    private func openInfo() async {
+        if conversation.kind == .channel { showInfo = true; return }
+        guard let api = model.api else { return }
+        do {
+            if let id = try await api.conversationInfo(conversation.id).contact?.id { contactID = id }
+            else { error = "This conversation's contact isn't known." }
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private var cacheName: String { "messages-\(conversation.id)" }
@@ -217,3 +238,5 @@ private func dayHeading(_ day: Date) -> String {
     if cal.isDateInYesterday(day) { return "Yesterday" }
     return day.formatted(.dateTime.weekday(.wide).month(.wide).day())
 }
+
+private struct IDBox: Identifiable { let id: String }

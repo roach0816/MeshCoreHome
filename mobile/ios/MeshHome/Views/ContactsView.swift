@@ -79,7 +79,9 @@ struct ContactsView: View {
                     .accessibilityLabel("Filter and sort")
                 }
             }
-            .sheet(item: $details) { ContactDetailsView(contact: $0) }
+            .sheet(item: $details, onDismiss: { Task { await load(page: 1, keepPages: true) } }) {
+                ContactActionsView(contactID: $0.id)
+            }
             .sheet(isPresented: Binding(get: { adding != nil }, set: { if !$0 { adding = nil } })) {
                 if let mode = adding {
                     AddContactView(mode: mode) { _ in Task { await load(page: 1) } }
@@ -181,37 +183,5 @@ private struct ContactRow: View {
         case 4: "sensor"
         default: "person.fill"
         }
-    }
-}
-
-/// Basic details. Repeater and room server administration comes with the mesh tools (phase 3).
-struct ContactDetailsView: View {
-    let contact: Contact
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                LabeledContent("Name", value: contact.name)
-                if let alias = contact.alias { LabeledContent("Shown as", value: alias) }
-                LabeledContent("Type", value: contact.kindLabel)
-                LabeledContent("Last heard", value: contact.lastAdvertAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
-                LabeledContent("On the radio", value: contact.onRadio ? "Yes" : "No (removed)")
-                Section("Public key") {
-                    Text(keyLines(contact.publicKey)).font(.caption.monospaced()).textSelection(.enabled)
-                }
-                if contact.isPerson {
-                    Button("Send a message") {
-                        dismiss()
-                        Task { await model.openConversation(with: contact) }
-                    }
-                }
-            }
-            .navigationTitle(contact.displayName)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-        .presentationDetents([.medium, .large])
     }
 }

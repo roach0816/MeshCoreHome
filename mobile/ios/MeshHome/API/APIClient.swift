@@ -122,11 +122,12 @@ extension APIClient {
         try await send("DELETE", "/api/messages/\(messageID)", body: Optional<Int>.none)
     }
 
-    func contacts(query: String, show: String, sort: String, order: String, page: Int) async throws -> ContactPage {
+    func contacts(query: String, show: String, sort: String, order: String, page: Int, kind: Int? = nil) async throws -> ContactPage {
         var q = [URLQueryItem(name: "show", value: show), URLQueryItem(name: "sort", value: sort),
                  URLQueryItem(name: "order", value: order), URLQueryItem(name: "favorites_first", value: "true"),
                  URLQueryItem(name: "page", value: String(page)), URLQueryItem(name: "page_size", value: "50")]
         if !query.isEmpty { q.append(URLQueryItem(name: "q", value: query)) }
+        if let kind { q.append(URLQueryItem(name: "kind", value: String(kind))) }
         return try await get("/api/contacts", query: q)
     }
 
@@ -158,6 +159,55 @@ extension APIClient {
     func importContact(publicKey: String, name: String, kind: Int) async throws -> ContactImportResult {
         struct Body: Encodable { let publicKey, name: String; let kind: Int }
         return try await send("POST", "/api/contacts/import", body: Body(publicKey: publicKey, name: name, kind: kind))
+    }
+
+    // MARK: Channels
+
+    /// key_mode: "random" (create private), "custom" (join private: key = 32 hex or base64),
+    /// "public", or "hashtag" (name starts with #). The server picks the first free slot.
+    func addChannel(name: String, keyMode: String, key: String? = nil, scope: String) async throws -> ChannelAdded {
+        struct Body: Encodable { let name, keyMode: String; let key: String?; let floodScope: String }
+        return try await send("POST", "/api/radio/channels", body: Body(name: name, keyMode: keyMode, key: key, floodScope: scope))
+    }
+
+    func hashtagKey(_ name: String) async throws -> String {
+        struct Out: Decodable { let hex: String }
+        let out: Out = try await get("/api/radio/channels/hashtag-key", query: [URLQueryItem(name: "name", value: name)])
+        return out.hex
+    }
+
+    func setChannelScope(slot: Int, scope: String) async throws {
+        struct Body: Encodable { let floodScope: String? }
+        try await send("PUT", "/api/radio/channels/\(slot)/scope", body: Body(floodScope: scope.isEmpty ? nil : scope))
+    }
+
+    func removeChannel(slot: Int) async throws {
+        try await send("DELETE", "/api/radio/channels/\(slot)", body: Optional<Int>.none)
+    }
+
+    func conversationInfo(_ id: String) async throws -> ConversationInfo { try await get("/api/conversations/\(id)/info") }
+
+    // MARK: Contact actions
+
+    func contactDetail(_ id: String) async throws -> ContactDetail { try await get("/api/contacts/\(id)") }
+
+    /// Re-broadcasts the contact's advert to nearby nodes (zero hop).
+    func shareContact(_ id: String) async throws {
+        try await send("POST", "/api/contacts/\(id)/share", body: Optional<Int>.none)
+    }
+
+    /// Ordered repeater hops (public keys or hash prefixes); [] means direct.
+    func setPath(_ id: String, hops: [String]) async throws {
+        struct Body: Encodable { let hops: [String] }
+        try await send("PUT", "/api/contacts/\(id)/path", body: Body(hops: hops))
+    }
+
+    func resetPath(_ id: String) async throws {
+        try await send("POST", "/api/contacts/\(id)/reset-path", body: Optional<Int>.none)
+    }
+
+    func removeContact(_ id: String) async throws {
+        try await send("DELETE", "/api/contacts/\(id)", body: Optional<Int>.none)
     }
 
     func notificationConfig() async throws -> NotificationConfig { try await get("/api/settings/notifications") }

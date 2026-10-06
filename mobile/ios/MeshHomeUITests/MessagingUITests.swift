@@ -102,6 +102,55 @@ final class MessagingUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch.waitForExistence(timeout: 10))
     }
 
+    /// Join a hashtag channel, see its QR code, remove it; set a contact's route through a repeater.
+    func testChannelsAndContactActions() throws {
+        let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let url = "http://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15))
+        user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+
+        XCTAssertTrue(app.buttons["Add channel"].waitForExistence(timeout: 15))
+        app.buttons["Add channel"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Join a hashtag channel'")).firstMatch.tap()
+        let tag = "uitest\(Int.random(in: 100...999))"
+        let field = app.textFields["hikers"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.typeText(tag)
+        app.buttons["Join channel"].tap()
+
+        let info = app.buttons["Channel info"]
+        XCTAssertTrue(info.waitForExistence(timeout: 15), "channel didn't open")
+        info.tap()
+        XCTAssertTrue(app.images["QR code"].waitForExistence(timeout: 10), "hashtag channel has no QR code")
+        shot(app, "8-channel-info")
+        app.buttons["Remove from radio"].tap()
+        app.buttons["Remove channel"].tap()
+        XCTAssertTrue(app.buttons["Remove from radio"].waitForNonExistence(timeout: 10), "channel sheet didn't close")
+
+        app.tabBars.buttons["Contacts"].tap()
+        let tracker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tracker'")).firstMatch
+        XCTAssertTrue(tracker.waitForExistence(timeout: 10))
+        tracker.press(forDuration: 1.0)
+        app.buttons["Details"].tap()
+        XCTAssertTrue(app.buttons["Set route…"].waitForExistence(timeout: 10))
+        app.buttons["Set route…"].tap()
+        app.buttons.matching(NSPredicate(format: "label CONTAINS 'Roof Repeater'")).firstMatch.tap()
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Route saved"].waitForExistence(timeout: 15), "route not saved")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Roof Repeater'")).firstMatch.waitForExistence(timeout: 5))
+        shot(app, "9-contact-actions")
+        app.buttons["Reset route (flood)"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Flood (no known route)'"))
+            .firstMatch.waitForExistence(timeout: 15))
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
