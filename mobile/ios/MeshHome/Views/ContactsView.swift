@@ -56,7 +56,7 @@ struct ContactsView: View {
             .listStyle(.plain)
             .searchable(text: $search, prompt: "Search contacts")
             .refreshable { await load(page: 1) }
-            .navigationTitle("Contacts")
+            .navigationTitle(total > 0 ? "Contacts (\(total))" : "Contacts")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
