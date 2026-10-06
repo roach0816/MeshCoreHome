@@ -1,0 +1,65 @@
+# Generates MeshHome.xcodeproj (not committed):  xcodegen generate
+name: MeshHome
+options:
+  bundleIdPrefix: app.meshhome
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  MeshHome:
+    type: application
+    platform: iOS
+    sources: [MeshHome]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.meshhome
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MeshHome
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: MeshHome connects to your MeshHome server on your home network.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+    info:
+      path: MeshHome/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          # Plain HTTP only to local-network addresses (IPs and .local names); everything else needs HTTPS.
+          NSAllowsLocalNetworking: true
+  MeshHomeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [MeshHomeTests]
+    dependencies:
+      - target: MeshHome
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.meshhome.tests
+  MeshHomeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [MeshHomeUITests]
+    dependencies:
+      - target: MeshHome
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.meshhome.uitests
+        TEST_TARGET_NAME: MeshHome
+schemes:
+  MeshHome:
+    build:
+      targets: { MeshHome: all, MeshHomeTests: [test], MeshHomeUITests: [test] }
+    test:
+      targets: [MeshHomeTests, MeshHomeUITests]
