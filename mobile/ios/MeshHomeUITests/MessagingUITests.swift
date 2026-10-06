@@ -227,6 +227,31 @@ final class MessagingUITests: XCTestCase {
         shot(app, "14-busy-channel")
     }
 
+    /// A conversation opens at its first unread message (with the "New messages" line), and once
+    /// read, at the newest message rather than the oldest.
+    func testOpensAtFirstUnreadThenBottom() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+        // Run against a server with unread traffic (e.g. after the storm script).
+        let row = app.staticTexts["#home-sim"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        let divider = app.descendants(matching: .any)["New messages start here"]
+        XCTAssertTrue(divider.waitForExistence(timeout: 20), "no unread divider")
+        sleep(2)
+        XCTAssertTrue(divider.isHittable, "the unread divider is off screen")
+        shot(app, "15-unread")
+
+        app.navigationBars["#home-sim"].buttons.firstMatch.tap()
+        sleep(2)
+        row.tap()
+        sleep(4)
+        XCTAssertFalse(divider.exists, "divider shown with nothing unread")
+        let earlier = app.buttons["Load earlier messages"]
+        XCTAssertFalse(earlier.exists && earlier.isHittable, "opened at the top, not the bottom")
+        shot(app, "16-bottom")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")

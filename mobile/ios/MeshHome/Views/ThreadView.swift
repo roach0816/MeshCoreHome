@@ -11,11 +11,24 @@ struct ThreadView: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var infoFor: Message?
-    /// The first load scrolls straight to the bottom; later new messages animate in.
+    /// The first load scrolls straight into place; later new messages animate in.
     @State private var settled = false
+    /// How far you'd read when the thread opened (unread messages come after it), and whether
+    /// any were unread. Kept for this visit, though the conversation is marked read at once.
+    @State private var readMark: Int?
+    @State private var hadUnread = false
+    /// Where to jump once the first load is in: the first unread message, or the newest.
+    @State private var jump: Jump?
+    private struct Jump: Equatable { let id: String; let toTop: Bool }
     @State private var showInfo = false
     @State private var contactID: String?
     @State private var deleting: Message?
+
+    /// The first message you hadn't read when you opened the thread (from someone else).
+    private var firstUnreadID: String? {
+        guard hadUnread, let mark = readMark else { return nil }
+        return messages.first { $0.position > mark && !$0.isOutgoing }?.id
+    }
 
     private var days: [(day: Date, messages: [Message])] {
         let cal = Calendar.current
@@ -35,6 +48,7 @@ struct ThreadView: View {
                     ForEach(days, id: \.day) { day in
                         Section {
                             ForEach(day.messages) { m in
+                                if m.id == firstUnreadID { UnreadDivider().id("unread-divider") }
                                 MessageBubble(message: m, kind: conversation.kind).id(m.id)
                                     .contextMenu {
                                         Button { infoFor = m } label: { Label("Message details", systemImage: "info.circle") }
@@ -63,8 +77,17 @@ struct ThreadView: View {
             .overlay { if loading && messages.isEmpty { ProgressView() } }
             .safeAreaInset(edge: .bottom) { composer(proxy) }
             .onChange(of: messages.last?.id) { _, id in
-                guard let id else { return }
-                if settled { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } else { proxy.scrollTo(id, anchor: .bottom) }
+                // Later arrivals: follow the conversation down.
+                if settled, let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+            }
+            .onChange(of: jump) { _, j in
+                guard let j else { return }
+                // After this layout pass, so the target row exists.
+                // The unread line lands a little below the top, clear of the pinned date label.
+                DispatchQueue.main.async {
+                    if j.toTop { proxy.scrollTo("unread-divider", anchor: UnitPoint(x: 0.5, y: 0.08)) }
+                    else { proxy.scrollTo(j.id, anchor: .bottom) }
+                }
             }
         }
         .navigationTitle(conversation.title)
@@ -85,10 +108,20 @@ struct ThreadView: View {
             Text("Removes it from MeshHome's archive only. Nothing is sent over the radio.")
         }
         .task {
+            if readMark == nil {
+                readMark = conversation.readPosition
+                hadUnread = conversation.unread > 0
+            }
             if messages.isEmpty, let cached = Cache.load([Message].self, cacheName) { messages = cached; loading = false }
             // Not tied to this view's task: SwiftUI may cancel and restart it as the list re-renders,
             // which would otherwise abort the load half-way ("cancelled").
-            await Task { await refresh() }.value
+            await Task { await openingLoad() }.value
+            if let target = firstUnreadID {
+                jump = Jump(id: target, toTop: true)
+            } else if let last = messages.last {
+                jump = Jump(id: last.id, toTop: false)
+            }
+            try? await Task.sleep(for: .milliseconds(400))
             settled = true
         }
         .onChange(of: model.changes) { _, _ in
@@ -160,6 +193,17 @@ struct ThreadView: View {
             else { error = "This conversation's contact isn't known." }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// The newest page, plus earlier pages back to the first unread message (up to 200 messages).
+    private func openingLoad() async {
+        await refresh()
+        guard hadUnread, let mark = readMark else { return }
+        var pages = 1
+        while hasMore, pages < 4, let first = messages.first, first.position > mark + 1 {
+            await loadEarlier()
+            pages += 1
         }
     }
 
@@ -250,3 +294,16 @@ private func dayHeading(_ day: Date) -> String {
 }
 
 private struct IDBox: Identifiable { let id: String }
+
+/// Marks where unread messages begin.
+private struct UnreadDivider: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(Color.red).frame(height: 1)
+            Text("New messages").font(.caption.weight(.semibold)).foregroundStyle(.red).fixedSize()
+            Rectangle().fill(Color.red).frame(height: 1)
+        }
+        .padding(.vertical, 6)
+        .accessibilityLabel("New messages start here")
+    }
+}
