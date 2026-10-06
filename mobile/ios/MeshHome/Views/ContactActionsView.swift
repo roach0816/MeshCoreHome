@@ -41,6 +41,9 @@ struct ContactActionsView: View {
             LabeledContent("Last heard", value: d.lastAdvertAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
             LabeledContent("Messages", value: "\(d.messagesReceived) received · \(d.messagesSent) sent")
             if !d.onRadio { Text("Removed from the radio. The archive keeps the conversation.").foregroundStyle(.secondary) }
+            if (d.kind == 2 || d.kind == 3), d.onRadio {
+                NavigationLink { RemoteManageView(contactID: d.id) } label: { Label("Remote manage", systemImage: "slider.horizontal.3") }
+            }
             if d.kind == 1, d.onRadio {
                 Button { dismiss(); Task { await model.openConversation(with: asContact(d)) } } label: {
                     Label("Send a message", systemImage: "bubble.left")

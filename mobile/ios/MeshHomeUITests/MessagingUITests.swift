@@ -151,6 +151,67 @@ final class MessagingUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 15))
     }
 
+    private func signIn(_ app: XCUIApplication) throws {
+        let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let url = "http://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15))
+        user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
+    }
+
+    private func any(_ app: XCUIApplication, containing text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
+    /// Map, remote manage of a (simulated) repeater, and node settings.
+    func testMapRemoteManageAndNodeSettings() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+
+        app.tabBars.buttons["Map"].tap()
+        XCTAssertTrue(any(app, containing: "Roof Repeater").waitForExistence(timeout: 15), "no repeater on the map")
+        shot(app, "10-map")
+
+        app.tabBars.buttons["Contacts"].tap()
+        let roof = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Roof Repeater'")).firstMatch
+        XCTAssertTrue(roof.waitForExistence(timeout: 10))
+        roof.tap()
+        let pw = app.secureTextFields["Password"]
+        XCTAssertTrue(pw.waitForExistence(timeout: 10), "no remote login")
+        pw.tap(); pw.typeText("password")
+        app.buttons["Log in"].tap()
+        XCTAssertTrue(app.buttons["Refresh status"].waitForExistence(timeout: 30), "remote login failed")
+        app.buttons["Refresh status"].tap()
+        XCTAssertTrue(any(app, containing: "Battery").waitForExistence(timeout: 30), "no status")
+        shot(app, "11-remote-status")
+        app.buttons["Command line"].tap()
+        let cmd = app.textFields["e.g. get advert.interval"]
+        XCTAssertTrue(cmd.waitForExistence(timeout: 5))
+        cmd.tap(); cmd.typeText("ver\n")
+        XCTAssertTrue(any(app, containing: "> ver").waitForExistence(timeout: 30))
+        shot(app, "12-remote-cli")
+        app.segmentedControls.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Radio settings"].waitForExistence(timeout: 5))
+        app.buttons["Log out"].tap()
+        XCTAssertTrue(app.secureTextFields["Password"].waitForExistence(timeout: 30))
+        app.buttons["Done"].tap()
+
+        app.tabBars.buttons["Conversations"].tap()
+        app.buttons["Settings"].tap()
+        app.buttons["Node settings"].tap()
+        XCTAssertTrue(app.buttons["Telemetry"].waitForExistence(timeout: 15), "node settings didn't load")
+        shot(app, "13-node-settings")
+        app.buttons["Telemetry"].tap()
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Saved to the radio."].waitForExistence(timeout: 15), "telemetry not saved")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")

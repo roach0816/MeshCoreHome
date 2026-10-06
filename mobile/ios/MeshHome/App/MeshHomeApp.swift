@@ -36,6 +36,9 @@ struct MainView: View {
             Tab("Contacts", systemImage: "person.2", value: AppModel.Tab.contacts) {
                 ContactsView()
             }
+            Tab("Map", systemImage: "map", value: AppModel.Tab.map) {
+                MeshMapView()
+            }
         }
     }
 }

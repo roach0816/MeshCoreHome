@@ -210,10 +210,48 @@ extension APIClient {
         try await send("DELETE", "/api/contacts/\(id)", body: Optional<Int>.none)
     }
 
+    func nodeConfig() async throws -> NodeConfig { try await get("/api/radio/config") }
+
+    /// PUT /api/radio/config/<section> with a JSON object; returns the updated config.
+    func putNodeConfig(_ section: String, _ body: [String: JSONBody]) async throws -> NodeConfig {
+        try await send("PUT", "/api/radio/config/\(section)", body: body)
+    }
+
+    func setCustomVar(key: String, value: String) async throws -> NodeConfig {
+        struct Body: Encodable { let key, value: String }
+        return try await send("PUT", "/api/radio/custom-vars", body: Body(key: key, value: value))
+    }
+
+    /// action: "advert" (body flood), "sync-clock", "reboot".
+    func nodeAction(_ action: String, flood: Bool? = nil) async throws {
+        struct Body: Encodable { let flood: Bool? }
+        let _: APIClient.Empty = try await send("POST", "/api/radio/actions/\(action)", body: Body(flood: flood))
+    }
+
+    func presets() async throws -> PresetList { try await get("/api/radio/presets") }
+
+    func mapData() async throws -> MapData { try await get("/api/map") }
+    func mapConfig() async throws -> MapConfig { try await get("/api/settings/map") }
+
     func notificationConfig() async throws -> NotificationConfig { try await get("/api/settings/notifications") }
 
     func setFavorite(_ conversationID: String, _ favorite: Bool) async throws {
         struct Body: Encodable { let favorite: Bool }
         try await send("PATCH", "/api/conversations/\(conversationID)", body: Body(favorite: favorite))
+    }
+}
+
+/// A JSON value to send (keys are sent exactly as given: use the server's snake_case names).
+enum JSONBody: Encodable, Sendable {
+    case string(String), number(Double), int(Int), bool(Bool), null
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .string(let s): try c.encode(s)
+        case .number(let n): try c.encode(n)
+        case .int(let i): try c.encode(i)
+        case .bool(let b): try c.encode(b)
+        case .null: try c.encodeNil()
+        }
     }
 }

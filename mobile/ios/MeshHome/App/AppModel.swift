@@ -8,7 +8,7 @@ import UserNotifications
 @MainActor @Observable
 final class AppModel {
     enum Phase { case signedOut, signedIn }
-    enum Tab: Hashable { case conversations, contacts }
+    enum Tab: Hashable { case conversations, contacts, map }
 
     private(set) var phase: Phase = .signedOut
     private(set) var api: APIClient?
@@ -31,6 +31,8 @@ final class AppModel {
     private(set) var lastChangedConversation: String?
     /// Bumped when the radio's contact list changes (adverts, paths, edits).
     private(set) var contactChanges = 0
+    /// Bumped when remote administration state changes (replies, logins).
+    private(set) var remoteChanges = 0
     let live = LiveUpdates()
 
     private var sound = NotificationConfig(sound: "all")
@@ -191,6 +193,8 @@ final class AppModel {
             Task { await refreshConversations() }
         case "contacts-updated":
             contactChanges += 1
+        case "remote-updated":
+            remoteChanges += 1
         case "settings-updated":
             Task { if let api, let c = try? await api.notificationConfig() { sound = c } }
         default:

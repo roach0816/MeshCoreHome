@@ -216,6 +216,72 @@ enum ChannelCode {
     }
 }
 
+struct MapConfig: Codable, Sendable {
+    let tileUrl: String
+    let attribution: String
+    let maxZoom: Int
+}
+
+struct MapNode: Decodable, Identifiable, Sendable {
+    let id: String
+    let publicKey: String
+    let name: String
+    let alias: String?
+    let kind: Int
+    let lat: Double
+    let lon: Double
+    let lastAdvertAt: Date?
+    let onRadio: Bool
+    let isSimulated: Bool
+    let conversationId: String?
+    var displayName: String { alias ?? name }
+}
+
+struct MapData: Decodable, Sendable {
+    struct Gateway: Decodable, Sendable { let name: String; let lat: Double; let lon: Double; let live: Bool }
+    let gateways: [Gateway]
+    let nodes: [MapNode]
+    let withoutLocation: Int
+    let tiles: MapConfig
+}
+
+/// GET /api/radio/config: the connected radio's own settings (every PUT returns it updated).
+struct NodeConfig: Decodable, Sendable {
+    struct Firmware: Decodable, Sendable { let version: String?; let model: String? }
+    struct Identity: Decodable, Sendable { let name: String; let lat: Double?; let lon: Double?; let shareLocation: Bool }
+    struct Radio: Decodable, Sendable {
+        let freqMhz: Double; let bwKhz: Double; let sf: Int; let cr: Int; let txPowerDbm: Int
+        let maxTxPowerDbm: Int?; let `repeat`: Bool?
+    }
+    struct Behavior: Decodable, Sendable { let autoAddContacts: Bool; let multiAcks: Int; let pathHashMode: Int?; let defaultFloodScope: String? }
+    struct Telemetry: Decodable, Sendable { let base: Int; let location: Int; let environment: Int }
+    struct Tuning: Decodable, Sendable { let rxDelay: Double; let airtimeFactor: Double }
+    struct Channel: Decodable, Sendable, Identifiable { let slot: Int; let name: String; let key: String; var id: Int { slot } }
+    let simulated: Bool
+    let firmware: Firmware
+    let identity: Identity
+    let radio: Radio
+    let behavior: Behavior
+    let telemetry: Telemetry
+    let tuning: Tuning?
+    let channels: [Channel]
+    let maxChannels: Int
+    let customVars: [String: String]?
+}
+
+struct RadioPreset: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let freqMhz: Double
+    let bwKhz: Double
+    let sf: Int
+    let cr: Int
+}
+
+struct PresetList: Decodable, Sendable {
+    let presets: [RadioPreset]
+}
+
 /// A 64-character key as two 32-character lines: iOS would otherwise wrap it with a hyphen.
 func keyLines(_ key: String) -> String {
     key.count > 32 ? String(key.prefix(32)) + "\n" + String(key.dropFirst(32)) : key

@@ -15,6 +15,7 @@ struct ContactsView: View {
     @State private var details: Contact?
     @State private var blocking: Contact?
     @State private var adding: AddContactView.Mode?
+    @State private var managing: Contact?
 
     private enum Show: String, CaseIterable { case all, favorites, blocked, removed
         var label: String { self == .removed ? "Removed from radio" : rawValue.capitalized }
@@ -40,6 +41,7 @@ struct ContactsView: View {
                         }
                         .contextMenu {
                             if c.isPerson { Button { open(c) } label: { Label("Message", systemImage: "bubble.left") } }
+                            if c.kind == 2 || c.kind == 3 { Button { managing = c } label: { Label("Remote manage", systemImage: "slider.horizontal.3") } }
                             Button { details = c } label: { Label("Details", systemImage: "info.circle") }
                             Button { Task { await setFavorite(c, !c.favorite) } } label: {
                                 Label(c.favorite ? "Remove from favorites" : "Add to favorites", systemImage: c.favorite ? "star.slash" : "star")
@@ -79,6 +81,7 @@ struct ContactsView: View {
                     .accessibilityLabel("Filter and sort")
                 }
             }
+            .sheet(item: $managing) { RemoteManageView(contactID: $0.id) }
             .sheet(item: $details, onDismiss: { Task { await load(page: 1, keepPages: true) } }) {
                 ContactActionsView(contactID: $0.id)
             }
@@ -107,8 +110,11 @@ struct ContactsView: View {
         if c.blocked { Task { await setBlocked(c, false) } } else { blocking = c }
     }
 
+    /// People open your conversation; repeaters and room servers open Remote manage.
     private func open(_ c: Contact) {
-        if c.isPerson { Task { await model.openConversation(with: c) } } else { details = c }
+        if c.isPerson { Task { await model.openConversation(with: c) } }
+        else if c.kind == 2 || c.kind == 3 { managing = c }
+        else { details = c }
     }
 
     private func load(page: Int, keepPages: Bool = false) async {

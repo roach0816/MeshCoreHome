@@ -16,6 +16,11 @@ struct SettingsView: View {
                     LabeledContent("Live updates", value: model.live.connected ? "Connected" : "Reconnecting…")
                 }
                 Section {
+                    NavigationLink { NodeSettingsView() } label: { Label("Node settings", systemImage: "antenna.radiowaves.left.and.right") }
+                } footer: {
+                    Text("Your radio's name, location, LoRa settings, channels and more.")
+                }
+                Section {
                     NavigationLink { MyContactCodeView() } label: { Label("My contact code", systemImage: "qrcode") }
                 } footer: {
                     Text("A QR code others can scan to add your radio as a contact.")
