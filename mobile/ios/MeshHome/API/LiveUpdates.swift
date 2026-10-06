@@ -2,7 +2,9 @@ import Foundation
 
 /// The server's WebSocket (/ws). Events are hints to refetch over REST, never the data itself.
 /// Reconnects with backoff (1 s doubling to 30 s); a 4401 close means this sign-in was revoked.
-@MainActor
+import Observation
+
+@MainActor @Observable
 final class LiveUpdates {
     struct Event: Sendable {
         let type: String
@@ -15,13 +17,14 @@ final class LiveUpdates {
         var suppressed = false
     }
 
-    var onEvent: ((Event) -> Void)?
-    var onSignedOut: (() -> Void)?
+    @ObservationIgnored var onEvent: ((Event) -> Void)?
+    @ObservationIgnored var onSignedOut: (() -> Void)?
+    /// Shown in Settings ("Connected" / "Reconnecting…").
     private(set) var connected = false
 
-    private var task: URLSessionWebSocketTask?
-    private var loop: Task<Void, Never>?
-    private var client: APIClient?
+    @ObservationIgnored private var task: URLSessionWebSocketTask?
+    @ObservationIgnored private var loop: Task<Void, Never>?
+    @ObservationIgnored private var client: APIClient?
 
     func start(_ client: APIClient) {
         if loop != nil, self.client?.base == client.base, self.client?.token == client.token { return }

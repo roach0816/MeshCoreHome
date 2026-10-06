@@ -340,6 +340,51 @@ final class MessagingUITests: XCTestCase {
                       "share sheet for the export didn't open")
     }
 
+    /// Native install only (MESHHOME_TEST_NATIVE=1): install the offered update from Settings, then
+    /// turn on HTTPS (MESHHOME_TEST_HTTPS_HOST, port 18443) and check the app moved there.
+    func testNativeUpdateThenHTTPS() throws {
+        guard env["MESHHOME_TEST_NATIVE"] == "1", let host = env["MESHHOME_TEST_HTTPS_HOST"] else { throw XCTSkip("not a native test server") }
+        let app = XCUIApplication()
+        try signIn(app)
+        app.buttons["Settings"].tap()
+        app.swipeUp()
+        app.buttons["Software updates"].tap()
+        let install = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Install '")).firstMatch
+        if install.waitForExistence(timeout: 15) {  // when an update is on offer
+            install.tap()
+            app.buttons["Install"].tap()
+        }
+        XCTAssertTrue(any(app, containing: "Up to date").waitForExistence(timeout: 420), "update didn't finish")
+        shot(app, "30-updated")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        app.buttons["Network and HTTPS"].tap()
+        let https = app.switches["HTTPS with a trusted certificate"]
+        XCTAssertTrue(https.waitForExistence(timeout: 15))
+        https.switches.firstMatch.tap()  // the switch itself, not the row
+        let hostField = app.textFields["Hostname, e.g. meshhome.example.com"]
+        hostField.tap(); hostField.typeText(host)
+        let port = app.textFields["443"]
+        port.tap(); port.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        port.typeText("18443")
+        app.switches["Redirect plain HTTP (port 80)"].switches.firstMatch.tap()
+        app.swipeUp()
+        let token = app.secureTextFields.firstMatch
+        token.tap(); token.typeText("test-token")
+        app.swipeUp()
+        app.buttons["Apply"].firstMatch.tap()
+        app.buttons["Apply"].firstMatch.tap()  // confirm
+        shot(app, "31-applying")
+        // Done, then the app checks the new address and moves (the test script trusts the cert).
+        XCTAssertTrue(any(app, containing: "This app now uses").waitForExistence(timeout: 600), "the app didn't report moving")
+        shot(app, "32-after-apply")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.swipeDown()
+        XCTAssertTrue(any(app, containing: host).waitForExistence(timeout: 10), "the app didn't move to the HTTPS address")
+        shot(app, "33-moved")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")

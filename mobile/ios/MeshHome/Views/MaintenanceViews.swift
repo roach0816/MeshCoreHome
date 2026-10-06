@@ -353,15 +353,33 @@ struct NetworkView: View {
             "credentials": creds.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty },
         ]
         do { try await api.saveNetwork(body); creds = [:]; error = nil } catch { self.error = error.localizedDescription; return }
-        await poll()
-        // Follow the server to its new address (HTTPS on, or a new hostname), checking it first.
-        if progress?.state == "done", let u = newURL, u != model.serverURL {
-            for _ in 0..<10 {
-                if (try? await model.moveServer(to: u)) != nil { error = nil; return }
-                try? await Task.sleep(for: .seconds(3))
+        let target = (newURL != nil && newURL != model.serverURL) ? newURL : nil
+        // Follow progress at the current address. Once HTTPS is on, that address stops answering
+        // (the app listens on localhost behind nginx), so then try the new one: move as soon as
+        // it answers with this sign-in.
+        for _ in 0..<300 {
+            try? await Task.sleep(for: .seconds(2))
+            if let s = try? await api.networkStatus() {
+                progress = s
+                if s.state == "failed" { return }
+                if s.state == "done" { break }
+            } else if let t = target, (try? await model.moveServer(to: t)) != nil {
+                progress = .init(state: "done", message: "HTTPS is on. This app now uses \(t.absoluteString).")
+                info = try? await model.api?.network()
+                return
             }
-            error = "MeshHome is set up at \(u.absoluteString), but this phone can't reach it yet. Check DNS on your network or VPN; the app keeps using the old address."
         }
+        info = try? await api.network()
+        guard progress?.state == "done", let t = target else { return }
+        for _ in 0..<10 {
+            if (try? await model.moveServer(to: t)) != nil {
+                progress = .init(state: "done", message: "HTTPS is on. This app now uses \(t.absoluteString).")
+                info = try? await model.api?.network()
+                return
+            }
+            try? await Task.sleep(for: .seconds(3))
+        }
+        error = "MeshHome is set up at \(t.absoluteString), but this phone can't reach it yet. Check DNS on your network or VPN; the app keeps using the old address."
     }
 
     private func poll() async {

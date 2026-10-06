@@ -27,6 +27,21 @@ final class RestoreRoundTripTests: XCTestCase {
         } catch let e as APIError {
             XCTAssertTrue(e.message.lowercased().contains("passphrase"), e.message)
         }
-        try await api.deleteBackup(created.name)
+        guard env["MESHHOME_TEST_APPLY_RESTORE"] == "1" else {
+            try await api.deleteBackup(created.name)
+            return
+        }
+        // A disposable server only: replaces everything with the backup.
+        let before = try await api.conversations().count
+        let applied = try await api.applyRestore(id, passphrase: "restore-test-passphrase")
+        XCTAssertTrue(applied.restored)
+        XCTAssertNotNil(applied.safetyBackup)
+        // Sign-ins aren't in a backup: sign in again, and the data is all there.
+        let again = try await APIClient(base: base).signIn(username: env["MESHHOME_TEST_USER"] ?? "owner", password: password, deviceName: "after restore")
+        let after = APIClient(base: base, token: again.token)
+        let count = try await after.conversations().count
+        XCTAssertEqual(count, before)
+        let oldStillWorks = (try? await api.me()) != nil
+        print("RESTORE: system=\(applied.system) conversations=\(count) old-sign-in-still-valid=\(oldStillWorks)")
     }
 }
