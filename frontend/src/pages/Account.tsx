@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Monitor, Smartphone } from "lucide-react";
+import { LogOut, Monitor, QrCode as QrIcon, Smartphone } from "lucide-react";
 import { api, type Me, type SignedInDevice } from "../lib/api";
 import { formatDateTime } from "../lib/util";
 import { Badge, Button, ErrorText, Field, IconButton, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
+import { QrCode } from "../components/QrCode";
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
@@ -245,6 +246,7 @@ function DevicesSection() {
     onSettled: () => void refresh(),
   });
   const others = devices.data?.filter((d) => !d.current).length ?? 0;
+  const [pairing, setPairing] = useState(false);
   return (
     <Section
       title="Signed-in devices"
@@ -281,11 +283,38 @@ function DevicesSection() {
           })}
         </ul>
       )}
-      {others > 1 && (
-        <Button variant="ghost" disabled={signOutOthers.isPending} onClick={() => signOutOthers.mutate()}>
-          <LogOut className="size-4" aria-hidden /> Sign out all other devices
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setPairing(true)}>
+          <QrIcon className="size-4" aria-hidden /> Add a phone
         </Button>
-      )}
+        {others > 1 && (
+          <Button variant="ghost" disabled={signOutOthers.isPending} onClick={() => signOutOthers.mutate()}>
+            <LogOut className="size-4" aria-hidden /> Sign out all other devices
+          </Button>
+        )}
+      </div>
+      {pairing && <PairPhoneDialog onClose={() => setPairing(false)} />}
     </Section>
+  );
+}
+
+/** A QR code with this server's address for the MeshHome iPhone app. It holds no secret: the app
+ *  still asks for the username and password. */
+function PairPhoneDialog({ onClose }: { onClose: () => void }) {
+  const link = `meshhome://pair?url=${encodeURIComponent(location.origin)}`;
+  return (
+    <Dialog size="sm" title="Add a phone" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <p>
+          Scan this with the iPhone camera or in the MeshHome app, then sign in with your username and password.
+        </p>
+        <QrCode value={link} label={`Pairing code for ${location.origin}`} className="mx-auto w-56 max-w-full" />
+        <p className="break-all text-center font-mono text-xs text-muted">{location.origin}</p>
+        <p className="text-xs text-muted">
+          The phone uses this address, so it must be one the phone can reach: on your home network, or over your
+          VPN.
+        </p>
+      </div>
+    </Dialog>
   );
 }
