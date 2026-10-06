@@ -23,6 +23,7 @@ struct ThreadView: View {
     @State private var showInfo = false
     @State private var contactID: String?
     @State private var deleting: Message?
+    @FocusState private var composing: Bool
 
     /// The first message you hadn't read when you opened the thread (from someone else).
     private var firstUnreadID: String? {
@@ -79,6 +80,13 @@ struct ThreadView: View {
             .onChange(of: messages.last?.id) { _, id in
                 // Later arrivals: follow the conversation down.
                 if settled, let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+            }
+            .onChange(of: composing) { _, focused in
+                // The keyboard shrinks the view: bring the newest message above it, as Messages does.
+                guard focused, let last = messages.last else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
             }
             .onChange(of: jump) { _, j in
                 guard let j else { return }
@@ -143,6 +151,7 @@ struct ThreadView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(conversation.kind == .channel ? "Message \(conversation.title)" : "Message", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
+                    .focused($composing)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.background, in: RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18).stroke(.quaternary))
@@ -247,6 +256,7 @@ struct ThreadView: View {
             // The same client_message_id on a retry can never send twice.
             let sent = try await api.sendMessage(conversation.id, body: text, clientMessageID: UUID().uuidString)
             merge([sent])
+            hadUnread = false  // you've replied: the "New messages" line has done its job
             draft = ""
             error = nil
         } catch {

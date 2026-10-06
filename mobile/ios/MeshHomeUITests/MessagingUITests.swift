@@ -241,6 +241,10 @@ final class MessagingUITests: XCTestCase {
         sleep(2)
         XCTAssertTrue(divider.isHittable, "the unread divider is off screen")
         shot(app, "15-unread")
+        app.textFields["Message #home-sim"].tap()
+        sleep(2)
+        shot(app, "15b-keyboard")
+        app.navigationBars["#home-sim"].tap()  // away from the keyboard
 
         app.navigationBars["#home-sim"].buttons.firstMatch.tap()
         sleep(2)
