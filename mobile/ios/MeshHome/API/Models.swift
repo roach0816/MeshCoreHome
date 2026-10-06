@@ -23,7 +23,7 @@ struct Me: Decodable, Sendable {
     let homeName: String
 }
 
-struct Preview: Decodable, Hashable, Sendable {
+struct Preview: Codable, Hashable, Sendable {
     let body: String
     let direction: String
     let senderLabel: String?
@@ -31,8 +31,8 @@ struct Preview: Decodable, Hashable, Sendable {
     let createdAt: Date
 }
 
-struct Conversation: Decodable, Identifiable, Hashable, Sendable {
-    enum Kind: String, Decodable, Sendable { case dm, channel }
+struct Conversation: Codable, Identifiable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable { case dm, channel }
 
     let id: String
     let kind: Kind
@@ -47,9 +47,11 @@ struct Conversation: Decodable, Identifiable, Hashable, Sendable {
     let isSimulated: Bool
     let maxBytes: Int
     let preview: Preview?
+    /// Per-conversation chime: "on", "off", or nil to follow the app-wide setting.
+    let sound: String?
 }
 
-struct Message: Decodable, Identifiable, Hashable, Sendable {
+struct Message: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let position: Int
     let conversationId: String
@@ -68,6 +70,69 @@ struct Message: Decodable, Identifiable, Hashable, Sendable {
 struct MessagePage: Decodable, Sendable {
     let messages: [Message]  // oldest first
     let hasMore: Bool
+}
+
+struct Contact: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let publicKey: String
+    let name: String
+    let alias: String?
+    let kind: Int
+    let lastAdvertAt: Date?
+    let onRadio: Bool
+    let favorite: Bool
+    let blocked: Bool
+    let isSimulated: Bool?
+    let conversationId: String?
+
+    var displayName: String { alias ?? name }
+    var kindLabel: String { [1: "Companion", 2: "Repeater", 3: "Room server", 4: "Sensor"][kind] ?? "Type \(kind)" }
+    var isPerson: Bool { kind == 1 }
+}
+
+struct ContactPage: Decodable, Sendable {
+    let items: [Contact]
+    let total: Int
+    let page: Int
+    let pageSize: Int
+}
+
+struct MessagePath: Decodable, Hashable, Sendable {
+    struct Hop: Decodable, Hashable, Sendable {
+        let hash: String
+        let names: [String]
+    }
+    let hops: [Hop]
+    let hashSize: Int?
+    let route: String?
+    let snr: Double?
+    let rssi: Double?
+}
+
+struct MessageInfo: Decodable, Sendable {
+    struct Sender: Decodable, Sendable {
+        let label: String?
+        let keyPrefix: String?
+        let contact: Contact?
+        let match: String?
+    }
+    struct Received: Decodable, Sendable {
+        let snr: Double?
+        let rssi: Double?
+        let route: String?
+        let hops: Int?
+        let pathHashSize: Int?
+    }
+    let message: Message
+    let conversationKind: Conversation.Kind
+    let sender: Sender
+    let received: Received
+    let paths: [MessagePath]
+}
+
+struct NotificationConfig: Codable, Sendable {
+    /// "all", "dms" or "off".
+    var sound: String
 }
 
 /// Delivery state, worded like the web app: never claims more than the radio confirmed.
@@ -100,6 +165,10 @@ enum JSON {
         }
         return d
     }()
+
+    /// For the local cache: Swift's own key names and date encoding, read back by decoderPlain.
+    static let encoderPlain = JSONEncoder()
+    static let decoderPlain = JSONDecoder()
 
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()

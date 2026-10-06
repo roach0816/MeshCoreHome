@@ -16,6 +16,13 @@ struct SettingsView: View {
                     LabeledContent("Live updates", value: model.live.connected ? "Connected" : "Reconnecting…")
                 }
                 Section {
+                    Toggle("Unread count on app icon", isOn: Binding(
+                        get: { model.badgeEnabled },
+                        set: { on in if on { Task { await model.requestBadge() } } else { model.badgeEnabled = false } }))
+                } footer: {
+                    Text("Updated while MeshHome is open. Sounds follow Settings → Notifications on the server.")
+                }
+                Section {
                     Button("Sign out", role: .destructive) { confirmSignOut = true }
                 } footer: {
                     Text("Signing out removes this phone from Account → Signed-in devices on the server.")

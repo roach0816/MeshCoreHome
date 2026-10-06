@@ -10,6 +10,7 @@ struct ConnectView: View {
     @State private var password = ""
     @State private var busy = false
     @State private var error: String?
+    @State private var scanning = false
     @FocusState private var focus: Field?
 
     private enum Field { case address, username, password }
@@ -69,6 +70,9 @@ struct ConnectView: View {
                     if meta == nil {
                         Button { Task { await check() } } label: { progressLabel("Connect") }
                             .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                        if QRScanner.isAvailable {
+                            Button { scanning = true } label: { Label("Scan pairing QR code", systemImage: "qrcode.viewfinder") }
+                        }
                     } else if meta?.needsSetup == false {
                         Button { Task { await signIn() } } label: { progressLabel("Sign in") }
                             .disabled(username.isEmpty || password.isEmpty || busy)
@@ -82,8 +86,29 @@ struct ConnectView: View {
                 }
             }
             .navigationTitle("MeshHome")
-            .onAppear { focus = .address }
+            .onAppear { focus = .address; usePairing() }
+            .onChange(of: model.pairingAddress) { _, _ in usePairing() }
+            .sheet(isPresented: $scanning) {
+                QRScanner { code in
+                    scanning = false
+                    if let url = URL(string: code), let found = Pairing.address(from: url) {
+                        model.pairingAddress = found
+                    } else {
+                        error = "That QR code isn't a MeshHome pairing code. Show it from Account → Signed-in devices → Add a phone in the web interface."
+                    }
+                }
+                .ignoresSafeArea()
+            }
         }
+    }
+
+    /// A pairing link (QR code or meshhome:// URL) fills in the server and checks it.
+    private func usePairing() {
+        guard let found = model.pairingAddress else { return }
+        model.pairingAddress = nil
+        meta = nil; server = nil; error = nil
+        address = found
+        Task { await check() }
     }
 
     private func progressLabel(_ title: String) -> some View {

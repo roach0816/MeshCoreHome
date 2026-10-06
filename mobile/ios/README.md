@@ -27,6 +27,15 @@ TEST_RUNNER_MESHHOME_TEST_SERVER=localhost:8080 TEST_RUNNER_MESHHOME_TEST_PASSWO
 
 ## Status
 
-Phase 2, first step: connect and sign in, conversations (search, filters, swipe to mark read or
-favourite), threads (day headers, delivery states, earlier messages, sending) and live updates.
-Tested in the iOS Simulator only.
+Phase 2 (core messaging), tested in the iOS Simulator only:
+
+- Connect: type the address, scan the pairing QR code (web UI → Account → Signed-in devices → Add a
+  phone), or open a `meshhome://pair?url=…` link.
+- Conversations: search, filters, swipe or long-press to mark read, favourite, mute, delete or clear.
+- Threads: day headers, delivery states, earlier messages, sending, and a message menu (details with
+  SNR, hops and paths heard, sender info, block sender, copy, delete).
+- Contacts: search, filters, sorting with favourites first, favourite, block, tap to message.
+- Live updates over the WebSocket, an in-app sound and haptic for new messages (following the
+  server's notification settings), an optional unread count on the app icon, and the last-known data
+  cached for reading offline.
+- iPhone and iPad layouts, light and dark mode, Dynamic Type.

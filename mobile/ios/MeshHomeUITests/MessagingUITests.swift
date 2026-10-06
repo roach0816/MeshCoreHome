@@ -45,6 +45,35 @@ final class MessagingUITests: XCTestCase {
             .matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS 'Sent by radio'", text)).firstMatch
         XCTAssertTrue(sent.waitForExistence(timeout: 20), "delivery state never reached 'Sent by radio'")
         shot(app, "3-thread")
+
+        // Message menu → details sheet.
+        bubble.press(forDuration: 1.0)
+        app.buttons["Message details"].tap()
+        XCTAssertTrue(app.navigationBars["Message details"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Sent by radio'"))
+            .firstMatch.waitForExistence(timeout: 10))
+        shot(app, "4-details")
+        app.buttons["Done"].tap()
+
+        // Contacts: a person opens their conversation.
+        app.navigationBars["Public"].buttons.firstMatch.tap()  // back to the list (and the keyboard away)
+        app.tabBars.buttons["Contacts"].tap()
+        let tracker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tracker'")).firstMatch
+        XCTAssertTrue(tracker.waitForExistence(timeout: 10), "contacts didn't load")
+        shot(app, "5-contacts")
+        tracker.tap()
+        XCTAssertTrue(app.textFields["Message"].waitForExistence(timeout: 10), "contact didn't open a conversation")
+    }
+
+    /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
+    func testPairingLink() throws {
+        let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let url = "http://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        XCTAssertTrue(app.textFields["Username"].waitForExistence(timeout: 15), "pairing link didn't check the server")
     }
 
     private func shot(_ app: XCUIApplication, _ name: String) {

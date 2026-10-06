@@ -106,6 +106,49 @@ extension APIClient {
         try await send("PUT", "/api/conversations/\(conversationID)/read-position", body: Body(position: position))
     }
 
+    func setMuted(_ conversationID: String, _ muted: Bool) async throws {
+        struct Body: Encodable { let muted: Bool }
+        try await send("PATCH", "/api/conversations/\(conversationID)", body: Body(muted: muted))
+    }
+
+    /// Deletes a DM conversation, or clears a channel's history, from the archive only.
+    func deleteConversation(_ conversationID: String) async throws {
+        try await send("DELETE", "/api/conversations/\(conversationID)", body: Optional<Int>.none)
+    }
+
+    func messageInfo(_ messageID: String) async throws -> MessageInfo { try await get("/api/messages/\(messageID)/info") }
+
+    func deleteMessage(_ messageID: String) async throws {
+        try await send("DELETE", "/api/messages/\(messageID)", body: Optional<Int>.none)
+    }
+
+    func contacts(query: String, show: String, sort: String, order: String, page: Int) async throws -> ContactPage {
+        var q = [URLQueryItem(name: "show", value: show), URLQueryItem(name: "sort", value: sort),
+                 URLQueryItem(name: "order", value: order), URLQueryItem(name: "favorites_first", value: "true"),
+                 URLQueryItem(name: "page", value: String(page)), URLQueryItem(name: "page_size", value: "50")]
+        if !query.isEmpty { q.append(URLQueryItem(name: "q", value: query)) }
+        return try await get("/api/contacts", query: q)
+    }
+
+    func setContactFavorite(_ contactID: String, _ favorite: Bool) async throws {
+        struct Body: Encodable { let favorite: Bool }
+        let _: Contact = try await send("POST", "/api/contacts/\(contactID)/favorite", body: Body(favorite: favorite))
+    }
+
+    func setContactBlocked(_ contactID: String, _ blocked: Bool) async throws {
+        struct Body: Encodable { let blocked: Bool }
+        let _: Contact = try await send("PATCH", "/api/contacts/\(contactID)", body: Body(blocked: blocked))
+    }
+
+    /// The DM conversation with a contact, created if needed.
+    func openConversation(contactID: String) async throws -> String {
+        struct Out: Decodable { let conversationId: String }
+        let out: Out = try await send("POST", "/api/contacts/\(contactID)/conversation", body: Optional<Int>.none)
+        return out.conversationId
+    }
+
+    func notificationConfig() async throws -> NotificationConfig { try await get("/api/settings/notifications") }
+
     func setFavorite(_ conversationID: String, _ favorite: Bool) async throws {
         struct Body: Encodable { let favorite: Bool }
         try await send("PATCH", "/api/conversations/\(conversationID)", body: Body(favorite: favorite))

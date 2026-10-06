@@ -10,6 +10,8 @@ struct ThreadView: View {
     @State private var error: String?
     @State private var draft = ""
     @State private var sending = false
+    @State private var infoFor: Message?
+    @State private var deleting: Message?
 
     private var days: [(day: Date, messages: [Message])] {
         let cal = Calendar.current
@@ -30,6 +32,11 @@ struct ThreadView: View {
                         Section {
                             ForEach(day.messages) { m in
                                 MessageBubble(message: m, kind: conversation.kind).id(m.id)
+                                    .contextMenu {
+                                        Button { infoFor = m } label: { Label("Message details", systemImage: "info.circle") }
+                                        Button { UIPasteboard.general.string = m.body } label: { Label("Copy text", systemImage: "doc.on.doc") }
+                                        Button(role: .destructive) { deleting = m } label: { Label("Delete", systemImage: "trash") }
+                                    }
                             }
                         } header: {
                             Text(dayHeading(day.day))
@@ -48,6 +55,7 @@ struct ThreadView: View {
                 .padding(.bottom, 8)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
             .overlay { if loading && messages.isEmpty { ProgressView() } }
             .safeAreaInset(edge: .bottom) { composer(proxy) }
             .onChange(of: messages.last?.id) { _, id in
@@ -56,7 +64,17 @@ struct ThreadView: View {
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await refresh() }
+        .sheet(item: $infoFor) { m in MessageInfoView(message: m, kind: conversation.kind) }
+        .confirmationDialog("Delete this message?", isPresented: .constant(deleting != nil), titleVisibility: .visible, presenting: deleting) { m in
+            Button("Delete", role: .destructive) { Task { await delete(m) } }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { _ in
+            Text("Removes it from MeshHome's archive only. Nothing is sent over the radio.")
+        }
+        .task {
+            if messages.isEmpty, let cached = Cache.load([Message].self, cacheName) { messages = cached; loading = false }
+            await refresh()
+        }
         .onChange(of: model.changes) { _, _ in
             if model.lastChangedConversation == nil || model.lastChangedConversation == conversation.id {
                 Task { await refresh() }
@@ -104,6 +122,7 @@ struct ThreadView: View {
         do {
             let page = try await api.messages(conversation.id)
             merge(page.messages)
+            Cache.save(Array(messages.suffix(100)), cacheName)
             if messages.count <= page.messages.count { hasMore = page.hasMore }
             error = nil
             if let last = messages.last { await model.markRead(conversation, position: last.position) }
@@ -111,6 +130,20 @@ struct ThreadView: View {
             self.error = error.localizedDescription
         }
         loading = false
+    }
+
+    private var cacheName: String { "messages-\(conversation.id)" }
+
+    private func delete(_ m: Message) async {
+        deleting = nil
+        guard let api = model.api else { return }
+        do {
+            try await api.deleteMessage(m.id)
+            messages.removeAll { $0.id == m.id }
+            Cache.save(Array(messages.suffix(100)), cacheName)
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func loadEarlier() async {

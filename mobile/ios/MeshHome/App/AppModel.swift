@@ -1,38 +1,61 @@
+import AudioToolbox
 import Foundation
 import Observation
 import UIKit
+import UserNotifications
 
 /// The signed-in server and everything shared between screens.
 @MainActor @Observable
 final class AppModel {
     enum Phase { case signedOut, signedIn }
+    enum Tab: Hashable { case conversations, contacts }
 
     private(set) var phase: Phase = .signedOut
     private(set) var api: APIClient?
     private(set) var me: Me?
     var conversations: [Conversation] = []
     var listError: String?
+    /// The last refresh failed to reach the server; what's shown is the cached copy.
+    private(set) var offline = false
+
+    // Navigation shared between tabs (Contacts opens a conversation in the Conversations tab).
+    var tab: Tab = .conversations
+    var selectedConversation: String?
+    /// A server address from a scanned pairing QR code, for the connect screen.
+    var pairingAddress: String?
 
     /// Bumped on every live event, so open screens know to refetch.
     private(set) var changes = 0
     private(set) var lastChangedConversation: String?
+    /// Bumped when the radio's contact list changes (adverts, paths, edits).
+    private(set) var contactChanges = 0
     let live = LiveUpdates()
 
+    private var sound = NotificationConfig(sound: "all")
+    /// Whether the app may set its icon badge (asked for once, from Settings).
+    var badgeEnabled = UserDefaults.standard.bool(forKey: "badge") {
+        didSet { UserDefaults.standard.set(badgeEnabled, forKey: "badge"); updateBadge() }
+    }
+
     private static let serverKey = "server"
+    private var isActive = true
 
     init() {
         live.onEvent = { [weak self] event in self?.handle(event) }
-        live.onSignedOut = { [weak self] in self?.signedOutByServer() }
-        if ProcessInfo.processInfo.arguments.contains("-uitest-reset"), let saved = UserDefaults.standard.string(forKey: Self.serverKey) {
+        live.onSignedOut = { [weak self] in self?.forget() }
+        if ProcessInfo.processInfo.arguments.contains("-uitest-reset"),
+           let saved = UserDefaults.standard.string(forKey: Self.serverKey) {
             Keychain.delete(for: saved)  // UI tests start signed out
         }
         if let saved = UserDefaults.standard.string(forKey: Self.serverKey), let url = URL(string: saved),
            let token = Keychain.token(for: saved) {
+            conversations = Cache.load([Conversation].self, "conversations") ?? []
             start(APIClient(base: url, token: token))
         }
     }
 
     var serverURL: URL? { api?.base }
+    var totalUnread: Int { conversations.filter { !$0.muted }.reduce(0) { $0 + $1.unread } }
 
     // MARK: Sign in and out
 
@@ -62,17 +85,16 @@ final class AppModel {
         forget()
     }
 
-    private func signedOutByServer() {
-        forget()
-    }
-
     private func forget() {
         live.stop()
         if let server = api?.base.absoluteString { Keychain.delete(for: server) }
+        Cache.clear()
         api = nil
         me = nil
         conversations = []
+        selectedConversation = nil
         phase = .signedOut
+        updateBadge()
     }
 
     private func start(_ client: APIClient) {
@@ -87,6 +109,7 @@ final class AppModel {
     func refreshAll() async {
         guard let api else { return }
         if me == nil { me = try? await api.me() }
+        if let config = try? await api.notificationConfig() { sound = config }
         await refreshConversations()
     }
 
@@ -94,12 +117,17 @@ final class AppModel {
         guard let api else { return }
         do {
             conversations = try await api.conversations()
+            Cache.save(conversations, "conversations")
             listError = nil
+            offline = false
         } catch let e as APIError where e.isSignedOut {
             forget()
+        } catch let e as APIError {
+            listError = e.message
         } catch {
-            listError = error.localizedDescription
+            offline = true  // keep showing the cached list
         }
+        updateBadge()
     }
 
     func markRead(_ conversation: Conversation, position: Int? = nil) async {
@@ -115,24 +143,102 @@ final class AppModel {
         await refreshConversations()
     }
 
+    func toggleMuted(_ conversation: Conversation) async {
+        guard let api else { return }
+        try? await api.setMuted(conversation.id, !conversation.muted)
+        await refreshConversations()
+    }
+
+    func delete(_ conversation: Conversation) async {
+        guard let api else { return }
+        try? await api.deleteConversation(conversation.id)
+        if selectedConversation == conversation.id { selectedConversation = nil }
+        await refreshConversations()
+    }
+
+    /// Opens (creating if needed) the DM with a contact, in the Conversations tab.
+    func openConversation(with contact: Contact) async {
+        guard let api, let id = try? await api.openConversation(contactID: contact.id) else { return }
+        await refreshConversations()
+        tab = .conversations
+        selectedConversation = id
+    }
+
     func appBecameActive() {
+        isActive = true
         guard phase == .signedIn, let api else { return }
         live.start(api)  // reconnects if the socket dropped in the background
         Task { await refreshAll() }
     }
 
+    func appResignedActive() { isActive = false }
+
+    // MARK: Live events, chimes and the badge
+
     private func handle(_ event: LiveUpdates.Event) {
         switch event.type {
         case "hello":
-            Task { await refreshConversations() }  // after any reconnect, resync
-            changes += 1
             lastChangedConversation = nil
+            changes += 1
+            Task { await refreshAll() }  // after any reconnect, resync
         case "message-created", "delivery-updated", "read-position-updated", "conversations-updated":
             lastChangedConversation = event.conversationID
             changes += 1
+            if event.type == "message-created", event.direction == "in", !event.suppressed { chime(event) }
             Task { await refreshConversations() }
+        case "contacts-updated":
+            contactChanges += 1
+        case "settings-updated":
+            Task { if let api, let c = try? await api.notificationConfig() { sound = c } }
         default:
             break
         }
     }
+
+    /// Same rules as the web app: the conversation's own setting wins, else the app-wide one.
+    /// Silent for the conversation you're reading.
+    private func chime(_ event: LiveUpdates.Event) {
+        guard isActive, event.conversationID != selectedConversation || tab != .conversations else { return }
+        let conv = conversations.first { $0.id == event.conversationID }
+        let enabled: Bool = switch conv?.sound {
+        case "on": true
+        case "off": false
+        default: sound.sound == "all" || (sound.sound == "dms" && event.kind == "dm")
+        }
+        guard enabled else { return }
+        AudioServicesPlaySystemSound(1007)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    func requestBadge() async {
+        let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.badge])) ?? false
+        badgeEnabled = granted
+    }
+
+    private func updateBadge() {
+        let count = badgeEnabled && phase == .signedIn ? totalUnread : 0
+        UNUserNotificationCenter.current().setBadgeCount(count)
+    }
+}
+
+/// Last-known data, so the app opens instantly and stays readable without a connection.
+/// Cleared on sign-out.
+enum Cache {
+    private static var dir: URL {
+        let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "meshhome")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    static func save<T: Encodable>(_ value: T, _ name: String) {
+        guard let data = try? JSON.encoderPlain.encode(value) else { return }
+        try? data.write(to: dir.appending(path: "\(name).json"), options: [.atomic, .completeFileProtection])
+    }
+
+    static func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+        guard let data = try? Data(contentsOf: dir.appending(path: "\(name).json")) else { return nil }
+        return try? JSON.decoderPlain.decode(T.self, from: data)
+    }
+
+    static func clear() { try? FileManager.default.removeItem(at: dir) }
 }

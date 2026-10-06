@@ -7,6 +7,12 @@ final class LiveUpdates {
     struct Event: Sendable {
         let type: String
         let conversationID: String?
+        var messageID: String? = nil
+        /// message-created: "in" for received messages; with kind "dm"/"channel" and whether it's
+        /// from a blocked contact (archived silently).
+        var direction: String? = nil
+        var kind: String? = nil
+        var suppressed = false
     }
 
     var onEvent: ((Event) -> Void)?
@@ -65,6 +71,8 @@ final class LiveUpdates {
     private static func parse(_ text: String) -> Event? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let type = obj["type"] as? String else { return nil }
-        return Event(type: type, conversationID: obj["conversation_id"] as? String)
+        return Event(type: type, conversationID: obj["conversation_id"] as? String,
+                     messageID: obj["message_id"] as? String, direction: obj["direction"] as? String,
+                     kind: obj["kind"] as? String, suppressed: obj["suppressed"] as? Bool ?? false)
     }
 }

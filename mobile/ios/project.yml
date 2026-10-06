@@ -11,7 +11,7 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   MeshHome:
@@ -30,12 +30,16 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: MeshHome connects to your MeshHome server on your home network.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_NSCameraUsageDescription: MeshHome uses the camera to scan the pairing QR code your MeshHome server shows.
     info:
       path: MeshHome/Info.plist
       properties:
         NSAppTransportSecurity:
           # Plain HTTP only to local-network addresses (IPs and .local names); everything else needs HTTPS.
           NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: app.meshhome.pair
+            CFBundleURLSchemes: [meshhome]
   MeshHomeTests:
     type: bundle.unit-test
     platform: iOS

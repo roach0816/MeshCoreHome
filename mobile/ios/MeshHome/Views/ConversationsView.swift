@@ -3,10 +3,15 @@ import SwiftUI
 /// Conversation list, with the open thread beside it on iPad (split view) or pushed on iPhone.
 struct ConversationsView: View {
     @Environment(AppModel.self) private var model
-    @State private var selection: String?
     @State private var search = ""
+    @State private var deleting: Conversation?
     @State private var filter: Filter = .all
     @State private var showSettings = false
+
+    private var deleteTitle: String {
+        guard let d = deleting else { return "" }
+        return d.kind == .channel ? "Clear the history of \(d.title)?" : "Delete the conversation with \(d.title)?"
+    }
 
     private enum Filter: String, CaseIterable { case all = "All", unread = "Unread", favorites = "Favorites" }
 
@@ -19,8 +24,9 @@ struct ConversationsView: View {
     }
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $model.selectedConversation) {
                 Picker("Show", selection: $filter) {
                     ForEach(Filter.allCases, id: \.self) { Text($0.rawValue) }
                 }
@@ -29,6 +35,9 @@ struct ConversationsView: View {
 
                 if let error = model.listError {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                } else if model.offline {
+                    Label("Can't reach the server. Showing the last saved copy.", systemImage: "wifi.slash")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 ForEach(shown) { c in
                     ConversationRow(conversation: c)
@@ -41,9 +50,27 @@ struct ConversationsView: View {
                             }
                         }
                         .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { deleting = c } label: { Label("Delete", systemImage: "trash") }
+                            Button { Task { await model.toggleMuted(c) } } label: {
+                                Label(c.muted ? "Unmute" : "Mute", systemImage: c.muted ? "bell" : "bell.slash")
+                            }.tint(.indigo)
                             Button { Task { await model.toggleFavorite(c) } } label: {
                                 Label(c.favorite ? "Unfavorite" : "Favorite", systemImage: c.favorite ? "star.slash" : "star")
                             }.tint(.yellow)
+                        }
+                        .contextMenu {
+                            if c.unread > 0 {
+                                Button { Task { await model.markRead(c) } } label: { Label("Mark as read", systemImage: "envelope.open") }
+                            }
+                            Button { Task { await model.toggleFavorite(c) } } label: {
+                                Label(c.favorite ? "Remove from favorites" : "Add to favorites", systemImage: c.favorite ? "star.slash" : "star")
+                            }
+                            Button { Task { await model.toggleMuted(c) } } label: {
+                                Label(c.muted ? "Unmute" : "Mute", systemImage: c.muted ? "bell" : "bell.slash")
+                            }
+                            Button(role: .destructive) { deleting = c } label: {
+                                Label(c.kind == .channel ? "Clear history" : "Delete", systemImage: "trash")
+                            }
                         }
                 }
                 if shown.isEmpty && model.listError == nil {
@@ -62,8 +89,19 @@ struct ConversationsView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .confirmationDialog(deleteTitle, isPresented: .constant(deleting != nil), titleVisibility: .visible, presenting: deleting) { c in
+                Button(c.kind == .channel ? "Clear history" : "Delete conversation", role: .destructive) {
+                    Task { await model.delete(c) }
+                    deleting = nil
+                }
+                Button("Cancel", role: .cancel) { deleting = nil }
+            } message: { c in
+                Text(c.kind == .channel
+                     ? "Removes this channel's messages from MeshHome's archive. The channel stays on the radio."
+                     : "Removes this conversation from MeshHome's archive. Nothing is sent, and it reappears if \(c.title) writes again.")
+            }
         } detail: {
-            if let id = selection, let c = model.conversations.first(where: { $0.id == id }) {
+            if let id = model.selectedConversation, let c = model.conversations.first(where: { $0.id == id }) {
                 ThreadView(conversation: c).id(c.id)
             } else {
                 ContentUnavailableView("Select a conversation", systemImage: "bubble.left.and.bubble.right")
