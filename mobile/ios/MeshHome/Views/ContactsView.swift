@@ -14,6 +14,7 @@ struct ContactsView: View {
     @State private var error: String?
     @State private var details: Contact?
     @State private var blocking: Contact?
+    @State private var adding: AddContactView.Mode?
 
     private enum Show: String, CaseIterable { case all, favorites, blocked, removed
         var label: String { self == .removed ? "Removed from radio" : rawValue.capitalized }
@@ -58,6 +59,15 @@ struct ContactsView: View {
             .refreshable { await load(page: 1) }
             .navigationTitle(total > 0 ? "Contacts (\(total))" : "Contacts")
             .toolbar {
+                if model.features.contains("contact_import") { ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { adding = .scan } label: { Label("Scan QR code", systemImage: "qrcode.viewfinder") }
+                        Button { adding = .manual } label: { Label("Enter manually", systemImage: "keyboard") }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Add contact")
+                } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Picker("Show", selection: $show) { ForEach(Show.allCases, id: \.self) { Text($0.label) } }
@@ -70,6 +80,11 @@ struct ContactsView: View {
                 }
             }
             .sheet(item: $details) { ContactDetailsView(contact: $0) }
+            .sheet(isPresented: Binding(get: { adding != nil }, set: { if !$0 { adding = nil } })) {
+                if let mode = adding {
+                    AddContactView(mode: mode) { _ in Task { await load(page: 1) } }
+                }
+            }
             .confirmationDialog("Block \(blocking?.displayName ?? "")?", isPresented: .constant(blocking != nil),
                                 titleVisibility: .visible, presenting: blocking) { c in
                 Button("Block", role: .destructive) { Task { await setBlocked(c, true) } }
@@ -184,7 +199,7 @@ struct ContactDetailsView: View {
                 LabeledContent("Last heard", value: contact.lastAdvertAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
                 LabeledContent("On the radio", value: contact.onRadio ? "Yes" : "No (removed)")
                 Section("Public key") {
-                    Text(contact.publicKey).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(keyLines(contact.publicKey)).font(.caption.monospaced()).textSelection(.enabled)
                 }
                 if contact.isPerson {
                     Button("Send a message") {

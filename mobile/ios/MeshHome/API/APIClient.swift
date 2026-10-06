@@ -147,6 +147,19 @@ extension APIClient {
         return out.conversationId
     }
 
+    func device() async throws -> DeviceInfo { try await get("/api/device") }
+
+    /// Adds a contact from a scanned code (uri) or typed in. Returns it, and whether it was new.
+    func importContact(uri: String) async throws -> ContactImportResult {
+        struct Body: Encodable { let uri: String }
+        return try await send("POST", "/api/contacts/import", body: Body(uri: uri))
+    }
+
+    func importContact(publicKey: String, name: String, kind: Int) async throws -> ContactImportResult {
+        struct Body: Encodable { let publicKey, name: String; let kind: Int }
+        return try await send("POST", "/api/contacts/import", body: Body(publicKey: publicKey, name: name, kind: kind))
+    }
+
     func notificationConfig() async throws -> NotificationConfig { try await get("/api/settings/notifications") }
 
     func setFavorite(_ conversationID: String, _ favorite: Bool) async throws {

@@ -130,6 +130,36 @@ struct MessageInfo: Decodable, Sendable {
     let paths: [MessagePath]
 }
 
+/// GET /api/device (only what the app uses): the home radio.
+struct DeviceInfo: Decodable, Sendable {
+    struct Radio: Decodable, Sendable {
+        let name: String
+        let publicKey: String
+    }
+    let radio: Radio?
+}
+
+struct ContactImportResult: Decodable, Sendable {
+    let contact: Contact
+    let added: Bool
+}
+
+/// A 64-character key as two 32-character lines: iOS would otherwise wrap it with a hyphen.
+func keyLines(_ key: String) -> String {
+    key.count > 32 ? String(key.prefix(32)) + "\n" + String(key.dropFirst(32)) : key
+}
+
+/// MeshCore's contact QR code format (docs.meshcore.io/qr_codes), read by MeshCore apps too.
+enum ContactCode {
+    static func uri(name: String, publicKey: String, kind: Int = 1) -> String {
+        var c = URLComponents()
+        c.scheme = "meshcore"; c.host = "contact"; c.path = "/add"
+        c.queryItems = [URLQueryItem(name: "name", value: name), URLQueryItem(name: "public_key", value: publicKey),
+                        URLQueryItem(name: "type", value: String(kind))]
+        return c.string ?? ""
+    }
+}
+
 struct NotificationConfig: Codable, Sendable {
     /// "all", "dms" or "off".
     var sound: String

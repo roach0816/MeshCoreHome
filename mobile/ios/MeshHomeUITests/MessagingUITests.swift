@@ -65,6 +65,43 @@ final class MessagingUITests: XCTestCase {
         XCTAssertTrue(app.textFields["Message"].waitForExistence(timeout: 10), "contact didn't open a conversation")
     }
 
+    /// Settings → My contact code, then Contacts → + → Enter manually.
+    func testContactCodes() throws {
+        let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let url = "http://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15))
+        user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
+        app.buttons["Settings"].tap()
+        app.buttons["My contact code"].tap()
+        XCTAssertTrue(app.images["QR code"].waitForExistence(timeout: 10), "no QR code")
+        shot(app, "6-my-code")
+        app.navigationBars["My contact code"].buttons.firstMatch.tap()
+        app.buttons["Done"].tap()
+
+        app.tabBars.buttons["Contacts"].tap()
+        app.buttons["Add contact"].tap()
+        app.buttons["Enter manually"].tap()
+        let name = "Trail \(Int.random(in: 100...999))"
+        app.textFields["Name"].tap(); app.textFields["Name"].typeText(name)
+        let key = (0..<32).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined()
+        app.textFields["Public key (64 hex characters)"].tap()
+        app.textFields["Public key (64 hex characters)"].typeText(key)
+        app.collectionViews.buttons["Add contact"].tap()  // the form's button, not the + behind the sheet
+        XCTAssertTrue(app.staticTexts["Added \(name)"].waitForExistence(timeout: 15), "contact not added")
+        shot(app, "7-added")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch.waitForExistence(timeout: 10))
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")

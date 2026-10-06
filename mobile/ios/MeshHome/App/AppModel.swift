@@ -13,6 +13,8 @@ final class AppModel {
     private(set) var phase: Phase = .signedOut
     private(set) var api: APIClient?
     private(set) var me: Me?
+    /// What the server supports (GET /api/meta), to hide features an older server lacks.
+    private(set) var features: Set<String> = []
     var conversations: [Conversation] = []
     var listError: String?
     /// The last refresh failed to reach the server; what's shown is the cached copy.
@@ -109,6 +111,7 @@ final class AppModel {
     func refreshAll() async {
         guard let api else { return }
         if me == nil { me = try? await api.me() }
+        if let meta = try? await api.meta() { features = Set(meta.features) }
         if let config = try? await api.notificationConfig() { sound = config }
         await refreshConversations()
     }

@@ -16,6 +16,11 @@ struct SettingsView: View {
                     LabeledContent("Live updates", value: model.live.connected ? "Connected" : "Reconnecting…")
                 }
                 Section {
+                    NavigationLink { MyContactCodeView() } label: { Label("My contact code", systemImage: "qrcode") }
+                } footer: {
+                    Text("A QR code others can scan to add your radio as a contact.")
+                }
+                Section {
                     Toggle("Unread count on app icon", isOn: Binding(
                         get: { model.badgeEnabled },
                         set: { on in if on { Task { await model.requestBadge() } } else { model.badgeEnabled = false } }))
