@@ -31,6 +31,18 @@ struct ThreadView: View {
         return messages.first { $0.position > mark && !$0.isOutgoing }?.id
     }
 
+    private static let bottomID = "thread-bottom"
+
+    /// Scroll to the end, again once lazily-laid-out rows have their real heights (a single jump
+    /// can land short when row heights were only estimated).
+    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
+        let go = { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+        if animated { withAnimation { go() } } else { go() }
+        for delay in [0.15, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { go() }
+        }
+    }
+
     private var days: [(day: Date, messages: [Message])] {
         let cal = Calendar.current
         return Dictionary(grouping: messages) { cal.startOfDay(for: $0.createdAt) }
@@ -69,24 +81,27 @@ struct ThreadView: View {
                     if !loading && messages.isEmpty {
                         Text("No messages yet").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 40)
                     }
+                    // The very end of the thread: scrolling here shows the newest message in full.
+                    Color.clear.frame(height: 1).id(Self.bottomID)
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             }
             .defaultScrollAnchor(.bottom)
+            // Keep the bottom in place when the view shrinks (the keyboard), so it never covers
+            // the newest message.
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
             .overlay { if loading && messages.isEmpty { ProgressView() } }
             .safeAreaInset(edge: .bottom) { composer(proxy) }
             .onChange(of: messages.last?.id) { _, id in
                 // Later arrivals: follow the conversation down.
-                if settled, let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                if settled, id != nil { scrollToEnd(proxy, animated: true) }
             }
             .onChange(of: composing) { _, focused in
                 // The keyboard shrinks the view: bring the newest message above it, as Messages does.
-                guard focused, let last = messages.last else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
+                guard focused else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scrollToEnd(proxy, animated: true) }
             }
             .onChange(of: jump) { _, j in
                 guard let j else { return }
@@ -94,7 +109,7 @@ struct ThreadView: View {
                 // The unread line lands a little below the top, clear of the pinned date label.
                 DispatchQueue.main.async {
                     if j.toTop { proxy.scrollTo("unread-divider", anchor: UnitPoint(x: 0.5, y: 0.08)) }
-                    else { proxy.scrollTo(j.id, anchor: .bottom) }
+                    else { scrollToEnd(proxy, animated: false) }
                 }
             }
         }
@@ -124,7 +139,10 @@ struct ThreadView: View {
             // Not tied to this view's task: SwiftUI may cancel and restart it as the list re-renders,
             // which would otherwise abort the load half-way ("cancelled").
             await Task { await openingLoad() }.value
-            if let target = firstUnreadID {
+            // Jump to the unread line only when the unread messages won't fit on screen; a few
+            // fit at the bottom (line still visible above them), with no empty space below.
+            let unreadCount = readMark.map { mark in messages.filter { $0.position > mark && !$0.isOutgoing }.count } ?? 0
+            if let target = firstUnreadID, unreadCount > 6 {
                 jump = Jump(id: target, toTop: true)
             } else if let last = messages.last {
                 jump = Jump(id: last.id, toTop: false)

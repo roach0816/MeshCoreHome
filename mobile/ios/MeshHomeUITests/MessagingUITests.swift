@@ -256,6 +256,25 @@ final class MessagingUITests: XCTestCase {
         shot(app, "16-bottom")
     }
 
+    /// One new message: the thread opens at the bottom (no empty space), the line above it, and the
+    /// keyboard doesn't cover it. MESHHOME_TEST_CONV names a conversation with exactly one unread.
+    func testOneUnreadMessage() throws {
+        let title = try XCTUnwrap(env["MESHHOME_TEST_CONV"], "no conversation given")
+        let app = XCUIApplication()
+        try signIn(app)
+        let row = app.staticTexts[title]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        let divider = app.descendants(matching: .any)["New messages start here"]
+        XCTAssertTrue(divider.waitForExistence(timeout: 20))
+        sleep(2)
+        XCTAssertTrue(divider.isHittable)
+        shot(app, "17-one-unread")
+        app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'Message'")).firstMatch.tap()
+        sleep(2)
+        shot(app, "18-one-unread-keyboard")
+    }
+
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.
     func testPairingLink() throws {
         let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
