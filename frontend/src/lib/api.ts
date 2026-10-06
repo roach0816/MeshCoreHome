@@ -74,6 +74,20 @@ export interface Me {
   home_name: string;
 }
 
+export type SessionClient = "web" | "ios" | "android";
+
+/** A signed-in browser or app (Account → Signed-in devices). */
+export interface SignedInDevice {
+  id: string;
+  client: SessionClient;
+  device_name: string | null;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
 export type MessageState =
   | "received"
   | "queued"

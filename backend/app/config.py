@@ -12,7 +12,10 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "0.7.15"
+APP_VERSION = "0.8.0"
+# The API contract the mobile apps depend on (GET /api/meta). Changes stay additive; this only
+# goes up for a change that older apps can't handle, which should be (almost) never.
+API_VERSION = 1
 
 
 class Settings(BaseSettings):

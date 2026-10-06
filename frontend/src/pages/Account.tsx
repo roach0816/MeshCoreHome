@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
-import { api, type Me } from "../lib/api";
-import { Button, ErrorText, Field, Input } from "../components/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LogOut, Monitor, Smartphone } from "lucide-react";
+import { api, type Me, type SignedInDevice } from "../lib/api";
+import { formatDateTime } from "../lib/util";
+import { Badge, Button, ErrorText, Field, IconButton, Input } from "../components/ui";
 import { Dialog } from "../components/Dialog";
 
 function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
@@ -46,6 +47,7 @@ export function AccountDialog({ me, onClose }: { me: Me; onClose: () => void }) 
         </div>
         <UsernameSection me={me} />
         <PasswordSection />
+        <DevicesSection />
       </div>
     </Dialog>
   );
@@ -131,7 +133,7 @@ function PasswordSection() {
     },
   });
   return (
-    <Section title="Password" description="At least 10 characters. Changing it signs out every other browser.">
+    <Section title="Password" description="At least 10 characters. Changing it signs out every other browser and app.">
       <form
         className="space-y-3"
         onSubmit={(e) => {
@@ -176,7 +178,7 @@ function PasswordSection() {
         <ErrorText error={change.error} />
         {done && (
           <p className="text-sm text-ok" role="status">
-            Password changed. Other browsers have been signed out.
+            Password changed. Other browsers and apps have been signed out.
           </p>
         )}
         <Button
@@ -187,6 +189,103 @@ function PasswordSection() {
           Change password
         </Button>
       </form>
+    </Section>
+  );
+}
+
+/** "Safari on iPhone" from a browser's user agent; good enough to recognise your own devices. */
+function describeBrowser(ua: string | null): string {
+  if (!ua) return "Browser";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /Firefox\/|FxiOS/.test(ua)
+      ? "Firefox"
+      : /Chrome\/|CriOS/.test(ua)
+        ? "Chrome"
+        : /Safari\//.test(ua)
+          ? "Safari"
+          : "Browser";
+  const os = /iPhone/.test(ua)
+    ? "iPhone"
+    : /iPad/.test(ua)
+      ? "iPad"
+      : /Android/.test(ua)
+        ? "Android"
+        : /CrOS/.test(ua)
+          ? "ChromeOS"
+          : /Mac OS X/.test(ua)
+            ? "macOS"
+            : /Windows/.test(ua)
+              ? "Windows"
+              : /Linux/.test(ua)
+                ? "Linux"
+                : null;
+  return os ? `${browser} on ${os}` : browser;
+}
+
+function deviceLabel(d: SignedInDevice): string {
+  if (d.client === "web") return describeBrowser(d.user_agent);
+  const platform = d.client === "ios" ? "iOS app" : "Android app";
+  return d.device_name ? `${d.device_name} (${platform})` : platform;
+}
+
+function DevicesSection() {
+  const qc = useQueryClient();
+  const devices = useQuery({
+    queryKey: ["signed-in-devices"],
+    queryFn: () => api<SignedInDevice[]>("/api/auth/sessions"),
+  });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["signed-in-devices"] });
+  const signOut = useMutation({
+    mutationFn: (id: string) => api<void>(`/api/auth/sessions/${id}`, { method: "DELETE" }),
+    onSettled: () => void refresh(),
+  });
+  const signOutOthers = useMutation({
+    mutationFn: () => api<void>("/api/auth/sessions", { method: "DELETE" }),
+    onSettled: () => void refresh(),
+  });
+  const others = devices.data?.filter((d) => !d.current).length ?? 0;
+  return (
+    <Section
+      title="Signed-in devices"
+      description="Browsers and apps signed in to your account. Sign out any you don't recognise or no longer use."
+    >
+      <ErrorText error={devices.error ?? signOut.error ?? signOutOthers.error} />
+      {devices.data && (
+        <ul className="divide-y divide-line rounded-lg border border-line">
+          {devices.data.map((d) => {
+            const Icon = d.client === "web" ? Monitor : Smartphone;
+            return (
+              <li key={d.id} className="flex items-center gap-3 py-1 pl-3 pr-1">
+                <Icon className="size-4 shrink-0 text-muted" aria-hidden />
+                <div className="min-w-0 flex-1 py-1.5">
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 break-words text-sm font-medium">{deviceLabel(d)}</span>
+                    {d.current && <Badge tone="accent">This browser</Badge>}
+                  </p>
+                  <p className="mt-0.5 break-words text-xs text-muted">
+                    Last active {formatDateTime(d.last_seen_at)} · signed in {formatDateTime(d.created_at)}
+                  </p>
+                </div>
+                {!d.current && (
+                  <IconButton
+                    label={`Sign out ${deviceLabel(d)}`}
+                    disabled={signOut.isPending}
+                    onClick={() => signOut.mutate(d.id)}
+                  >
+                    <LogOut className="size-4" />
+                  </IconButton>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {others > 1 && (
+        <Button variant="ghost" disabled={signOutOthers.isPending} onClick={() => signOutOthers.mutate()}>
+          <LogOut className="size-4" aria-hidden /> Sign out all other devices
+        </Button>
+      )}
     </Section>
   );
 }

@@ -43,6 +43,32 @@ jobs:
       - run: ruff format --check app tests migrations
       - run: pytest -q
 
+  api-contract:
+    # The mobile apps in people's hands use the API as it was released: no breaking changes.
+    # (pytest checks that backend/openapi.json matches the code.)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install oasdiff (pinned, checksum verified)
+        run: |
+          curl -fsSLo oasdiff.tgz \
+            https://github.com/oasdiff/oasdiff/releases/download/v1.33.0/oasdiff_1.33.0_linux_amd64.tar.gz
+          echo "43a4e328e2d13ba1552d760aa68d2485c75c5621f309f6ff64ae895188345247  oasdiff.tgz" | sha256sum -c -
+          tar xzf oasdiff.tgz oasdiff
+      - name: No breaking API changes since the last release
+        run: |
+          set -euo pipefail
+          # The release before this commit (HEAD~1, so a release commit is checked too).
+          base=$(git describe --tags --abbrev=0 --match 'v*' HEAD~1 2>/dev/null || true)
+          if [ -z "$base" ] || ! git show "$base:backend/openapi.json" > /tmp/base.json 2>/dev/null; then
+            echo "No API contract in the last release (${base:-none}); nothing to compare."
+            exit 0
+          fi
+          echo "Comparing with $base"
+          ./oasdiff breaking /tmp/base.json backend/openapi.json --fail-on ERR
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -69,7 +95,7 @@ jobs:
 
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend, installer]
+    needs: [backend, api-contract, frontend, installer]
     permissions:
       contents: read
       packages: write

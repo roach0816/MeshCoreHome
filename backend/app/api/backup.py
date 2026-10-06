@@ -22,7 +22,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import SetupToken, setup_failures
-from app.api.deps import AuthContext, client_ip, load_session, require_requested_with, require_session
+from app.api.deps import (
+    AuthContext,
+    bearer_token,
+    client_ip,
+    load_app_session,
+    load_session,
+    require_csrf,
+    require_requested_with,
+    require_session,
+)
 from app.config import get_settings
 from app.db import get_db
 from app.models import AuditEvent
@@ -66,13 +75,16 @@ async def restore_auth(request: Request, db: AsyncSession = Depends(get_db)) -> 
 
 async def _restore_auth(request: Request, db: AsyncSession) -> str:
     if await app_settings.setup_complete(db):
+        raw = bearer_token(request.headers)
+        if raw is not None:
+            # A signed-in app. API keys can't restore.
+            if await load_app_session(db, raw) is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
+            return "owner"
         ctx = await load_session(db, request.cookies.get(SESSION_COOKIE))
         if ctx is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
-        require_requested_with(request)
-        header = request.headers.get("x-csrf-token", "")
-        if not header or not constant_time_equals(header, ctx.session.csrf_token):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "CSRF check failed")
+        require_csrf(request, ctx.session)
         return "owner"
     require_requested_with(request)
     ip = client_ip(request)

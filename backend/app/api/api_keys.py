@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, require_session
 from app.db import get_db
 from app.models import ApiKey, AuditEvent, utcnow
+from app.realtime import hub
 from app.security import new_api_key, token_digest
 
 router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
@@ -112,3 +113,4 @@ async def revoke_key(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found")
     db.add(AuditEvent(kind="api_key.revoked", detail={"id": str(key_id)}))
     await db.commit()
+    hub.disconnect(f"api_key:{key_id}")

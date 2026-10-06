@@ -19,6 +19,9 @@ REQUESTED_WITH_VALUE = "meshcore-home"
 MIN_PASSWORD_LENGTH = 10
 # API keys: "mch_" + 256 random bits. Only a SHA-256 digest is stored.
 API_KEY_PREFIX = "mch_"
+# Sessions signed in from the mobile apps: "mchd_" + 256 random bits, sent as
+# "Authorization: Bearer". Only a SHA-256 digest is stored, as for browser sessions.
+APP_TOKEN_PREFIX = "mchd_"
 
 _hasher = PasswordHasher()
 
@@ -36,6 +39,10 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 def new_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def new_app_token() -> str:
+    return APP_TOKEN_PREFIX + secrets.token_urlsafe(32)
 
 
 def new_api_key() -> str:

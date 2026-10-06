@@ -18,13 +18,14 @@ from app.api import (
     contacts,
     firmware,
     inbox,
+    meta,
     node_map,
     radio,
     radio_config,
     remote,
     system,
 )
-from app.api.deps import bearer_token, load_api_key, load_session
+from app.api.deps import bearer_token, load_bearer, load_session
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
@@ -135,6 +136,7 @@ app.include_router(api_keys.router)
 app.include_router(remote.router)
 app.include_router(firmware.router)
 app.include_router(backup.router)
+app.include_router(meta.router)
 
 
 # ---- health ------------------------------------------------------------------------------
@@ -168,11 +170,11 @@ def _same_origin(ws: WebSocket) -> bool:
 
 @app.websocket("/ws")
 async def websocket(ws: WebSocket):
-    raw_key = bearer_token(ws.headers)
-    if raw_key is not None:
-        # Another service: authenticated by API key, so no browser origin check applies.
+    raw_token = bearer_token(ws.headers)
+    if raw_token is not None:
+        # A mobile app or another service: a Bearer token, so no browser origin check applies.
         async with db.session_factory()() as s:
-            ctx = await load_api_key(s, raw_key)
+            ctx = await load_bearer(s, raw_token)
     else:
         if not _same_origin(ws):
             await ws.close(code=4403)
@@ -183,7 +185,7 @@ async def websocket(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
-    queue = hub.register()
+    queue = hub.register(ctx.owner_tag)
     await ws.send_json({"v": 1, "type": "hello", "radio_state": supervisor.status.state})
 
     async def pump():
@@ -194,6 +196,9 @@ async def websocket(ws: WebSocket):
                 event = {"v": 1, "type": "ping"}
             if event is None:  # dropped as a slow client, or shutting down
                 await ws.close(code=4408)
+                return
+            if "_close" in event:  # its session or API key was revoked
+                await ws.close(code=event["_close"])
                 return
             await ws.send_json(event)
 

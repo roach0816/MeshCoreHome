@@ -12,7 +12,7 @@ the repository or the image. Environment variables only cover deployment plumbin
 | `RADIO_ENABLED` | `false` keeps the radio closed regardless of saved settings | `true` |
 | `SETUP_TOKEN` | Fixed first-run token instead of a random one | random |
 | `COOKIE_SECURE` | `auto` / `true` / `false` | `auto` |
-| `SESSION_DAYS` | Sign-in lifetime | `30` |
+| `SESSION_DAYS` | Sign-in lifetime. App sign-ins renew while in use, so this is how long an unused app stays signed in. | `30` |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` | `INFO` |
 | `SEND_EXPIRY_SECONDS` | Queued sends older than this are not transmitted | `60` |
 | `MESHCORE_INSTALL_KIND` | `native` enables in-place upgrades and system settings from the UI (set by the installer) | `container` |

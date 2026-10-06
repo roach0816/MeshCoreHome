@@ -55,6 +55,11 @@ class Session(Base):
     expires_at: Mapped[datetime]
     last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
     user_agent: Mapped[str | None] = mapped_column(String(256))
+    # "web" (browser, cookie) or a mobile app ("ios", "android": Bearer token). NULL: web,
+    # from before the apps existed.
+    client: Mapped[str | None] = mapped_column(String(16))
+    # Shown in Account → Signed-in devices; set by the apps (the phone's name).
+    device_name: Mapped[str | None] = mapped_column(String(64))
 
 
 class ApiKey(Base):

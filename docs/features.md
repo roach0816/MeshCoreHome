@@ -125,7 +125,8 @@ self-hosted tiles.
 
 - **Radio connection:** MeshCore TCP, the Raspberry Pi radio HAT (native installs), Simulated (sample
   traffic, no hardware), or None. Switch at any time.
-- **Account** (click your name, bottom left): change your username and password, sign out.
+- **Account** (click your name, bottom left): change your username and password, sign out, and
+  see **signed-in devices** (browsers and apps), with sign-out for any of them or all at once.
 - **API keys:** see [API](#api).
 - **Backup & restore:** see [Backup and restore](backup-restore.md).
 - **Network & HTTPS** (native installs): see [HTTPS](install-native.md#https).

@@ -2,7 +2,9 @@
 
 import logging
 import secrets
+import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
@@ -10,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    WEB_CLIENT,
     AuthContext,
     clear_session_cookies,
     client_ip,
@@ -22,6 +25,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import AuditEvent, Session, User, utcnow
 from app.radio.supervisor import supervisor
+from app.realtime import hub
 from app.security import (
     MIN_PASSWORD_LENGTH,
     constant_time_equals,
@@ -90,7 +94,26 @@ class SetupStatus(BaseModel):
     radio_hat_ready: bool = False
 
 
-class SetupRequest(BaseModel):
+ClientKind = Literal["web", "ios", "android"]
+
+
+class ClientInfo(BaseModel):
+    """Who is signing in. The mobile apps send their platform and the phone's name, and get
+    a session token back instead of cookies."""
+
+    client: ClientKind = WEB_CLIENT
+    device_name: str | None = Field(default=None, max_length=64)
+
+    @field_validator("device_name")
+    @classmethod
+    def _clean_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = "".join(ch for ch in v if ch.isprintable()).strip()
+        return v or None
+
+
+class SetupRequest(ClientInfo):
     setup_token: str = Field(min_length=1, max_length=128)
     username: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.@-]+$")
     password: str
@@ -103,7 +126,7 @@ class SetupRequest(BaseModel):
         return _check_password(v)
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(ClientInfo):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
 
@@ -128,6 +151,22 @@ class Me(BaseModel):
     home_name: str
 
 
+class SignedIn(Me):
+    # Mobile apps only: send as "Authorization: Bearer <token>". Shown once; never stored.
+    token: str | None = None
+
+
+class SessionInfo(BaseModel):
+    id: uuid.UUID
+    client: ClientKind
+    device_name: str | None
+    user_agent: str | None
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    current: bool
+
+
 @router.get("/setup/status", response_model=SetupStatus)
 async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
     from app.config import APP_VERSION
@@ -145,10 +184,10 @@ async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
     )
 
 
-@router.post("/setup", response_model=Me, dependencies=[Depends(require_requested_with)])
+@router.post("/setup", response_model=SignedIn, dependencies=[Depends(require_requested_with)])
 async def run_setup(
     body: SetupRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)
-) -> Me:
+) -> SignedIn:
     ip = client_ip(request)
     if setup_failures.blocked(ip):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts; wait a minute")
@@ -177,18 +216,18 @@ async def run_setup(
     await app_settings.get_fingerprint_key(db)
     db.add(AuditEvent(kind="setup.completed", detail={"radio_mode": body.radio.mode}))
     await db.flush()
-    await create_session(db, request, response, user)
+    token = await create_session(db, request, response, user, body.client, body.device_name)
     await db.commit()
     SetupToken.clear()
     log.info("first-run setup completed; owner account created")
     supervisor.reload()
-    return Me(username=user.username, home_name=body.home_name.strip())
+    return SignedIn(username=user.username, home_name=body.home_name.strip(), token=token)
 
 
-@router.post("/auth/login", response_model=Me, dependencies=[Depends(require_requested_with)])
+@router.post("/auth/login", response_model=SignedIn, dependencies=[Depends(require_requested_with)])
 async def login(
     body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)
-) -> Me:
+) -> SignedIn:
     ip = client_ip(request)
     if login_failures.blocked(ip):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed sign-ins; wait a minute")
@@ -199,10 +238,12 @@ async def login(
         login_failures.hit(ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect username or password")
     login_failures.reset(ip)
-    await create_session(db, request, response, user)
+    token = await create_session(db, request, response, user, body.client, body.device_name)
+    if token is not None:
+        db.add(AuditEvent(kind="auth.app_signed_in", detail={"client": body.client}))
     await db.commit()
     inst = await app_settings.get_installation(db)
-    return Me(username=user.username, home_name=inst.home_name)
+    return SignedIn(username=user.username, home_name=inst.home_name, token=token)
 
 
 @router.post("/auth/logout", status_code=204)
@@ -211,9 +252,86 @@ async def logout(
 ):
     await db.execute(delete(Session).where(Session.id == ctx.session.id))
     await db.commit()
+    hub.disconnect(ctx.owner_tag)
     clear_session_cookies(response)
     response.status_code = 204
     return response
+
+
+@router.get("/auth/sessions", response_model=list[SessionInfo])
+async def list_sessions(
+    ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
+) -> list[SessionInfo]:
+    """Signed-in browsers and apps, most recently used first."""
+    rows = (
+        await db.execute(
+            select(Session)
+            .where(Session.user_id == ctx.user.id, Session.expires_at > utcnow())
+            .order_by(Session.last_seen_at.desc())
+        )
+    ).scalars()
+    return [
+        SessionInfo(
+            id=s.id,
+            client=s.client or WEB_CLIENT,
+            device_name=s.device_name,
+            user_agent=s.user_agent or None,
+            created_at=s.created_at,
+            last_seen_at=s.last_seen_at,
+            expires_at=s.expires_at,
+            current=s.id == ctx.session.id,
+        )
+        for s in rows
+    ]
+
+
+@router.delete("/auth/sessions/{session_id}", status_code=204)
+async def sign_out_session(
+    session_id: uuid.UUID,
+    response: Response,
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sign out one browser or app (e.g. a lost phone). Its open connections close at once."""
+    result = await db.execute(delete(Session).where(Session.id == session_id, Session.user_id == ctx.user.id))
+    if result.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That sign-in no longer exists")
+    db.add(AuditEvent(kind="auth.session_revoked", detail={"id": str(session_id)}))
+    await db.commit()
+    hub.disconnect(f"session:{session_id}")
+    if session_id == ctx.session.id:
+        clear_session_cookies(response)
+    response.status_code = 204
+    return response
+
+
+@router.delete("/auth/sessions", status_code=204)
+async def sign_out_others(
+    response: Response, ctx: AuthContext = Depends(require_session), db: AsyncSession = Depends(get_db)
+):
+    """Sign out every other browser and app."""
+    revoked = await _sign_out_others(db, ctx)
+    db.add(AuditEvent(kind="auth.others_signed_out", detail={}))
+    await db.commit()
+    hub.disconnect(*revoked)
+    response.status_code = 204
+    return response
+
+
+async def _sign_out_others(db: AsyncSession, ctx: AuthContext) -> list[str]:
+    """Delete every other session; returns their socket tags, to disconnect after commit."""
+    ids = (
+        (
+            await db.execute(
+                delete(Session)
+                .where(Session.user_id == ctx.user.id, Session.id != ctx.session.id)
+                .returning(Session.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [f"session:{i}" for i in ids]
 
 
 @router.get("/auth/me", response_model=Me)
@@ -235,10 +353,11 @@ async def change_password(
     user = await db.get(User, ctx.user.id)
     user.password_hash = hash_password(body.new_password)
     user.password_changed_at = utcnow()
-    # Sign out every other browser.
-    await db.execute(delete(Session).where(Session.user_id == user.id, Session.id != ctx.session.id))
+    # Sign out every other browser and app.
+    revoked = await _sign_out_others(db, ctx)
     db.add(AuditEvent(kind="auth.password_changed", detail={}))
     await db.commit()
+    hub.disconnect(*revoked)
     response.status_code = 204
     return response
 

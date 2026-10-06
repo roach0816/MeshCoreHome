@@ -35,7 +35,14 @@ in systemd-enabled `debian:bookworm` and `debian:trixie` containers: an interact
 (including answering "n"), an unattended `--yes` install, a web-UI upgrade, a broken upgrade
 (rollback), and `uninstall --purge`.
 
-API docs are served at `/api/docs` by the running app; [API.md](API.md) is the guide for API-key users.
+API docs are served at `/api/docs` by the running app; [API.md](API.md) is the guide for API-key users
+and apps.
+
+**API contract.** `backend/openapi.json` is the API description, kept in the repository. After any
+API change, regenerate it with `python -m app.openapi_export --write` in `backend/`; a test fails if
+it is out of date. CI also compares it with the last release using
+[oasdiff](https://github.com/oasdiff/oasdiff) and fails on breaking changes, because apps in
+people's hands use the released API. Keep changes additive: new endpoints and new optional fields.
 
 ## Code layout
 

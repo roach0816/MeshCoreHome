@@ -9,6 +9,8 @@
 - Radio code goes through `app/radio/base.py:RadioAdapter`. Do not call the `meshcore` library
   from anywhere else.
 - Test against real PostgreSQL (`TEST_DATABASE_URL`), never SQLite.
+- API changes stay additive (new endpoints, new optional fields). Mobile apps depend on the
+  released API; CI checks `backend/openapi.json` against the last release.
 - Don't claim hardware behavior is verified unless it was tested on the real RAK companion. Label
   simulated results as simulated.
 
@@ -35,7 +37,8 @@
 
 ## Release workflow
 1. Bump the version: `backend/app/config.py:APP_VERSION`, `backend/pyproject.toml`, and
-   `frontend/package.json`.
+   `frontend/package.json`. If the API changed, regenerate `backend/openapi.json`
+   (`python -m app.openapi_export --write`).
 2. Regenerate lockfiles with their tools; never hand-edit them.
 3. Build, lint, and test. For UI changes, drive a real browser and inspect screenshots at roughly
    390/768/1440 px.

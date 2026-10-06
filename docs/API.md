@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshCore Home **v0.7.15**. `GET /api/status` reports the
+- **Version:** this document matches MeshCore Home **v0.8.0**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -23,6 +23,7 @@ further context.
 6. [Realtime events (WebSocket)](#6-realtime-events-websocket)
 7. [Recipes](#7-recipes)
 8. [Limits and good behaviour](#8-limits-and-good-behaviour)
+9. [Apps that sign in as the owner](#9-apps-that-sign-in-as-the-owner)
 
 ---
 
@@ -583,7 +584,8 @@ changed so you can fetch it over HTTP. They do not carry message text.
 | `remote-updated` | `public_key` | Used by the web app's remote administration page; API keys cannot read it. |
 
 A missing, invalid or expired key is refused during the handshake (HTTP `403`). The server
-closes an open socket with code `4408` if your client reads too slowly. Events are not replayed: after any reconnect, re-sync over HTTP from the
+closes an open socket with code `4401` when its key is revoked, and with code `4408` if your
+client reads too slowly. Events are not replayed: after any reconnect, re-sync over HTTP from the
 last `position` you stored. Reconnect with a backoff (e.g. 1 s doubling to 30 s).
 
 ## 7. Recipes
@@ -672,3 +674,88 @@ message on your side and try again later rather than retrying in a tight loop.
   for them.
 - **Data is personal:** messages and contact positions belong to people on the mesh. Store only
   what your service needs.
+
+## 9. Apps that sign in as the owner
+
+API keys are for other services. Native apps, such as a MeshCore Home mobile app, instead sign in
+with the owner's **username and password**, and can then do everything the web interface can,
+including the owner-only endpoints listed under
+[Not available to API keys](#not-available-to-api-keys). The app never stores the password.
+
+### Discover the server
+
+`GET /api/meta` needs no sign-in. Call it first to check that the address is a MeshCore Home
+server and what it supports:
+
+```json
+{
+  "product": "meshcore-home",
+  "version": "0.8.0",
+  "api_version": 1,
+  "install_kind": "native",
+  "needs_setup": false,
+  "features": ["app_sessions", "signed_in_devices", "backup", "remote_admin", "bot", "weather",
+               "firmware_check", "api_keys", "software_updates", "network_settings", "radio_hat",
+               "system_backup"]
+}
+```
+
+- `api_version` only goes up for a change that older apps can't handle. Changes are otherwise
+  additive: new endpoints, new optional fields, new `features` names. Ignore fields and features
+  you don't know.
+- `features` tells you what this server has. The last four exist only on native (Debian /
+  Raspberry Pi) installs.
+- `needs_setup: true` means the first-run wizard hasn't been completed (see below).
+- A server older than 0.8.0 answers `404`: it can't be used by apps.
+
+### Sign in
+
+```http
+POST /api/auth/login
+X-Requested-With: meshcore-home
+Content-Type: application/json
+
+{"username": "owner", "password": "…", "client": "ios", "device_name": "<PHONE_NAME>"}
+```
+
+- `client` is `"ios"` or `"android"`. `device_name` is optional (at most 64 characters) and is
+  shown to the owner under **Account → Signed-in devices**.
+- The response is `{"username", "home_name", "token"}`. The token starts with `mchd_`. It is shown
+  only this once, and the server stores only a SHA-256 fingerprint. Keep it in the platform's
+  secure storage (Keychain or Keystore).
+- No cookies are set. Send the token on every request, and on the `/ws` WebSocket, as
+  `Authorization: Bearer mchd_…`. No CSRF token or `X-Requested-With` header is needed on those
+  requests.
+- Failed sign-ins: `401 Incorrect username or password`. After 5 failures from one address in a
+  minute: `429`.
+
+### Staying signed in
+
+- An app sign-in lasts `SESSION_DAYS` (30 by default) **from its last use**: each use moves the
+  expiry forward (at most every five minutes). An app left unused that long is signed out.
+- The owner can sign an app out from **Account → Signed-in devices**. Changing the password also
+  signs out every other browser and app.
+- When a token stops working, requests get `401 Signed out; sign in again`, and an open WebSocket
+  is closed with code `4401`. Discard the token and ask for the password again.
+- `POST /api/auth/logout` signs out the calling app.
+
+### Signed-in devices
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/auth/sessions` | Signed-in browsers and apps: `id`, `client` (`web`, `ios`, `android`), `device_name`, `user_agent`, `created_at`, `last_seen_at`, `expires_at`, `current` |
+| `DELETE /api/auth/sessions/{id}` | Sign out one browser or app; its WebSocket closes at once |
+| `DELETE /api/auth/sessions` | Sign out every browser and app except the caller |
+
+### First-run setup from an app
+
+When `needs_setup` is `true`, an app can run the wizard. `POST /api/setup` takes the same `client`
+and `device_name` fields as sign-in and returns a token in the same way. It also needs the setup
+token printed by the server. Restoring a backup instead (`POST /api/restore/upload`, then
+`/api/restore/{id}/inspect` and `/api/restore/{id}/apply`) uses an `X-Setup-Token` header before
+setup. After setup, it uses the app's Bearer token.
+
+### The API contract
+
+The repository keeps the whole API description in `backend/openapi.json`, which apps can generate
+their API clients from. CI fails a change that would break apps built against the last release.
