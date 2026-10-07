@@ -54,6 +54,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: The iOS app's API calls still exist
+        run: python3 mobile/ios/scripts/check_api_contract.py
       - name: Install oasdiff (pinned, checksum verified)
         run: |
           curl -fsSLo oasdiff.tgz \
