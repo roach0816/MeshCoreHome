@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/meshhome-icon-1024.png" width="128" height="128" alt="MeshHome"></p>
+
 # MeshHome
 
 A self-hosted web inbox for your [MeshCore](https://meshcore.io) radio. MeshHome keeps one

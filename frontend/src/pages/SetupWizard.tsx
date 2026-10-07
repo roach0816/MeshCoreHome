@@ -116,7 +116,9 @@ export function SetupWizard() {
         <div className="mb-6 flex items-center gap-3">
           <img src="/favicon.svg" alt="" className="size-10" />
           <div>
-            <h1 className="text-xl font-semibold">Set up MeshHome</h1>
+            <h1 className="text-xl font-semibold">
+              Set up Mesh<span className="text-accent">Home</span>
+            </h1>
             <p className="text-sm text-muted">Takes about a minute. Everything stays on your server.</p>
           </div>
         </div>
