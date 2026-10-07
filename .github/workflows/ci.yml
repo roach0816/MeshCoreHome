@@ -3,10 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    # The mobile apps have their own workflows; they don't change the server or its image.
-    paths-ignore: ["mobile/**", ".github/workflows/ios.yml"]
   pull_request:
-    paths-ignore: ["mobile/**", ".github/workflows/ios.yml"]
 
 permissions:
   contents: read
@@ -48,14 +45,13 @@ jobs:
 
   api-contract:
     # The mobile apps in people's hands use the API as it was released: no breaking changes.
+    # (The apps live in a private repo, whose CI checks their calls against this openapi.json.)
     # (pytest checks that backend/openapi.json matches the code.)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: The iOS app's API calls still exist
-        run: python3 mobile/ios/scripts/check_api_contract.py
       - name: Install oasdiff (pinned, checksum verified)
         run: |
           curl -fsSLo oasdiff.tgz \

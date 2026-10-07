@@ -579,7 +579,7 @@ function PushSection() {
           <Field
             label="Relay address"
             htmlFor="push-relay"
-            hint="Leave this as it is unless you run your own relay for an app you built yourself."
+            hint="Leave this as it is: the MeshHome app only works with the published relay."
             error={save.error instanceof Error ? save.error.message : null}
           >
             <div className="flex gap-2">

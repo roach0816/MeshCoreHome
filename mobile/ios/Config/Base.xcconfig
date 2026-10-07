@@ -1,4 +1,0 @@
-// Shared settings. Your Apple team ID goes in Local.xcconfig (not committed):
-//   cp Config/Local.xcconfig.example Config/Local.xcconfig
-#include? "Local.xcconfig"
-CODE_SIGN_STYLE = Automatic

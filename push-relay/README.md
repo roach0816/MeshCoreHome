@@ -43,8 +43,7 @@ App Store. `GET /health` answers `{ "ok": true }`.
 ## Deploying
 
 The relay only works with the push key of the team that publishes the app, so there is one relay
-for the published app (`https://push.meshhome.app`). If you build the app yourself under your own
-Apple team, deploy your own relay with your own key and enter its address in MeshHome.
+for the published app (`https://push.meshhome.app`). These are the steps its maintainer follows.
 
 1. Create an APNs key: developer.apple.com → Certificates, IDs & Profiles → **Keys** → **+** →
    **Apple Push Notifications service (APNs)**. Download the `.p8` file and note its Key ID.

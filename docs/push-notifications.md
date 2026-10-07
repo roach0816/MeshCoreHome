@@ -42,12 +42,12 @@ MeshHome server ──(encrypted)──▶ relay ──▶ Apple (APNs) ──�
 - **When the relay is unavailable:** nothing else is affected. The app and web interface work as
   before, and the phone shows the messages when the app opens.
 
-## Running your own relay
+## The relay's address
 
-The relay only works with the push key of the Apple team that publishes the app, so the published
-app needs the published relay. If you build the app yourself under your own Apple team, you can
-deploy your own relay with your own key ([push-relay/README.md](../push-relay/README.md)) and enter
-its address under Settings → Push notifications → **Relay address**.
+The relay only works with the push key of the Apple team that publishes the app, so the app needs
+the published relay, `https://push.meshhome.app`. Leave Settings → Push notifications → **Relay
+address** as it is. The relay's code is public so anyone can check what it does
+([push-relay/](../push-relay/)).
 
 ## Troubleshooting
 
