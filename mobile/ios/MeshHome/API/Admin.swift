@@ -184,7 +184,7 @@ extension APIClient {
     func download(_ path: String, as name: String) async throws -> URL {
         var req = URLRequest(url: base.appending(path: path))
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let (tmp, response) = try await URLSession.shared.download(for: req)
+        let (tmp, response) = try await CertificateTrust.session.download(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw APIError(status: status, message: "Download failed (HTTP \(status))") }
         let dest = FileManager.default.temporaryDirectory.appending(path: name)
@@ -201,7 +201,7 @@ extension APIClient {
         req.setValue("meshhome", forHTTPHeaderField: "X-Requested-With")
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         let delegate = UploadProgress(progress)
-        let (data, response) = try await URLSession.shared.upload(for: req, fromFile: file, delegate: delegate)
+        let (data, response) = try await CertificateTrust.session.upload(for: req, fromFile: file, delegate: delegate)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         struct Out: Decodable { let uploadId: String }
         guard (200..<300).contains(status) else {

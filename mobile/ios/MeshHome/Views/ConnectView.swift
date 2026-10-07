@@ -11,6 +11,8 @@ struct ConnectView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var scanning = false
+    /// A server whose certificate iOS doesn't trust: its fingerprint, for trust on first use.
+    @State private var untrusted: (url: URL, fingerprint: String)?
     @FocusState private var focus: Field?
 
     private enum Field { case address, username, password }
@@ -62,6 +64,22 @@ struct ConnectView: View {
                     }
                 }
 
+                if let u = untrusted {
+                    Section {
+                        Text("This server's certificate isn't one your iPhone trusts (it may be self-signed). Only trust it if this fingerprint matches the certificate on your server.")
+                        Text(u.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
+                        Button("Trust this certificate") {
+                            CertificateTrust.shared.pin(u.fingerprint, for: u.url)
+                            untrusted = nil
+                            Task { await check() }
+                        }
+                        Button("Cancel", role: .cancel) { untrusted = nil }
+                    } header: {
+                        Text("Unrecognised certificate")
+                    } footer: {
+                        Text("On the server: openssl x509 -in <certificate file> -noout -fingerprint -sha256")
+                    }
+                }
                 if let error {
                     Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                 }
@@ -131,12 +149,18 @@ struct ConnectView: View {
         defer { busy = false }
         var lastError: Error?
         for url in candidates() {
+            CertificateTrust.shared.clearRejected(for: url)
             do {
                 meta = try await AppModel.check(url)
                 server = url
                 focus = .username
                 return
             } catch {
+                // An untrusted certificate: ask, rather than quietly falling back to plain HTTP.
+                if url.scheme == "https", let fp = CertificateTrust.shared.rejectedFingerprint(for: url) {
+                    untrusted = (url, fp)
+                    return
+                }
                 lastError = error
             }
         }
@@ -158,8 +182,6 @@ struct ConnectView: View {
         if let e = error as? APIError { return e.message }
         if let e = error as? URLError {
             switch e.code {
-            case .appTransportSecurityRequiresSecureConnection:
-                return "Plain HTTP is only allowed to local-network addresses. Use HTTPS, or the server's IP address."
             case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
                  .serverCertificateHasBadDate:
                 return "The server's HTTPS certificate isn't trusted by this device."

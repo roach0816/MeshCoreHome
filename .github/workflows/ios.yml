@@ -3,9 +3,9 @@ name: iOS
 on:
   push:
     branches: [main]
-    paths: ["mobile/ios/**", ".github/workflows/ios.yml"]
+    paths: ["mobile/ios/**", "backend/openapi.json", ".github/workflows/ios.yml"]
   pull_request:
-    paths: ["mobile/ios/**", ".github/workflows/ios.yml"]
+    paths: ["mobile/ios/**", "backend/openapi.json", ".github/workflows/ios.yml"]
 
 permissions:
   contents: read
@@ -22,6 +22,8 @@ jobs:
         working-directory: mobile/ios
     steps:
       - uses: actions/checkout@v7
+      - name: Every API call the app makes exists in the server's API
+        run: python3 scripts/check_api_contract.py
       - name: Generate the Xcode project
         run: |
           brew install xcodegen

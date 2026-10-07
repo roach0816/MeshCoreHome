@@ -4,6 +4,7 @@ import SwiftUI
 struct ThreadView: View {
     let conversation: Conversation
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var messages: [Message] = []
     @State private var hasMore = false
     @State private var loading = true
@@ -115,7 +116,9 @@ struct ThreadView: View {
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)  // the conversation gets the whole screen
+        // iPhone: the conversation gets the whole screen. iPad keeps its tabs: the thread is always
+        // on screen there, beside the list.
+        .toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
         .sheet(item: $infoFor) { m in MessageInfoView(message: m, kind: conversation.kind) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -291,27 +294,35 @@ private struct MessageBubble: View {
     var body: some View {
         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 2) {
             if !message.isOutgoing, kind == .channel, let who = message.senderLabel {
-                Text(who).font(.caption.weight(.semibold)).foregroundStyle(.tint)
+                Text(who).font(.caption.weight(.semibold)).foregroundStyle(Palette.bubble)
             }
             Text(message.body)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .foregroundStyle(message.isOutgoing ? .white : .primary)
-                .background(message.isOutgoing ? Color.accentColor : Color(.secondarySystemBackground),
+                .background(message.isOutgoing ? Palette.bubble : Color(.secondarySystemBackground),
                             in: RoundedRectangle(cornerRadius: 16))
-            HStack(spacing: 4) {
-                Text(message.createdAt.formatted(date: .omitted, time: .shortened))
-                if message.isOutgoing {
-                    Text("· \(stateLabel(message.state, kind: kind))")
-                        .foregroundStyle(["failed", "expired"].contains(message.state) ? .red : .secondary)
-                }
-                if message.isSimulated { Text("· SIM").foregroundStyle(.orange) }
-            }
-            .font(.caption2).foregroundStyle(.secondary)
+            statusLine
+                .font(.caption2)
+                .multilineTextAlignment(message.isOutgoing ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
         .padding(message.isOutgoing ? .leading : .trailing, 48)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private extension MessageBubble {
+    /// "4:45 PM · Sent by radio · SIM" as one piece of text, so at large sizes it wraps like a
+    /// sentence instead of breaking into columns.
+    var statusLine: Text {
+        var t = Text(message.createdAt.formatted(date: .omitted, time: .shortened)).foregroundStyle(.secondary)
+        if message.isOutgoing {
+            let failed = ["failed", "expired"].contains(message.state)
+            t = t + Text(" · \(stateLabel(message.state, kind: kind))").foregroundStyle(failed ? Color.red : Color.secondary)
+        }
+        if message.isSimulated { t = t + Text(" · SIM").foregroundStyle(Palette.simulated) }
+        return t
     }
 }
 

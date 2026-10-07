@@ -13,14 +13,7 @@ struct APIClient: Sendable {
     let base: URL
     var token: String?
 
-    private static let session: URLSession = {
-        let c = URLSessionConfiguration.default
-        c.httpCookieStorage = nil
-        c.httpShouldSetCookies = false
-        c.timeoutIntervalForRequest = 30
-        c.waitsForConnectivity = false
-        return URLSession(configuration: c)
-    }()
+    private static var session: URLSession { CertificateTrust.session }
 
     func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         try await request("GET", path, query: query, body: Optional<Int>.none)

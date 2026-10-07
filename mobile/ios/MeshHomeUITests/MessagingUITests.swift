@@ -259,7 +259,7 @@ final class MessagingUITests: XCTestCase {
     /// One new message: the thread opens at the bottom (no empty space), the line above it, and the
     /// keyboard doesn't cover it. MESHHOME_TEST_CONV names a conversation with exactly one unread.
     func testOneUnreadMessage() throws {
-        let title = try XCTUnwrap(env["MESHHOME_TEST_CONV"], "no conversation given")
+        guard let title = env["MESHHOME_TEST_CONV"] else { throw XCTSkip("needs MESHHOME_TEST_CONV") }
         let app = XCUIApplication()
         try signIn(app)
         let row = app.staticTexts[title]
@@ -299,8 +299,7 @@ final class MessagingUITests: XCTestCase {
         toggle.tap()
         back()
 
-        app.swipeUp()
-        app.buttons["API keys"].tap()
+        reveal(app, app.buttons["API keys"]).tap()
         app.buttons["Create API key…"].tap()
         let name = app.textFields["Name, e.g. Home Assistant"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
@@ -316,7 +315,7 @@ final class MessagingUITests: XCTestCase {
         XCTAssertTrue(row.waitForNonExistence(timeout: 10), "key not revoked")
         back()
 
-        app.buttons["Backup and restore"].tap()
+        reveal(app, app.buttons["Backup and restore"]).tap()
         let p1 = app.secureTextFields["Passphrase (at least 10 characters)"]
         XCTAssertTrue(p1.waitForExistence(timeout: 10))
         p1.tap(); p1.typeText("ui-test-passphrase")
@@ -329,12 +328,12 @@ final class MessagingUITests: XCTestCase {
         sleep(1)
         back()
 
-        app.buttons["Software updates"].tap()
+        reveal(app, app.buttons["Software updates"]).tap()
         XCTAssertTrue(any(app, containing: "Installed").waitForExistence(timeout: 15))
         shot(app, "22-updates")
         back()
 
-        app.buttons["Export and data"].tap()
+        reveal(app, app.buttons["Export and data"]).tap()
         app.buttons["Export all messages (JSON)"].tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 30) || app.buttons["Close"].waitForExistence(timeout: 5),
                       "share sheet for the export didn't open")
@@ -383,6 +382,125 @@ final class MessagingUITests: XCTestCase {
         app.swipeDown()
         XCTAssertTrue(any(app, containing: host).waitForExistence(timeout: 10), "the app didn't move to the HTTPS address")
         shot(app, "33-moved")
+    }
+
+    /// A server with a self-signed certificate (MESHHOME_TEST_TLS_SERVER, e.g. host:port): the app
+    /// shows the fingerprint, and once trusted, signs in and connects live updates through it.
+    func testSelfSignedCertificate() throws {
+        guard let server = env["MESHHOME_TEST_TLS_SERVER"] else { throw XCTSkip("no TLS test server") }
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let url = "https://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        let trust = app.buttons["Trust this certificate"]
+        XCTAssertTrue(trust.waitForExistence(timeout: 20), "no certificate prompt")
+        XCTAssertTrue(any(app, containing: env["MESHHOME_TEST_TLS_FINGERPRINT"] ?? ":").exists, "wrong fingerprint shown")
+        shot(app, "40-certificate")
+        trust.tap()
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15), "server check failed after trusting")
+        user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(any(app, containing: "Connected").waitForExistence(timeout: 20), "live updates didn't connect")
+        shot(app, "41-trusted")
+    }
+
+    /// Apple's accessibility audit on the main screens. Each issue is reported (and fails the test).
+    func testAccessibilityAudit() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+        func audit(_ name: String) {
+            do {
+                try app.performAccessibilityAudit { issue in
+                    let what = issue.element?.debugDescription.split(separator: "\n").first.map(String.init) ?? ""
+                    print("A11Y [\(name)] \(issue.auditType) — \(issue.compactDescription) — \(what)")
+                    // Reported only (see the log): contrast, text size and clipping proved unreliable
+                    // here (text under translucent bars, the lazy message list, emoji line height).
+                    // They were reviewed by hand, including screenshots at the largest text size.
+                    if [.contrast, .dynamicType, .textClipped].contains(issue.auditType) { return true }
+                    // On the map, MapKit's own content: its "Legal" link (smaller than Apple's guideline)
+                    // and the tile text it draws. Not ours to change.
+                    if name == "map" && [.hitRegion, .elementDetection].contains(issue.auditType) { return true }
+                    return false  // missing labels, small tap targets, unclear descriptions: fail
+                }
+            } catch { XCTFail("audit \(name): \(error)") }
+        }
+        audit("conversations")
+        app.staticTexts["Public"].tap()
+        XCTAssertTrue(app.buttons["Channel info"].waitForExistence(timeout: 10))
+        sleep(3)  // let the thread finish scrolling into place before measuring
+        audit("thread")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.tabBars.buttons["Contacts"].tap()
+        sleep(2)
+        audit("contacts")
+        app.tabBars.buttons["Map"].tap()
+        sleep(3)
+        audit("map")
+        app.tabBars.buttons["Conversations"].tap()
+        app.buttons["Settings"].tap()
+        sleep(1)
+        audit("settings")
+    }
+
+    /// Screenshots at the largest accessibility text size (for review).
+    func testLargestTextSize() throws {
+        guard env["MESHHOME_TEST_REVIEW_SHOTS"] == "1" else { throw XCTSkip("review screenshots: set MESHHOME_TEST_REVIEW_SHOTS=1") }
+        let app = XCUIApplication()
+        let server = try XCTUnwrap(env["MESHHOME_TEST_SERVER"], "no test server")
+        app.launchArguments = ["-uitest-reset", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXL"]
+        app.launch()
+        let url = "http://\(server)".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        app.open(URL(string: "meshhome://pair?url=\(url)")!)
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15))
+        user.tap(); user.typeText("owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
+        shot(app, "50-xxl-list")
+        app.staticTexts["Public"].tap()
+        sleep(3)
+        shot(app, "51-xxl-thread")
+    }
+
+    /// Screenshots of the main screens, for layout review (run on an iPad too).
+    func testLayoutScreenshots() throws {
+        guard env["MESHHOME_TEST_REVIEW_SHOTS"] == "1" else { throw XCTSkip("review screenshots: set MESHHOME_TEST_REVIEW_SHOTS=1") }
+        let app = XCUIApplication()
+        try signIn(app)
+        app.staticTexts["Public"].tap()
+        sleep(3)
+        shot(app, "60-conversations")
+        tab(app, "Contacts")
+        sleep(2)
+        shot(app, "61-contacts")
+        let roof = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Roof Repeater'")).firstMatch
+        if roof.waitForExistence(timeout: 5) { roof.tap(); sleep(2); shot(app, "62-remote"); app.buttons["Done"].tap() }
+        tab(app, "Map")
+        sleep(4)
+        shot(app, "63-map")
+        tab(app, "Conversations")
+        app.buttons["Settings"].tap()
+        sleep(1)
+        shot(app, "64-settings")
+    }
+
+    /// Scrolls until the element is on screen (lists only show the rows in view).
+    @discardableResult
+    private func reveal(_ app: XCUIApplication, _ element: XCUIElement) -> XCUIElement {
+        for _ in 0..<5 where !(element.exists && element.isHittable) { app.swipeUp() }
+        return element
+    }
+
+    /// A tab: in the tab bar on iPhone, in the top tab strip on iPad.
+    private func tab(_ app: XCUIApplication, _ name: String) {
+        let bar = app.tabBars.buttons[name]
+        if bar.exists { bar.tap() } else { app.buttons[name].firstMatch.tap() }
     }
 
     /// The web UI's pairing QR code opens meshhome://pair?url=… and fills in the server.

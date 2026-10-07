@@ -59,6 +59,9 @@ final class AppModel {
            let saved = UserDefaults.standard.string(forKey: Self.serverKey) {
             Keychain.delete(for: saved)  // UI tests start signed out
         }
+        if ProcessInfo.processInfo.arguments.contains("-uitest-reset") {
+            UserDefaults.standard.removeObject(forKey: "pinnedCertificates")  // and trust no certificates yet
+        }
         if let saved = UserDefaults.standard.string(forKey: Self.serverKey), let url = URL(string: saved),
            let token = Keychain.token(for: saved) {
             conversations = Cache.load([Conversation].self, "conversations") ?? []

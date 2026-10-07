@@ -48,7 +48,7 @@ final class LiveUpdates {
             components.scheme = client.base.scheme == "https" ? "wss" : "ws"
             var req = URLRequest(url: components.url!)
             if let token = client.token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-            let ws = URLSession.shared.webSocketTask(with: req)
+            let ws = CertificateTrust.session.webSocketTask(with: req)
             task = ws
             ws.resume()
             do {

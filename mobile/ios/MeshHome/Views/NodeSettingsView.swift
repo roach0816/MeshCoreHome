@@ -16,7 +16,7 @@ struct NodeSettingsView: View {
             if let c = config {
                 Section {
                     LabeledContent("Firmware", value: [c.firmware.version, c.firmware.model].compactMap { $0 }.joined(separator: " · "))
-                    if c.simulated { Text("Simulated radio").foregroundStyle(.orange) }
+                    if c.simulated { Text("Simulated radio").foregroundStyle(Palette.simulated) }
                 }
                 Section("Settings") {
                     link("Identity and location", "person.crop.circle") { IdentitySection(config: c, save: save) }

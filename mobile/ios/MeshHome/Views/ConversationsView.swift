@@ -162,6 +162,7 @@ private struct ThreadContainer: View {
 
 private struct ConversationRow: View {
     let conversation: Conversation
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 12) {
@@ -171,17 +172,22 @@ private struct ConversationRow: View {
                 .frame(width: 40, height: 40)
                 .background(.tint.opacity(0.15), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
+                // At accessibility text sizes the name gets its own lines instead of being cut short.
+                let large = typeSize.isAccessibilitySize
                 HStack {
-                    Text(conversation.title).font(.headline).lineLimit(1)
+                    Text(conversation.title).font(.headline).lineLimit(large ? 3 : 1)
                     if conversation.favorite { Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow) }
                     if conversation.muted { Image(systemName: "bell.slash").font(.caption).foregroundStyle(.secondary) }
                     Spacer()
-                    if let date = conversation.lastMessageAt {
+                    if !large, let date = conversation.lastMessageAt {
                         Text(listTime(date)).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                if large, let date = conversation.lastMessageAt {
+                    Text(listTime(date)).font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
-                    Text(previewText).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(previewText).font(.subheadline).foregroundStyle(.secondary).lineLimit(large ? 2 : 1)
                     Spacer()
                     if conversation.unread > 0 {
                         Text("\(conversation.unread)")

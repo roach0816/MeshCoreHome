@@ -45,7 +45,7 @@ struct MeshMapView: View {
                                 .font(.caption).padding(.horizontal, 10).padding(.vertical, 4)
                                 .background(.regularMaterial, in: Capsule())
                         }
-                        Text(data.tiles.attribution).font(.caption2).foregroundStyle(.secondary)
+                        Text(data.tiles.attribution).font(.caption2).foregroundStyle(.primary)
                             .padding(.horizontal, 6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
                     }
                     .padding(.bottom, 8)

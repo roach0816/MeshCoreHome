@@ -26,7 +26,7 @@ struct RadioConnectionView: View {
                     if let name = st.radio.radioName { LabeledContent("Radio", value: name) }
                     LabeledContent("Messages", value: "\(st.radio.received) received · \(st.radio.sent) sent")
                     if let e = st.radio.lastError { Text(e).font(.caption).foregroundStyle(.red) }
-                    if let w = st.radio.storageWarning { Text(w).font(.caption).foregroundStyle(.orange) }
+                    if let w = st.radio.storageWarning { Text(w).font(.caption).foregroundStyle(Palette.simulated) }
                 }
             }
             Section {

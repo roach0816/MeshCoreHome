@@ -37,8 +37,10 @@ targets:
       path: MeshHome/Info.plist
       properties:
         NSAppTransportSecurity:
-          # Plain HTTP only to local-network addresses (IPs and .local names); everything else needs HTTPS.
-          NSAllowsLocalNetworking: true
+          # The app talks only to the user's own MeshHome server, at an address they enter: on the
+          # LAN or over a VPN, over HTTPS (possibly with a self-signed certificate the user trusts
+          # explicitly, see CertificateTrust.swift) or plain HTTP. ATS can't know those addresses.
+          NSAllowsArbitraryLoads: true
         CFBundleURLTypes:
           - CFBundleURLName: app.meshhome.pair
             CFBundleURLSchemes: [meshhome]
