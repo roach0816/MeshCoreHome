@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSignOut = false
+    @AppStorage(MapPreference.key) private var serverTiles = false
 
     private var native: Bool { model.features.contains("network_settings") }
 
@@ -46,10 +47,11 @@ struct SettingsView: View {
                     Toggle("Unread count on app icon", isOn: Binding(
                         get: { model.badgeEnabled },
                         set: { on in if on { Task { await model.requestBadge() } } else { model.badgeEnabled = false } }))
+                    Toggle("Map from MeshHome's tile server", isOn: $serverTiles)
                 } header: {
                     Text("This phone")
                 } footer: {
-                    Text("Updated while MeshHome is open. App version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—").")
+                    Text("The badge is updated while MeshHome is open. The map uses Apple Maps unless you choose the tile server set under Map. App version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—").")
                 }
                 Section {
                     Button("Sign out", role: .destructive) { confirmSignOut = true }

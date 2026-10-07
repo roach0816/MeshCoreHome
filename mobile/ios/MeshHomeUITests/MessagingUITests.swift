@@ -33,7 +33,7 @@ final class MessagingUITests: XCTestCase {
         shot(app, "2-conversations")
         publicRow.tap()
 
-        let composer = app.textFields["Message Public"]
+        let composer = app.textViews["Message Public"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         let text = "Hello from the iOS app \(Int.random(in: 1000...9999))"
         composer.tap()
@@ -63,7 +63,7 @@ final class MessagingUITests: XCTestCase {
         XCTAssertTrue(tracker.waitForExistence(timeout: 10), "contacts didn't load")
         shot(app, "5-contacts")
         tracker.tap()
-        XCTAssertTrue(app.textFields["Message"].waitForExistence(timeout: 10), "contact didn't open a conversation")
+        XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: 10), "contact didn't open a conversation")
     }
 
     /// Settings → My contact code, then Contacts → + → Enter manually.
@@ -251,7 +251,7 @@ final class MessagingUITests: XCTestCase {
         sleep(2)
         XCTAssertTrue(divider.isHittable, "the unread divider is off screen")
         shot(app, "15-unread")
-        app.textFields["Message #home-sim"].tap()
+        app.textViews["Message #home-sim"].tap()
         sleep(2)
         shot(app, "15b-keyboard")
         app.navigationBars["#home-sim"].tap()  // away from the keyboard
@@ -418,6 +418,32 @@ final class MessagingUITests: XCTestCase {
         app.buttons["Settings"].tap()
         XCTAssertTrue(any(app, containing: "Connected").waitForExistence(timeout: 20), "live updates didn't connect")
         shot(app, "41-trusted")
+    }
+
+    /// The on-screen keyboard's Return adds a line (a hardware keyboard's Return sends, but the
+    /// simulator can't press a hardware Return in a text view, so that part is checked on a device).
+    func testOnScreenReturnAddsLine() throws {
+        let app = XCUIApplication()
+        try signIn(app)
+        let publicRow = app.staticTexts["Public"]
+        XCTAssertTrue(publicRow.waitForExistence(timeout: 15))
+        publicRow.tap()
+        XCTAssertTrue(app.textViews["Message Public"].waitForExistence(timeout: 10))
+        let composer = app.descendants(matching: .any)["composer"]
+        composer.tap()
+        let soft = "Soft \(Int.random(in: 1000...9999))"
+        composer.typeText(soft)
+        let returnKey = app.keyboards.buttons["return"]
+        XCTAssertTrue(returnKey.waitForExistence(timeout: 5), "no on-screen keyboard")
+        returnKey.tap()
+        composer.typeText("next")
+        XCTAssertEqual(composer.value as? String, "\(soft)\nnext", "the on-screen Return should add a line")
+        XCTAssertFalse(bubble(app, soft).exists, "the on-screen Return sent the message")
+        shot(app, "46-onscreen-return")
+    }
+
+    private func bubble(_ app: XCUIApplication, _ text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", text)).firstMatch
     }
 
     /// LAN discovery: a server advertised as "_meshhome._tcp" (run `dns-sd -R` on the Mac; the

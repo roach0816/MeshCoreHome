@@ -1,8 +1,13 @@
 import MapKit
 import SwiftUI
 
-/// A map drawn from MeshHome's configured tile server (Settings → Map on the server), so it can be
-/// fully self-hosted. Apple's own map tiles are not shown.
+/// This device's map choice (Settings → This phone).
+enum MapPreference {
+    static let key = "map.serverTiles"
+}
+
+/// The map: Apple Maps, or (Settings → This phone) the tile server configured in MeshHome
+/// (Settings → Map), drawn over MapKit in place of Apple's tiles so it can be fully self-hosted.
 struct TileMapView: UIViewRepresentable {
     struct Pin: Identifiable, Equatable {
         let id: String
@@ -17,6 +22,8 @@ struct TileMapView: UIViewRepresentable {
     }
 
     let tiles: MapConfig
+    /// Draw MeshHome's tile server instead of Apple Maps.
+    var serverTiles = false
     var pins: [Pin] = []
     /// The region to show first; nil fits the pins.
     var initialCenter: CLLocationCoordinate2D?
@@ -29,11 +36,7 @@ struct TileMapView: UIViewRepresentable {
         map.delegate = context.coordinator
         map.pointOfInterestFilter = .excludingAll
         map.showsCompass = true
-        let template = tiles.tileUrl.replacingOccurrences(of: "{s}", with: "a")
-        let overlay = MKTileOverlay(urlTemplate: template)
-        overlay.canReplaceMapContent = true
-        overlay.maximumZ = tiles.maxZoom
-        map.addOverlay(overlay, level: .aboveLabels)
+        syncTiles(map)
         map.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "pin")
         if let c = initialCenter {
             map.setRegion(MKCoordinateRegion(center: c, latitudinalMeters: 3000, longitudinalMeters: 3000), animated: false)
@@ -44,6 +47,7 @@ struct TileMapView: UIViewRepresentable {
 
     func updateUIView(_ map: MKMapView, context: Context) {
         context.coordinator.parent = self
+        syncTiles(map)
         let current = map.annotations.compactMap { $0 as? PinAnnotation }
         if current.map(\.pin) != pins {
             map.removeAnnotations(current)
@@ -53,6 +57,20 @@ struct TileMapView: UIViewRepresentable {
                 map.showAnnotations(map.annotations, animated: false)
             }
         }
+    }
+
+    /// Adds or removes the tile server's layer to match `serverTiles` (and its current address).
+    private func syncTiles(_ map: MKMapView) {
+        let template = tiles.tileUrl.replacingOccurrences(of: "{s}", with: "a")
+        let current = map.overlays.compactMap { $0 as? MKTileOverlay }
+        if serverTiles, current.count == 1, current[0].urlTemplate == template, current[0].maximumZ == tiles.maxZoom { return }
+        if !serverTiles, current.isEmpty { return }
+        map.removeOverlays(current)
+        guard serverTiles else { return }
+        let overlay = MKTileOverlay(urlTemplate: template)
+        overlay.canReplaceMapContent = true
+        overlay.maximumZ = tiles.maxZoom
+        map.addOverlay(overlay, level: .aboveLabels)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }

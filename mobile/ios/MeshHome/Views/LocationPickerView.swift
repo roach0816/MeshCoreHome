@@ -10,6 +10,7 @@ struct LocationPickerView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var tiles: MapConfig?
+    @AppStorage(MapPreference.key) private var serverTiles = false
     @State private var center: CLLocationCoordinate2D?
     @State private var locator = PhoneLocation()
 
@@ -17,7 +18,7 @@ struct LocationPickerView: View {
         NavigationStack {
             ZStack {
                 if let tiles {
-                    TileMapView(tiles: tiles, initialCenter: start ?? locator.last, onCenter: { center = $0 })
+                    TileMapView(tiles: tiles, serverTiles: serverTiles, initialCenter: start ?? locator.last, onCenter: { center = $0 })
                         .id(locator.last.map { "\($0.latitude),\($0.longitude)" } ?? "map")
                     Image(systemName: "plus").font(.system(size: 30, weight: .light)).allowsHitTesting(false)
                 } else {

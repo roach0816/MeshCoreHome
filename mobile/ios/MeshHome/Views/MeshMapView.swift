@@ -5,6 +5,7 @@ import SwiftUI
 struct MeshMapView: View {
     @Environment(AppModel.self) private var model
     @State private var data: MapData?
+    @AppStorage(MapPreference.key) private var serverTiles = false
     @State private var error: String?
     @State private var kinds: Set<Int> = [1, 2, 3, 4]
     @State private var heard: Heard = .all
@@ -37,7 +38,7 @@ struct MeshMapView: View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 if let data {
-                    TileMapView(tiles: data.tiles, pins: pins) { selected = $0 }
+                    TileMapView(tiles: data.tiles, serverTiles: serverTiles, pins: pins) { selected = $0 }
                         .ignoresSafeArea(edges: .horizontal)
                     VStack(spacing: 4) {
                         if data.withoutLocation > 0 {
@@ -45,10 +46,12 @@ struct MeshMapView: View {
                                 .font(.caption).padding(.horizontal, 10).padding(.vertical, 4)
                                 .background(.regularMaterial, in: Capsule())
                         }
-                        Text(data.tiles.attribution).font(.caption2).foregroundStyle(.primary)
-                            .padding(.horizontal, 6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        if serverTiles {  // Apple Maps shows its own attribution
+                            Text(data.tiles.attribution).font(.caption2).foregroundStyle(.primary)
+                                .padding(.horizontal, 6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        }
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, serverTiles ? 8 : 40)  // clear of Apple Maps' logo and Legal link
                 } else if let error {
                     ContentUnavailableView("Map unavailable", systemImage: "map", description: Text(error))
                 } else {

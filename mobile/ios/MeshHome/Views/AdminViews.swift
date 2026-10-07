@@ -246,7 +246,7 @@ struct MapSettingsView: View {
                 TextField("Attribution", text: $attribution)
                 Stepper("Maximum zoom \(maxZoom)", value: $maxZoom, in: 1...22)
             } header: { Text("Tile server") } footer: {
-                Text("The map loads tiles straight from this server, which sees your IP address and the areas you view. A self-hosted tile server avoids third parties.")
+                Text("The web map loads tiles straight from this server, which sees your IP address and the areas you view. A self-hosted tile server avoids third parties. The iOS app uses Apple Maps unless “Map from MeshHome's tile server” is on in its Settings.")
             }
             Section {
                 Button("Save") {

@@ -24,7 +24,7 @@ struct ThreadView: View {
     @State private var showInfo = false
     @State private var contactID: String?
     @State private var deleting: Message?
-    @FocusState private var composing: Bool
+    @State private var composing = false
 
     /// The first message you hadn't read when you opened the thread (from someone else).
     private var firstUnreadID: String? {
@@ -164,6 +164,9 @@ struct ThreadView: View {
     // MARK: Composer
 
     private var bytes: Int { draft.utf8.count }
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && bytes <= conversation.maxBytes && !sending
+    }
 
     private func composer(_ proxy: ScrollViewProxy) -> some View {
         VStack(spacing: 4) {
@@ -171,16 +174,18 @@ struct ThreadView: View {
                 Text(error).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(conversation.kind == .channel ? "Message \(conversation.title)" : "Message", text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($composing)
+                // Return on a hardware keyboard sends; the on-screen keyboard's Return adds a line.
+                ComposerField(placeholder: conversation.kind == .channel ? "Message \(conversation.title)" : "Message",
+                              text: $draft, focused: $composing) {
+                    if canSend { Task { await send() } }
+                }
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.background, in: RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18).stroke(.quaternary))
                 Button { Task { await send() } } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || bytes > conversation.maxBytes || sending)
+                .disabled(!canSend)
                 .accessibilityLabel("Send")
             }
             if bytes > conversation.maxBytes * 3 / 4 {
