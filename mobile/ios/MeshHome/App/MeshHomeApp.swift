@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct MeshHomeApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -14,6 +15,7 @@ struct MeshHomeApp: App {
                 }
             }
             .environment(model)
+            .onAppear { delegate.model = model }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { model.appBecameActive() } else { model.appResignedActive() }
             }

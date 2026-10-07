@@ -442,6 +442,33 @@ final class MessagingUITests: XCTestCase {
         shot(app, "46-onscreen-return")
     }
 
+    /// Push sign-up through Settings → Notifications, against a server whose relay is set (opt in
+    /// with MESHHOME_TEST_PUSH). iOS asks for permission; the phone gets a ticket from the relay and
+    /// signs up with the server. Delivery itself needs the relay's Apple key.
+    func testPushSignUp() throws {
+        guard env["MESHHOME_TEST_PUSH"] != nil else { throw XCTSkip("needs a server with push turned on") }
+        let app = XCUIApplication()
+        addUIInterruptionMonitor(withDescription: "notification permission") { alert in
+            let allow = alert.buttons["Allow"]
+            if allow.exists { allow.tap(); return true }
+            return false
+        }
+        try signIn(app)
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        reveal(app, app.buttons["Notifications"]).tap()
+        let toggle = app.switches["Push notifications"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "no push section (server feature or setting off?)")
+        toggle.switches.firstMatch.tap()
+        // The permission alert belongs to SpringBoard.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 5) { allow.tap() }
+        app.tap()  // lets the interruption monitor run if the alert came up in the app
+        XCTAssertTrue(any(app, containing: "This phone will get notifications").waitForExistence(timeout: 30), "sign-up failed")
+        shot(app, "50-push-on")
+    }
+
     private func bubble(_ app: XCUIApplication, _ text: String) -> XCUIElement {
         app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", text)).firstMatch
     }

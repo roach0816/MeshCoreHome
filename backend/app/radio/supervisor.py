@@ -27,7 +27,7 @@ from app.radio.base import IncomingMessage, RadioAdapter, RadioChannel, RadioErr
 from app.radio.meshcore_tcp import MeshCoreTcpRadio
 from app.radio.simulated import SimulatedRadio
 from app.realtime import hub
-from app.services import app_settings, bot, messaging, radio_hat
+from app.services import app_settings, bot, messaging, push, radio_hat
 from app.services.messaging import States
 from app.services.msg_paths import PathTracker
 
@@ -518,6 +518,8 @@ class RadioSupervisor:
                         kind=msg.kind,
                         suppressed=m.suppressed,
                     )
+                    if not m.suppressed:
+                        push.enqueue(m.id)
                     if msg.kind == "dm" and not m.suppressed and bot.parse(msg.text):
                         task = asyncio.create_task(self._run_bot(m.id), name="bot")
                         self._bot_tasks.add(task)

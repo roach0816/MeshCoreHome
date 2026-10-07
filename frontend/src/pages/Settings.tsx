@@ -5,6 +5,7 @@ import {
   History,
   ChevronLeft,
   Bot,
+  BellRing,
   CloudSun,
   Download,
   Pause,
@@ -66,6 +67,7 @@ export function Settings() {
           <RadioSection />
           <DeviceSection />
           <NotificationsSection />
+          <PushSection />
           <BotSection />
           <MapSection />
           <AppearanceSection />
@@ -526,6 +528,81 @@ const BOT_COMMANDS: [string, string][] = [
   ["/weather", "Outdoor temperature, humidity, wind, 24-hour rain and air quality from your weather station (set up below)."],
   ["/help", "The list of commands."],
 ];
+
+type PushSettings = { enabled: boolean; relay_url: string; devices: number };
+
+function PushSection() {
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["push-settings"], queryFn: () => api<PushSettings>("/api/settings/push") });
+  const [relay, setRelay] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (next: { enabled: boolean; relay_url: string }) =>
+      api<PushSettings>("/api/settings/push", { method: "PUT", json: next }),
+    onSuccess: (v) => {
+      qc.setQueryData(["push-settings"], v);
+      setRelay(null);
+    },
+  });
+  const c = cfg.data;
+  const relayValue = relay ?? c?.relay_url ?? "";
+  return (
+    <Section
+      title="Push notifications"
+      description="Lets the MeshHome iPhone and iPad app show new messages even when it's closed. Each phone turns them on in the app and chooses direct messages, channels or both."
+    >
+      {!c ? (
+        <ErrorText error={cfg.error} />
+      ) : (
+        <>
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={c.enabled}
+              disabled={save.isPending}
+              onChange={(e) => save.mutate({ enabled: e.target.checked, relay_url: relayValue })}
+              className="mt-0.5 size-5 shrink-0 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <BellRing className="size-4 text-muted" aria-hidden /> Allow push notifications
+              </span>
+              <span className="block text-xs text-muted">
+                {c.devices === 1 ? "1 phone is signed up." : `${c.devices} phones are signed up.`}
+              </span>
+            </span>
+          </label>
+          <p className="rounded-lg bg-surface-2 p-3 text-xs text-muted">
+            Apple only delivers notifications signed with the app's key, so they go through the MeshHome relay. Each
+            message is encrypted for the phone before it leaves this server: the relay and Apple see only the phone's
+            push address, an unreadable blob and the time. The relay stores nothing.
+          </p>
+          <Field
+            label="Relay address"
+            htmlFor="push-relay"
+            hint="Leave this as it is unless you run your own relay for an app you built yourself."
+            error={save.error instanceof Error ? save.error.message : null}
+          >
+            <div className="flex gap-2">
+              <Input
+                id="push-relay"
+                value={relayValue}
+                onChange={(e) => setRelay(e.target.value)}
+                spellCheck={false}
+                autoCapitalize="off"
+              />
+              <Button
+                disabled={relay === null || relay === c.relay_url || save.isPending}
+                onClick={() => save.mutate({ enabled: c.enabled, relay_url: relayValue.trim() })}
+              >
+                Save
+              </Button>
+            </div>
+          </Field>
+        </>
+      )}
+    </Section>
+  );
+}
 
 function BotSection() {
   const qc = useQueryClient();

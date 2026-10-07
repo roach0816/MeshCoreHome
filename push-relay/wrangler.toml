@@ -1,0 +1,22 @@
+# MeshHome push relay (see README.md). Secrets are set with `wrangler secret put`, never here.
+name = "meshhome-push-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+BUNDLE_ID = "app.meshhome"
+
+# A custom domain, once its DNS is on Cloudflare (MeshHome's default relay address):
+# routes = [{ pattern = "push.meshhome.app", custom_domain = true }]
+
+# Abuse limits (Cloudflare's rate limiting binding; counted per Cloudflare location).
+[[ratelimits]]
+name = "PUSH_LIMIT"          # per device token
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "REGISTER_LIMIT"      # per client IP
+namespace_id = "1002"
+simple = { limit = 20, period = 60 }

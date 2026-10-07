@@ -3578,6 +3578,160 @@
           }
         }
       }
+    },
+    "/api/settings/push": {
+      "get": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Get Push Settings",
+        "operationId": "get_push_settings_api_settings_push_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSettingsOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Put Push Settings",
+        "operationId": "put_push_settings_api_settings_push_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSettingsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push/device": {
+      "get": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Get Push Device",
+        "operationId": "get_push_device_api_push_device_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushDeviceOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Put Push Device",
+        "description": "This phone signs up for push (or updates its token, key or choices).",
+        "operationId": "put_push_device_api_push_device_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushDeviceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushDeviceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Delete Push Device",
+        "operationId": "delete_push_device_api_push_device_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/push/device/test": {
+      "post": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Test Push Device",
+        "operationId": "test_push_device_api_push_device_test_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushTestOut"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5373,6 +5527,168 @@
           "created_at"
         ],
         "title": "Preview"
+      },
+      "PushConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "relay_url": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Relay Url",
+            "default": "https://push.meshhome.app"
+          }
+        },
+        "type": "object",
+        "title": "PushConfig"
+      },
+      "PushDeviceIn": {
+        "properties": {
+          "platform": {
+            "type": "string",
+            "const": "ios",
+            "title": "Platform"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "production",
+              "development"
+            ],
+            "title": "Environment"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32,200}$",
+            "title": "Token"
+          },
+          "ticket": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\-]{20,128}$",
+            "title": "Ticket"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]{43}=$",
+            "title": "Key"
+          },
+          "dms": {
+            "type": "boolean",
+            "title": "Dms",
+            "default": true
+          },
+          "channels": {
+            "type": "boolean",
+            "title": "Channels",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "platform",
+          "environment",
+          "token",
+          "ticket",
+          "key"
+        ],
+        "title": "PushDeviceIn"
+      },
+      "PushDeviceOut": {
+        "properties": {
+          "registered": {
+            "type": "boolean",
+            "title": "Registered"
+          },
+          "dms": {
+            "type": "boolean",
+            "title": "Dms",
+            "default": true
+          },
+          "channels": {
+            "type": "boolean",
+            "title": "Channels",
+            "default": false
+          },
+          "last_sent_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sent At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registered"
+        ],
+        "title": "PushDeviceOut"
+      },
+      "PushSettingsOut": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "relay_url": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Relay Url",
+            "default": "https://push.meshhome.app"
+          },
+          "devices": {
+            "type": "integer",
+            "title": "Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "devices"
+        ],
+        "title": "PushSettingsOut"
+      },
+      "PushTestOut": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "PushTestOut"
       },
       "RadioConfig": {
         "properties": {

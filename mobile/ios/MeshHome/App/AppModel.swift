@@ -46,7 +46,11 @@ final class AppModel {
     private var sound = NotificationConfig(sound: "all")
     /// Whether the app may set its icon badge (asked for once, from Settings).
     var badgeEnabled = UserDefaults.standard.bool(forKey: "badge") {
-        didSet { UserDefaults.standard.set(badgeEnabled, forKey: "badge"); updateBadge() }
+        didSet {
+            UserDefaults.standard.set(badgeEnabled, forKey: "badge")
+            updateBadge()
+            PushNotifications.shared.setBadge(badgeEnabled)
+        }
     }
 
     private static let serverKey = "server"
@@ -123,6 +127,7 @@ final class AppModel {
 
     private func forget() {
         live.stop()
+        PushNotifications.shared.signedOut()  // the server forgot this phone with its session
         if let server = api?.base.absoluteString { Keychain.delete(for: server) }
         Cache.clear()
         api = nil
@@ -146,6 +151,9 @@ final class AppModel {
         guard let api else { return }
         if me == nil { me = try? await api.me() }
         if let meta = try? await api.meta() { features = Set(meta.features) }
+        if features.contains("push_notifications") {
+            Task { await PushNotifications.shared.refresh(api, badge: badgeEnabled) }
+        }
         if let config = try? await api.notificationConfig() { sound = config }
         await refreshConversations()
     }
@@ -250,6 +258,13 @@ final class AppModel {
         guard enabled else { return }
         AudioServicesPlaySystemSound(1007)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    /// Open a conversation from outside the list (a tapped notification).
+    func open(conversation id: String) {
+        tab = .conversations
+        conversationPath = [id]
+        selectedConversation = id
     }
 
     func requestBadge() async {

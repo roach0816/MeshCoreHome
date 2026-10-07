@@ -211,6 +211,9 @@ struct NotificationSettingsView: View {
 
     var body: some View {
         Form {
+            if model.features.contains("push_notifications") {
+                PushSettingsSections()
+            }
             Section {
                 Picker("Sound for new messages", selection: $sound) {
                     Text("All messages").tag("all")
@@ -219,6 +222,8 @@ struct NotificationSettingsView: View {
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
+            } header: {
+                Text("Sound")
             } footer: {
                 Text("For browsers and this app while open. Conversations can override it (mute).")
             }
@@ -229,6 +234,128 @@ struct NotificationSettingsView: View {
             guard loaded else { return }
             Task { _ = try? await model.api?.saveNotifications(NotificationConfig(sound: v)) }
         }
+    }
+}
+
+/// Push notifications: this phone's sign-up, and the server-wide switch (through the relay).
+private struct PushSettingsSections: View {
+    @Environment(AppModel.self) private var model
+    @State private var server: PushSettings?
+    @State private var device: PushDeviceStatus?
+    @State private var phoneOn = false
+    @State private var dms = true
+    @State private var channels = false
+    @State private var busy = false
+    @State private var result: (String, Bool)?
+    @State private var relayUrl = ""
+
+    private var push: PushNotifications { .shared }
+
+    var body: some View {
+        Section {
+            if server?.enabled == false {
+                Text("Push notifications are turned off for this MeshHome server. Turn them on below.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Toggle("Push notifications", isOn: Binding(get: { phoneOn }, set: { on in Task { await setPhone(on) } }))
+                    .disabled(busy || server == nil)
+                if phoneOn {
+                    Toggle("Direct messages", isOn: Binding(get: { dms }, set: { v in dms = v; Task { await savePrefs() } }))
+                        .disabled(busy)
+                    Toggle("Channels", isOn: Binding(get: { channels }, set: { v in channels = v; Task { await savePrefs() } }))
+                        .disabled(busy)
+                    Button("Send a test notification") { Task { await test() } }.disabled(busy)
+                }
+            }
+            if busy { ProgressView() }
+            ResultText(text: result?.0, ok: result?.1 ?? true)
+            if let e = device?.lastError, result == nil {
+                Text("Last attempt: \(e)").font(.footnote).foregroundStyle(.orange)
+            }
+        } header: {
+            Text("This phone")
+        } footer: {
+            Text("Sender and message, even when MeshHome is closed. A conversation set to alert (or muted) in its info overrides these choices.")
+        }
+        .task { await load() }
+
+        if let server {
+            Section {
+                Toggle("Allow push notifications", isOn: Binding(
+                    get: { server.enabled },
+                    set: { on in Task { await saveServer(enabled: on) } }))
+                TextField("https://push.meshhome.app", text: $relayUrl)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .onSubmit { Task { await saveServer(enabled: server.enabled) } }
+                if let n = server.devices {
+                    LabeledContent("Phones signed up", value: "\(n)")
+                }
+            } header: {
+                Text("Push relay (this server)")
+            } footer: {
+                Text("Apple only delivers notifications signed with the app's key, so they go through the MeshHome relay. Each message is encrypted for the phone before it leaves this server: the relay and Apple see only the phone's push address, an unreadable blob and the time. Nothing is stored.")
+            }
+        }
+    }
+
+    private func load() async {
+        guard let api = model.api else { return }
+        server = try? await api.pushSettings()
+        relayUrl = server?.relayUrl ?? ""
+        device = try? await api.pushDevice()
+        phoneOn = (device?.registered ?? false) && push.wanted
+        if let d = device, d.registered { dms = d.dms; channels = d.channels }
+    }
+
+    private func setPhone(_ on: Bool) async {
+        guard let api = model.api else { return }
+        busy = true; result = nil
+        defer { busy = false }
+        if on {
+            do {
+                device = try await push.enable(api, dms: dms, channels: channels, badge: model.badgeEnabled)
+                phoneOn = true
+                server = try? await api.pushSettings()  // the count of phones signed up
+                result = ("This phone will get notifications.", true)
+            } catch {
+                phoneOn = false
+                result = (error.localizedDescription, false)
+            }
+        } else {
+            await push.disable(api)
+            phoneOn = false
+            device = nil
+            server = try? await api.pushSettings()
+        }
+    }
+
+    private func savePrefs() async {
+        guard let api = model.api, phoneOn else { return }
+        busy = true; result = nil
+        defer { busy = false }
+        do { device = try await push.enable(api, dms: dms, channels: channels, badge: model.badgeEnabled) }
+        catch { result = (error.localizedDescription, false) }
+    }
+
+    private func test() async {
+        guard let api = model.api else { return }
+        busy = true; result = nil
+        defer { busy = false }
+        do {
+            let (ok, error) = try await api.testPush()
+            result = ok ? ("Sent. It should arrive in a few seconds.", true) : (error ?? "The relay didn't accept it.", false)
+        } catch {
+            result = (error.localizedDescription, false)
+        }
+        device = try? await api.pushDevice()
+    }
+
+    private func saveServer(enabled: Bool) async {
+        guard let api = model.api, var s = server else { return }
+        s.enabled = enabled
+        s.relayUrl = relayUrl.trimmingCharacters(in: .whitespaces)
+        do { server = try await api.savePushSettings(s); result = nil }
+        catch { result = (error.localizedDescription, false) }
     }
 }
 

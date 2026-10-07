@@ -11,13 +11,26 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.8.1"
+    MARKETING_VERSION: "0.9.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   MeshHome:
     type: application
     platform: iOS
-    sources: [MeshHome]
+    sources: [MeshHome, Shared]
+    dependencies:
+      - target: MeshHomeNotifications
+    entitlements:
+      path: MeshHome/MeshHome.entitlements
+      properties:
+        # Push notifications (through the MeshHome relay; see push-relay/). Xcode switches this to
+        # "production" when exporting for TestFlight and the App Store.
+        aps-environment: development
+        # The app's own group first, so the session token stays where it always was; the second is
+        # shared with the notification extension for the push key.
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.meshhome
+          - $(AppIdentifierPrefix)app.meshhome.push
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.meshhome
@@ -43,9 +56,33 @@ targets:
           NSAllowsArbitraryLoads: true
         # LAN discovery: servers that advertise themselves (see ServerBrowser.swift).
         NSBonjourServices: [_meshhome._tcp]
+        MeshHomeKeychainPrefix: $(AppIdentifierPrefix)
         CFBundleURLTypes:
           - CFBundleURLName: app.meshhome.pair
             CFBundleURLSchemes: [meshhome]
+  MeshHomeNotifications:
+    # Decrypts pushes into "sender: message" (NotificationService.swift).
+    type: app-extension
+    platform: iOS
+    sources: [MeshHomeNotifications, Shared]
+    entitlements:
+      path: MeshHomeNotifications/MeshHomeNotifications.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.meshhome.push
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.meshhome.notifications
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MeshHome Notifications
+        SKIP_INSTALL: YES
+    info:
+      path: MeshHomeNotifications/Info.plist
+      properties:
+        MeshHomeKeychainPrefix: $(AppIdentifierPrefix)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
   MeshHomeTests:
     type: bundle.unit-test
     platform: iOS

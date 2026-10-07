@@ -10,7 +10,7 @@ further context.
 - **Format:** JSON request and response bodies (`Content-Type: application/json`).
 - **Live reference:** the server also publishes an OpenAPI 3 description at `/api/openapi.json`
   and an interactive explorer at `/api/docs` (use its **Authorize** button with your key).
-- **Version:** this document matches MeshHome **v0.10.0**. `GET /api/status` reports the
+- **Version:** this document matches MeshHome **v0.11.0**. `GET /api/status` reports the
   running version in `app.version`.
 
 ## Contents
@@ -748,6 +748,21 @@ Content-Type: application/json
 | `GET /api/auth/sessions` | Signed-in browsers and apps: `id`, `client` (`web`, `ios`, `android`), `device_name`, `user_agent`, `created_at`, `last_seen_at`, `expires_at`, `current` |
 | `DELETE /api/auth/sessions/{id}` | Sign out one browser or app; its WebSocket closes at once |
 | `DELETE /api/auth/sessions` | Sign out every browser and app except the caller |
+
+### Push notifications
+
+For the MeshHome app; see [push-notifications.md](push-notifications.md). The owner turns push on
+for the server; each phone then signs up with its push token, a ticket from the relay and a key it
+generated. Only sessions signed in from an app (`client` `ios` or `android`) can sign up.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/settings/push` | `enabled`, `relay_url`, and `devices` (phones signed up) |
+| `PUT /api/settings/push` | Turn push on or off and set the relay: `enabled`, `relay_url` (`https://`) |
+| `GET /api/push/device` | This phone: `registered`, `dms`, `channels`, `last_sent_at`, `last_error` |
+| `PUT /api/push/device` | Sign this phone up, or update it: `platform` (`ios`), `environment` (`production` or `development`), `token` (hex), `ticket`, `key` (base64, 32 bytes), `dms`, `channels` |
+| `DELETE /api/push/device` | Stop pushes to this phone (signing out does this too) |
+| `POST /api/push/device/test` | Send a test notification: `ok`, `error` |
 
 ### First-run setup from an app
 

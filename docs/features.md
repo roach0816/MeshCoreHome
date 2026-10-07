@@ -39,6 +39,9 @@ A tour of everything MeshHome does. The [README](../README.md#what-it-does) has 
   have their own star.
 - **Notification sounds:** a chime for new incoming messages while the app is open in a browser tab:
   *All messages*, *Direct messages only*, or *Off*, with per-conversation overrides.
+- **Push notifications** to the MeshHome iPhone and iPad app, even when it's closed: sender and
+  message, through a relay that only ever sees them encrypted. Off until the owner turns it on; each
+  phone chooses direct messages, channels or both. See [push-notifications.md](push-notifications.md).
 - **Read state** is shared across browsers and only moves forward.
 
 ## Contacts

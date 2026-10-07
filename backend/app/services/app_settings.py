@@ -66,6 +66,29 @@ class NotificationConfig(BaseModel):
 
 NOTIFICATIONS_KEY = "notifications"
 
+PUSH_RELAY_URL = "https://push.meshhome.app"
+
+
+class PushConfig(BaseModel):
+    # Push notifications to the MeshHome app go through a relay that holds the app's Apple push
+    # key. Off until the owner turns it on. Message content is encrypted for each phone; the relay
+    # sees only ciphertext, the phone's push token and timing.
+    enabled: bool = False
+    relay_url: str = Field(default=PUSH_RELAY_URL, max_length=200)
+
+    @field_validator("relay_url")
+    @classmethod
+    def _https(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        # Plain HTTP only for a relay on this machine (`wrangler dev`, when developing it).
+        local = v.startswith(("http://localhost:", "http://127.0.0.1:"))
+        if not (v.startswith("https://") or local) or any(c.isspace() for c in v):
+            raise ValueError("The relay address must start with https://")
+        return v
+
+
+PUSH_KEY = "push"
+
 
 class BotConfig(BaseModel):
     # Answer DMs that start with "/" (see app/services/bot.py). Off until the owner turns it on.
@@ -136,6 +159,15 @@ async def get_notification_config(db: AsyncSession) -> NotificationConfig:
 
 async def put_notification_config(db: AsyncSession, cfg: NotificationConfig) -> None:
     await _put(db, NOTIFICATIONS_KEY, cfg.model_dump())
+
+
+async def get_push_config(db: AsyncSession) -> PushConfig:
+    raw = await _get(db, PUSH_KEY)
+    return PushConfig.model_validate(raw) if raw else PushConfig()
+
+
+async def put_push_config(db: AsyncSession, cfg: PushConfig) -> None:
+    await _put(db, PUSH_KEY, cfg.model_dump())
 
 
 async def get_bot_config(db: AsyncSession) -> BotConfig:

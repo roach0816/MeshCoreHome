@@ -30,3 +30,8 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 dist-release/
+
+# Cloudflare Wrangler (push-relay/): local state and secrets
+.wrangler/
+.dev.vars*
+*.p8

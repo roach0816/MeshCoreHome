@@ -62,6 +62,29 @@ class Session(Base):
     device_name: Mapped[str | None] = mapped_column(String(64))
 
 
+class PushDevice(Base):
+    """A phone signed in with the app that receives push notifications through the relay.
+
+    One per app session: signing the phone out (or revoking it) removes it. The relay only
+    forwards to a device whose ticket it issued; the key encrypts what the relay and Apple see.
+    """
+
+    __tablename__ = "push_devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), unique=True)
+    platform: Mapped[str] = mapped_column(String(16))  # "ios" (later "android")
+    environment: Mapped[str] = mapped_column(String(16))  # "production" | "development"
+    token: Mapped[str] = mapped_column(String(256))
+    ticket: Mapped[str] = mapped_column(String(128))
+    key: Mapped[str] = mapped_column(String(64))  # base64, 32 bytes (AES-256-GCM)
+    dms: Mapped[bool] = mapped_column(Boolean, default=True)
+    channels: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_sent_at: Mapped[datetime | None]
+    last_error: Mapped[str | None] = mapped_column(String(200))
+
+
 class ApiKey(Base):
     """A key for other services and scripts (Authorization: Bearer mh_...)."""
 

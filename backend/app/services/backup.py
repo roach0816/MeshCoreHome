@@ -52,7 +52,7 @@ FORMAT = "meshhome-backup"
 # Backups made before the rename to MeshHome.
 LEGACY_FORMATS = ("meshcore-home-backup",)
 FORMAT_VERSION = 1
-SKIP_TABLES = {"sessions"}  # sign-ins are not carried over: everyone signs in again
+SKIP_TABLES = {"sessions", "push_devices"}  # sign-ins (and phones' push sign-ups) are not carried over
 INSERT_BATCH = 500
 MAX_MEMBER = 2 * 1024**3
 NAME = re.compile(r"^(meshhome|meshcore-home)-[0-9]{8}-[0-9]{6}(-[a-z0-9-]{1,40})?\.(mhb|mchb)$")

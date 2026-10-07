@@ -25,11 +25,14 @@ from app.api import (
     remote,
     system,
 )
+from app.api import (
+    push as push_api,
+)
 from app.api.deps import bearer_token, load_bearer, load_session, session_cookie
 from app.config import APP_VERSION, get_settings
 from app.radio.supervisor import supervisor
 from app.realtime import hub
-from app.services import app_settings, diagnostics, updates
+from app.services import app_settings, diagnostics, push, updates
 
 log = logging.getLogger("meshhome")
 
@@ -56,6 +59,7 @@ async def lifespan(app: FastAPI):
             banner,
         )
     supervisor.start()
+    push.start()
     update_task = asyncio.create_task(_update_check_loop(), name="update-check")
     diag_task = asyncio.create_task(diagnostics.loop(), name="diagnostics")
     try:
@@ -64,6 +68,7 @@ async def lifespan(app: FastAPI):
         update_task.cancel()
         diag_task.cancel()
         await supervisor.stop()
+        await push.stop()
         hub.close_all()
         await db.dispose_engine()
 
@@ -136,6 +141,7 @@ app.include_router(remote.router)
 app.include_router(firmware.router)
 app.include_router(backup.router)
 app.include_router(meta.router)
+app.include_router(push_api.router)
 
 
 # ---- health ------------------------------------------------------------------------------
