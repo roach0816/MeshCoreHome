@@ -7,11 +7,13 @@ has the short version.
 - [Requirements](#requirements)
 - [What the installer does](#what-the-installer-does)
 - [Where things live](#where-things-live)
-- [The `meshcore-home` command](#the-meshcore-home-command)
-- [Diagnostics: `meshcore-home status`](#diagnostics-meshcore-home-status)
+- [The `meshhome` command](#the-meshhome-command)
+- [Diagnostics: `meshhome status`](#diagnostics-meshhome-status)
 - [Radio HAT on the Pi (RAK6421)](#radio-hat-on-the-pi-rak6421)
 - [HTTPS](#https)
 - [Updates](#updates)
+- [LAN discovery](#lan-discovery)
+- [Installs from before the rename (MeshCore Home 0.9 and earlier)](#installs-from-before-the-rename-meshcore-home-09-and-earlier)
 
 ## Requirements
 
@@ -30,8 +32,8 @@ sudo bash install.sh
 The installer runs as a full-screen dashboard that stays in place instead of scrolling. It shows the
 checklist of steps, what is happening now, and one overall progress bar. Each question appears on
 the same screen with an explanation of what will change. When it finishes, a short summary stays in
-your terminal; the full detail is in `/var/log/meshcore-home-install.log`. Upgrades
-(`meshcore-home update`) and the uninstaller use the same screen. Small terminals (under 64×20),
+your terminal; the full detail is in `/var/log/meshhome-install.log`. Upgrades
+(`meshhome update`) and the uninstaller use the same screen. Small terminals (under 64×20),
 pipes, and `--plain` get plain line-by-line output instead.
 
 1. **Check this system:** OS, 64-bit CPU, systemd, memory, disk space, and internet access.
@@ -59,39 +61,41 @@ automatic security updates are turned on.
 
 | Where | What |
 | --- | --- |
-| `/opt/meshcore-home/releases/<version>` | The app. `current` points at the active version; the previous one is kept for rollback |
-| `/etc/meshcore-home/meshcore-home.env` | Configuration (port, database URL, network settings), readable only by root and the app |
-| `/etc/meshcore-home/acme/` | HTTPS certificate, Let's Encrypt account and DNS provider credentials (root only) |
-| `/var/lib/meshcore-home` | Update status, setup token, database dumps, and your backups (`user-backups/`) |
-| `/var/lib/meshcore-home-radio` | The radio HAT's identity, contacts and channels (ZephCore) |
-| `meshcore-home.service` | Runs as the unprivileged `meshcore` user, with the rest of the system read-only to it |
+| `/opt/meshhome/releases/<version>` | The app. `current` points at the active version; the previous one is kept for rollback |
+| `/etc/meshhome/meshhome.env` | Configuration (port, database URL, network settings), readable only by root and the app |
+| `/etc/meshhome/acme/` | HTTPS certificate, Let's Encrypt account and DNS provider credentials (root only) |
+| `/var/lib/meshhome` | Update status, setup token, database dumps, and your backups (`user-backups/`) |
+| `/var/lib/meshhome-radio` | The radio HAT's identity, contacts and channels (ZephCore) |
+| `meshhome.service` | Runs as the unprivileged `meshhome` user, with the rest of the system read-only to it |
 
 The web app never runs as root. Changes that need root (updates, network and HTTPS settings, the
 radio HAT, backup and restore of system files) are written as a request file and carried out by
-root-owned helper units (`meshcore-home-update`, `meshcore-home-config`), which re-check every value.
+root-owned helper units (`meshhome-update`, `meshhome-config`), which re-check every value.
 
-## The `meshcore-home` command
+## The `meshhome` command
 
 ```text
-sudo meshcore-home status    diagnostic report (start here when something is wrong)
-sudo meshcore-home https     set up HTTPS (or `https --disable` to go back to plain HTTP)
-sudo meshcore-home security-updates   turn on automatic OS security updates
-sudo meshcore-home radio-hat set up the RAK6421 radio HAT (also: radio-hat remove | restart | logs)
-meshcore-home logs [-f]      application log
-sudo meshcore-home update    upgrade to the latest release (same wizard, with a database dump)
-sudo meshcore-home backup    dump the database now (for repairs; see docs/backup-restore.md)
-sudo meshcore-home uninstall [--purge]   remove the app (--purge also deletes the data)
+sudo meshhome status    diagnostic report (start here when something is wrong)
+sudo meshhome https     set up HTTPS (or `https --disable` to go back to plain HTTP)
+sudo meshhome security-updates   turn on automatic OS security updates
+sudo meshhome radio-hat set up the RAK6421 radio HAT (also: radio-hat remove | restart | logs)
+meshhome logs [-f]      application log
+sudo meshhome update    upgrade to the latest release (same wizard, with a database dump)
+sudo meshhome backup    dump the database now (for repairs; see docs/backup-restore.md)
+sudo meshhome uninstall [--purge]   remove the app (--purge also deletes the data)
+sudo meshhome lan-discovery   let the MeshHome app find this server (`--disable` to stop)
+sudo meshhome migrate   move an install from before the rename to the new names (see below)
 ```
 
 **Uninstalling** without `--purge` removes the app, its services and the HTTPS site, but keeps the
 database, settings, HTTPS certificate and DNS credentials. Reinstalling picks them all up again,
 including HTTPS. If HTTPS can't be restored (for example, the certificate is gone and a new one
 can't be obtained), the installer switches to plain HTTP so the app stays reachable, and
-`sudo meshcore-home https` sets HTTPS up again. `--purge` deletes everything.
+`sudo meshhome https` sets HTTPS up again. `--purge` deletes everything.
 
-## Diagnostics: `meshcore-home status`
+## Diagnostics: `meshhome status`
 
-`meshcore-home status` checks every part of the installation and marks each line ✓ (fine),
+`meshhome status` checks every part of the installation and marks each line ✓ (fine),
 • (information), ! (warning) or ✗ (problem), with a suggested fix for each problem:
 
 - **App:** version, service (including crash loops), web health, and whether the app is responding.
@@ -120,12 +124,12 @@ MeshHome installs and manages the radio software for you. It uses
 Linux, which drives the radio over SPI and serves the standard MeshCore companion protocol.
 
 - **Set it up** in **Settings → Radio connection → Radio HAT on this Pi**, or with
-  `sudo meshcore-home radio-hat`. The installer also offers it when it runs on a Pi 4 or 5.
+  `sudo meshhome radio-hat`. The installer also offers it when it runs on a Pi 4 or 5.
 - **What setup does:**
   - Downloads the ZephCore build for your Pi model, pinned by the release
     (`deploy/native/zephcore.lock`) and checked against its SHA-256.
   - Turns on SPI. The Pi needs **one restart**, which you can start from the web interface.
-  - Runs ZephCore as its own service (`meshcore-home-radio`) under an unprivileged user that may only
+  - Runs ZephCore as its own service (`meshhome-radio`) under an unprivileged user that may only
     use the SPI and GPIO devices.
   - Limits the companion port (5000) to the Pi itself: it has no password, so other devices on your
     network cannot connect.
@@ -151,7 +155,7 @@ your network unencrypted, and some browser features are unavailable (copy button
 device's location", live QR scanning).
 
 HTTPS is offered as the last step of the installer. You can also turn it on, change it, or turn it
-off later in **Settings → Network & HTTPS**, or with `sudo meshcore-home https`. The Settings card
+off later in **Settings → Network & HTTPS**, or with `sudo meshhome https`. The Settings card
 shows the address, HTTPS status, certificate expiry, and app port. **Configure…** opens a dialog for:
 
 - the app port;
@@ -174,7 +178,7 @@ HTTPS uses:
   doesn't need to be reachable from the internet, so it works for a private, LAN-only hostname.
 - [lego](https://github.com/go-acme/lego) (MIT licence) to get and renew the certificate. The
   installer downloads the version pinned in `deploy/native/lego.lock` and checks its SHA-256. A timer
-  (`meshcore-home-acme-renew.timer`) checks twice a day and renews about 30 days before expiry.
+  (`meshhome-acme-renew.timer`) checks twice a day and renews about 30 days before expiry.
 
 ### Supported DNS providers
 
@@ -190,12 +194,12 @@ Each provider asks only for its own credentials (an API token, or a key and secr
 service-account JSON key). The form and installer say where to create them. **GoDaddy** only allows
 API access for accounts with 10+ domains or a paid plan, and **Namecheap** needs API access turned on
 and your public IP address allowlisted. Credentials are stored only in
-`/etc/meshcore-home/acme/credentials.env`, readable by root only, and are never shown again, logged,
+`/etc/meshhome/acme/credentials.env`, readable by root only, and are never shown again, logged,
 or given to the app.
 
 You need:
 
-1. A hostname in a domain at one of the providers above (e.g. `meshcore.<your-domain>`).
+1. A hostname in a domain at one of the providers above (e.g. `meshhome.<your-domain>`).
 2. API credentials for that provider, limited to that domain's zone where the provider allows it.
 3. A local DNS record (router, Pi-hole, etc.) pointing the hostname at the Pi's LAN address.
 
@@ -204,11 +208,11 @@ You need:
 Some registrars (Squarespace, Wix, Bluehost, Network Solutions, Hover) have no DNS API. Hand just the
 validation to a free provider that has one: create a free [deSEC](https://desec.io) account with a
 name such as `yourname.dedyn.io`, then at your registrar add one CNAME record,
-`_acme-challenge.meshcore.<your-domain>` → `_acme-challenge.yourname.dedyn.io`. Choose **deSEC** with
+`_acme-challenge.meshhome.<your-domain>` → `_acme-challenge.yourname.dedyn.io`. Choose **deSEC** with
 its token. lego follows the CNAME, and the rest of your DNS stays where it is.
 
 **Older installs that used certbot** with Cloudflare keep working unchanged. The next time the HTTPS
-settings are saved (or `sudo meshcore-home https` runs), renewals move to lego, reusing the saved
+settings are saved (or `sudo meshhome https` runs), renewals move to lego, reusing the saved
 Cloudflare token, and certbot's renewal for that site is turned off.
 
 ## Updates
@@ -223,9 +227,36 @@ available, the version under your name in the sidebar changes to **Update to …
 4. **rolls back automatically** if the new version doesn't start.
 
 The web app only asks for an update by writing the requested version number to a file. The
-root-owned `meshcore-home-update` unit double-checks it against the official releases before
+root-owned `meshhome-update` unit double-checks it against the official releases before
 installing anything. Migrations only ever add to the database, so rolling back is always safe.
 
 The same page also compares the **radio's MeshCore firmware** with MeshCore's latest companion
 release. MeshHome does not install radio firmware; companion firmware is updated over USB (see
 [Radios](radios.md#firmware)).
+
+## LAN discovery
+
+The installer offers to advertise the server on your local network with Bonjour (mDNS, through
+Debian's `avahi-daemon`), so the MeshHome app lists it on the sign-in screen and nobody has to type an
+address. It advertises `_meshhome._tcp` with the address to open: the HTTPS name when HTTPS is on,
+otherwise `http://<hostname>.local:<port>`. The advertisement follows changes made in
+**Settings → Network & HTTPS**. Only devices on the same network see it, and it reveals nothing
+beyond the address. Turn it on or off with `sudo meshhome lan-discovery` or
+`sudo meshhome lan-discovery --disable`.
+
+## Installs from before the rename (MeshCore Home 0.9 and earlier)
+
+Installs made before the rename keep working under their old names (`/opt/meshcore-home`, the
+`meshcore-home` service and command, the `meshcore` user and database), and receive updates as usual.
+To move one to the new names, update it to 0.10 or later and then run:
+
+```bash
+sudo meshcore-home migrate
+```
+
+It lists every change and asks before making any. Then it stops the app, dumps the database, and
+renames the database, its role, the system users, the directories, the env file, the services, the
+nginx site and the command. Nothing is copied. Messages, settings, sign-ins, API keys, HTTPS and the
+radio HAT carry over, and the app is offline for about a minute. Each step records how to undo
+itself. If any step fails, or the app doesn't come back healthy, every step is undone and the install
+runs as before. The old command, `sudo meshcore-home`, keeps working afterwards.

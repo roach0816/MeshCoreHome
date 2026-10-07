@@ -99,7 +99,7 @@ jobs:
       - name: Shellcheck the native installer and tools
         run: |
           docker run --rm -v "$PWD:/w:ro" koalaman/shellcheck:stable -S warning \
-            /w/deploy/native/install.sh /w/deploy/native/meshcore-home /w/deploy/native/build-release.sh
+            /w/deploy/native/install.sh /w/deploy/native/meshhome /w/deploy/native/build-release.sh
 
   image:
     runs-on: ubuntu-latest

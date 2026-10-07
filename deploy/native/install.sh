@@ -8,13 +8,13 @@
 #
 #   Options:
 #     --version X.Y.Z    install/upgrade to a specific release (default: latest)
-#     --from-file PATH   install from a local meshcore-home-X.Y.Z.tar.gz (offline / testing)
+#     --from-file PATH   install from a local meshhome-X.Y.Z.tar.gz (offline / testing)
 #     --port N           HTTP port for a fresh install (default 8080)
 #     --yes              answer "yes" to every prompt (unattended)
 #     --plain            plain line-by-line output instead of the full-screen dashboard
 #     --upgrade          upgrade an existing install (also chosen automatically when one exists)
 #     --from-request     web-UI upgrade: read the requested version from the state directory and
-#                        report progress there (run by meshcore-home-update.service, never by hand)
+#                        report progress there (run by meshhome-update.service, never by hand)
 #     --uninstall [--purge]   remove the app; --purge also deletes the database, config and data
 #     --https            set up (or redo) HTTPS on an existing install: nginx + Let's Encrypt via
 #                        DNS validation at one of 25 DNS providers (also offered when installing)
@@ -24,10 +24,14 @@
 #                        --remove [--purge] remove it again
 #     --radio-hat-sync   after an upgrade, update the radio HAT software (run by the installer)
 #     --apply-config     apply network/HTTPS settings requested from the web UI (run by
-#                        meshcore-home-config.service, never by hand)
+#                        meshhome-config.service, never by hand)
 #     --sync-units       install helper systemd units shipped with the running release (run as
 #                        root on every app start)
 #     --acme-renew       renew the HTTPS certificate if it is due (run by a timer)
+#     --migrate          move an install made before the rename to MeshHome (0.9 and earlier) to
+#                        the new names: /opt/meshhome, the meshhome service, user and database
+#     --lan-discovery    let the MeshHome app find this server on the local network (Bonjour);
+#                        --lan-discovery-off turns it off
 #
 # Everything the script changes is listed on screen and confirmed first. Answering "n" to any
 # confirmation cancels the installation.
@@ -36,18 +40,46 @@ umask 022
 
 # ---- constants -----------------------------------------------------------------------------
 APP_NAME="MeshHome"
-REPO="${MESHCORE_HOME_REPO:-roach0816/MeshHome}"
-PREFIX=/opt/meshcore-home
-CONF_DIR=/etc/meshcore-home
-ENV_FILE=$CONF_DIR/meshcore-home.env
-STATE_DIR=/var/lib/meshcore-home
-BACKUP_DIR=$STATE_DIR/backups
-LOG_FILE=/var/log/meshcore-home-install.log
-APP_USER=meshcore
-DB_NAME=meshcore
-SERVICE=meshcore-home
+REPO="${MESHHOME_REPO:-${MESHCORE_HOME_REPO:-roach0816/MeshHome}}"
+# Names. Installs made before the rename to MeshHome (0.9 and earlier) keep the old ones until
+# `sudo $CLI_NAME migrate` moves them (see migrate_layout). New installs use the new ones.
+NEW_PREFIX=/opt/meshhome NEW_CONF_DIR=/etc/meshhome NEW_STATE_DIR=/var/lib/meshhome
+NEW_SERVICE=meshhome NEW_USER=meshhome
+OLD_PREFIX=/opt/meshcore-home OLD_CONF_DIR=/etc/meshcore-home OLD_STATE_DIR=/var/lib/meshcore-home
+OLD_SERVICE=meshcore-home OLD_USER=meshcore
+use_layout() {  # use_layout new|legacy — point every name at one layout
+  if [[ $1 == legacy ]]; then
+    LAYOUT=legacy SERVICE=$OLD_SERVICE APP_USER=$OLD_USER DB_NAME=$OLD_USER
+    PREFIX=$OLD_PREFIX CONF_DIR=$OLD_CONF_DIR STATE_DIR=$OLD_STATE_DIR
+    HAT_USER=meshcore-radio
+  else
+    LAYOUT=new SERVICE=$NEW_SERVICE APP_USER=$NEW_USER DB_NAME=$NEW_USER
+    PREFIX=$NEW_PREFIX CONF_DIR=$NEW_CONF_DIR STATE_DIR=$NEW_STATE_DIR
+    HAT_USER=meshhome-radio
+  fi
+  ENV_FILE=$CONF_DIR/$SERVICE.env
+  BACKUP_DIR=$STATE_DIR/backups
+  LOG_FILE=/var/log/$SERVICE-install.log
+  CLI_NAME=$SERVICE
+  CLI_LINK=/usr/local/bin/$SERVICE
+  NGINX_SITE=/etc/nginx/sites-available/$SERVICE
+  NGINX_ENABLED=/etc/nginx/sites-enabled/$SERVICE
+  CF_CREDENTIALS=/etc/letsencrypt/$SERVICE-cloudflare.ini
+  ADMIN_LOCK=/run/$SERVICE-admin.lock
+  ACME_DIR=$CONF_DIR/acme ACME_CREDENTIALS=$CONF_DIR/acme/credentials.env ACME_DATA=$CONF_DIR/acme/data
+  LEGO_DIR=/opt/$SERVICE-acme
+  HAT_DIR=/opt/$SERVICE-radio HAT_DATA=/var/lib/$SERVICE-radio HAT_SERVICE=$SERVICE-radio
+  HAT_UDEV_RULE=/etc/udev/rules.d/90-$SERVICE-radio.rules
+  HAT_UNIT=/etc/systemd/system/$SERVICE-radio.service HAT_STATUS=$STATE_DIR/radio-hat.json
+  HELPER_UNITS=("$SERVICE-update.service" "$SERVICE-update.path" "$SERVICE-config.service" "$SERVICE-config.path")
+  ACME_UNITS=("$SERVICE-acme-renew.service" "$SERVICE-acme-renew.timer")
+  STATUS_FILE=$STATE_DIR/update-status.json
+  CONFIG_REQUEST=$STATE_DIR/config-request.json CONFIG_STATUS=$STATE_DIR/config-status.json
+  NETWORK_SNAPSHOT=$STATE_DIR/network.json CONF_BACKUP=$CONF_DIR/.previous
+  SYSTEM_EXPORT=$STATE_DIR/system-export.tar.gz SYSTEM_RESTORE=$STATE_DIR/system-restore.tar.gz
+}
+if [[ -d $OLD_PREFIX && ! -d $NEW_PREFIX ]]; then use_layout legacy; else use_layout new; fi
 UNIT_DIR=/etc/systemd/system
-CLI_LINK=/usr/local/bin/meshcore-home
 DEFAULT_PORT=8080
 KEEP_RELEASES=2
 KEEP_BACKUPS=5
@@ -56,16 +88,15 @@ REQUIRED_PACKAGES=(python3 python3-venv postgresql postgresql-client curl ca-cer
 # through a DNS-01 challenge at the owner's DNS provider (works for private/LAN-only hosts;
 # nothing is exposed publicly). See "HTTPS certificates with lego" below.
 HTTPS_PACKAGES=(nginx openssl)
-NGINX_SITE=/etc/nginx/sites-available/meshcore-home
-CF_CREDENTIALS=/etc/letsencrypt/meshcore-home-cloudflare.ini
 
-# Test/mirror overrides (also read from $ENV_FILE on upgrades, which is root-owned).
-API_URL="${MESHCORE_HOME_API:-https://api.github.com}"
-DOWNLOAD_BASE="${MESHCORE_HOME_DOWNLOAD_BASE:-}"
+# Test/mirror overrides (MESHHOME_*, or MESHCORE_HOME_* as before the rename; also read from
+# $ENV_FILE on upgrades, which is root-owned).
+API_URL="${MESHHOME_API:-${MESHCORE_HOME_API:-https://api.github.com}}"
+DOWNLOAD_BASE="${MESHHOME_DOWNLOAD_BASE:-${MESHCORE_HOME_DOWNLOAD_BASE:-}}"
 
 # ---- arguments -----------------------------------------------------------------------------
 WANT_VERSION="" FROM_FILE="" PORT="" PLAIN=0 HAT_REMOVE=0 ASSUME_YES=0 MODE="" FROM_REQUEST=0 PURGE=0 REPAIR=0 CONFIG_MODE=0
-HTTPS_HOST="${MESHCORE_HOME_HTTPS_HOST:-}" HTTPS_EMAIL="${MESHCORE_HOME_HTTPS_EMAIL:-}"
+HTTPS_HOST="${MESHHOME_HTTPS_HOST:-${MESHCORE_HOME_HTTPS_HOST:-}}" HTTPS_EMAIL="${MESHHOME_HTTPS_EMAIL:-${MESHCORE_HOME_HTTPS_EMAIL:-}}"
 while (($#)); do
   case "$1" in
     --version) WANT_VERSION="${2:?--version needs a value}"; shift ;;
@@ -77,7 +108,7 @@ while (($#)); do
     --from-request) MODE=upgrade; FROM_REQUEST=1; ASSUME_YES=1 ;;
     --uninstall) MODE=uninstall ;;
     --https) MODE=https ;;
-    --https-disable) MODE=https-disable ;;
+    --https-disable) MODE="https-disable" ;;
     --https-host) HTTPS_HOST="${2:?--https-host needs a value}"; shift ;;
     --security-updates) MODE=security-updates ;;
     --radio-hat) MODE=radio-hat ;;
@@ -85,9 +116,12 @@ while (($#)); do
     --radio-hat-sync) MODE=radio-hat-sync; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --apply-config) MODE=apply-config; CONFIG_MODE=1; ASSUME_YES=1 ;;
     --sync-units) MODE=sync-units; CONFIG_MODE=1; ASSUME_YES=1 ;;
-    --acme-renew) MODE=acme-renew; CONFIG_MODE=1; ASSUME_YES=1 ;;
+    --acme-renew) MODE="acme-renew"; CONFIG_MODE=1; ASSUME_YES=1 ;;
+    --migrate) MODE=migrate ;;
+    --lan-discovery) MODE=lan-discovery ;;
+    --lan-discovery-off) MODE=lan-discovery-off ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,37p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -105,7 +139,6 @@ else
   B="" D="" R="" G="" Y="" C="" N=""
 fi
 TTY_IN=/dev/tty
-STATUS_FILE="$STATE_DIR/update-status.json"
 TARGET_VERSION=""
 STEP=0 STEPS=0 STEP_TITLES=() STEP_STATE=() STEP_NOTE=() STEP_WEIGHTS=()
 RECENT=() WARNINGS=() PANEL=() REPLY_TEXT=""
@@ -468,6 +501,7 @@ PY
 
 die() {  # die MESSAGE [HINT] [tail] — stop; "tail" also shows the end of the log
   local msg="$1" hint="${2:-}"
+  ((MIGRATING == 0)) || migrate_undo
   ((STEP == 0)) || STEP_STATE[STEP - 1]=failed
   tui_end
   printf '\n  %s✗ %s%s\n' "$R$B" "$msg" "$N" >&2
@@ -701,7 +735,7 @@ choose_version() {
   local cur; cur=$(installed_version || true)
   if [[ -n $FROM_FILE ]]; then
     [[ -f $FROM_FILE ]] || die "File not found: $FROM_FILE"
-    TARGET_VERSION=$(basename "$FROM_FILE" | sed -n 's/^meshcore-home-\([0-9.]*\)\.tar\.gz$/\1/p')
+    TARGET_VERSION=$(basename "$FROM_FILE" | sed -n 's/^\(meshhome\|meshcore-home\)-\([0-9.]*\)\.tar\.gz$/\2/p')
     valid_version "$TARGET_VERSION" || die "Unexpected package name: $(basename "$FROM_FILE")"
     ok "Package: $FROM_FILE (v$TARGET_VERSION)"; step_note "v$TARGET_VERSION (local file)"
   else
@@ -723,7 +757,7 @@ choose_version() {
         status "done" "Already up to date (v$cur)"
         exit 0
       fi
-      ((FROM_REQUEST)) && die "v$cur is installed but not running" "Repair it from a terminal: sudo meshcore-home update"
+      ((FROM_REQUEST)) && die "v$cur is installed but not running" "Repair it from a terminal: sudo $CLI_NAME update"
       warn "v$cur is installed but not running correctly."
       confirm "Repair the installation by reinstalling v$cur?"
       REPAIR=1
@@ -740,7 +774,7 @@ install_packages() {
   local missing; mapfile -t missing < <(missing_packages "${REQUIRED_PACKAGES[@]}")
   if ((${#missing[@]} == 0)); then ok "All required system packages are already installed"; step_note "Already installed"; return; fi
   ((FROM_REQUEST)) && die "This version needs new system packages (${missing[*]})" \
-    "Upgrade from a terminal instead: sudo meshcore-home update"
+    "Upgrade from a terminal instead: sudo $CLI_NAME update"
   apt_review_install "Install these packages?" cancel "${missing[@]}"
   step_note "${#missing[@]} installed"
 }
@@ -830,14 +864,19 @@ configure() {
 }
 
 fetch_package() {
-  WORK=$(mktemp -d /tmp/meshcore-home.XXXXXX)  # removed by on_exit
-  local name="meshcore-home-$TARGET_VERSION.tar.gz"
+  WORK=$(mktemp -d /tmp/meshhome.XXXXXX)  # removed by on_exit
+  local name
   if [[ -n $FROM_FILE ]]; then
+    name=$(basename "$FROM_FILE")
     cp "$FROM_FILE" "$WORK/$name"
     if [[ -f "$(dirname "$FROM_FILE")/SHA256SUMS" ]]; then cp "$(dirname "$FROM_FILE")/SHA256SUMS" "$WORK/"; fi
   else
     local base; base="$(download_base)/v$TARGET_VERSION"
     status downloading "Downloading v$TARGET_VERSION"
+    # Releases from 0.10 carry meshhome-X.tar.gz (and the old name, for older installers).
+    curl -fsSL --retry 3 -o "$WORK/SHA256SUMS" "$base/SHA256SUMS" || die "Download failed: $base/SHA256SUMS"
+    name="meshhome-$TARGET_VERSION.tar.gz"
+    grep -q " $name\$" "$WORK/SHA256SUMS" || name="meshcore-home-$TARGET_VERSION.tar.gz"
     log "\$ curl $base/$name"
     if ((TUI_ON)); then
       # curl's progress bar ends each update with a carriage return; feed its percentage to ours.
@@ -854,10 +893,10 @@ fetch_package() {
     else
       curl -fsSL --retry 3 -o "$WORK/$name" "$base/$name" || die "Download failed: $base/$name"
     fi
-    curl -fsSL --retry 3 -o "$WORK/SHA256SUMS" "$base/SHA256SUMS" || die "Download failed: $base/SHA256SUMS"
     ok "Downloaded $name ($(du -h "$WORK/$name" | cut -f1))"
     step_note "$(du -h "$WORK/$name" | cut -f1) · SHA-256 checked"
   fi
+  PKG_NAME=$name
   if [[ -f $WORK/SHA256SUMS ]]; then
     (cd "$WORK" && grep " $name\$" SHA256SUMS | sha256sum -c --status) ||
       die "Checksum mismatch for $name" "The download is corrupt or has been tampered with. Nothing was installed."
@@ -890,7 +929,7 @@ install_release() {
   # interrupted attempt is simply rebuilt; it only becomes live when `current` points at it.
   rm -rf "$dest" "$dest.partial"
   mkdir -p "$dest"
-  run "Unpacking v$TARGET_VERSION" tar -xzf "$WORK/meshcore-home-$TARGET_VERSION.tar.gz" \
+  run "Unpacking v$TARGET_VERSION" tar -xzf "$WORK/$PKG_NAME" \
     -C "$dest" --strip-components=1 --no-same-owner
   [[ "$(tr -d '[:space:]' <"$dest/VERSION")" == "$TARGET_VERSION" ]] || die "Package version does not match"
   run "Creating Python environment" python3 -m venv "$dest/venv"
@@ -901,7 +940,8 @@ install_release() {
     "$dest/venv/bin/python" -m pip install --no-cache-dir --disable-pip-version-check --only-binary=:all: \
     -r "$dest/requirements.txt"
   run "Precompiling" "$dest/venv/bin/python" -m compileall -q "$dest/app" "$dest/migrations"
-  chmod 755 "$dest/deploy/native/install.sh" "$dest/deploy/native/meshcore-home" "$dest/deploy/native/tls-hook"
+  chmod 755 "$dest/deploy/native/install.sh" "$dest/deploy/native/tls-hook"
+  local cli; for cli in meshhome meshcore-home; do [[ -f $dest/deploy/native/$cli ]] && chmod 755 "$dest/deploy/native/$cli"; done
   if [[ -f $dest/deploy/native/radio-hat-run ]]; then chmod 755 "$dest/deploy/native/radio-hat-run"; fi
   ok "v$TARGET_VERSION installed to $dest"
   step_note "v$TARGET_VERSION"
@@ -939,8 +979,8 @@ write_env() {
 DATABASE_URL=postgresql+asyncpg://$APP_USER@/$DB_NAME?host=/var/run/postgresql
 HOST=0.0.0.0
 PORT=$PORT
-MESHCORE_INSTALL_KIND=native
-MESHCORE_STATE_DIR=$STATE_DIR
+MESHHOME_INSTALL_KIND=native
+MESHHOME_STATE_DIR=$STATE_DIR
 STATIC_DIR=$PREFIX/current/static
 UPDATE_REPO=$REPO
 LOG_LEVEL=INFO
@@ -949,14 +989,34 @@ EOF
   ok "Wrote $ENV_FILE"
 }
 
+# Units ship as templates (deploy/native/systemd/*.service etc.) and are filled in with this
+# install's names, so the same release works before and after `migrate`.
+unit_template() {  # unit_template DIR UNIT_NAME — the template a unit comes from
+  case $2 in
+    "$SERVICE.service") printf '%s/app.service' "$1" ;;
+    "$HAT_SERVICE.service") printf '%s/radio.service' "$1" ;;
+    "$SERVICE-"*) printf '%s/%s' "$1" "${2#"$SERVICE-"}" ;;
+  esac
+}
+render_unit() {  # render_unit TEMPLATE — prints the unit with this layout's names
+  sed -e "s#@HAT_DIR@#$HAT_DIR#g" -e "s#@HAT_DATA@#$HAT_DATA#g" -e "s#@HAT_USER@#$HAT_USER#g" \
+    -e "s#@PREFIX@#$PREFIX#g" -e "s#@ENV_FILE@#$ENV_FILE#g" -e "s#@STATE_DIR@#$STATE_DIR#g" \
+    -e "s#@APP_USER@#$APP_USER#g" -e "s#@SERVICE@#$SERVICE#g" "$1"
+}
+put_unit() {  # put_unit DIR UNIT_NAME — install it; returns 0 if it changed, 1 if not (or no template)
+  local t tmp; t=$(unit_template "$1" "$2")
+  [[ -n $t && -f $t ]] || return 1
+  tmp=$(mktemp); render_unit "$t" >"$tmp"
+  if cmp -s "$tmp" "$UNIT_DIR/$2"; then rm -f "$tmp"; return 1; fi
+  install -m 644 "$tmp" "$UNIT_DIR/$2"; rm -f "$tmp"
+  return 0
+}
+
 install_units() {  # from the release being activated
   local src="$PREFIX/releases/$TARGET_VERSION/deploy/native/systemd" u
-  for u in "$SERVICE.service" "${HELPER_UNITS[@]}"; do
-    [[ -f $src/$u ]] || continue
-    install -m 644 "$src/$u" "$UNIT_DIR/$u"
-  done
+  for u in "$SERVICE.service" "${HELPER_UNITS[@]}"; do put_unit "$src" "$u" || true; done
   systemctl daemon-reload
-  ln -sfn "$PREFIX/current/deploy/native/meshcore-home" "$CLI_LINK"
+  ln -sfn "$PREFIX/current/deploy/native/meshhome" "$CLI_LINK"
 }
 
 activate() {  # switch current -> new release and (re)start, rolling back on failure
@@ -1042,19 +1102,19 @@ finish() {
     printf '  Open it from a browser on your network:\n'
     local ip; for ip in $(lan_addresses); do printf '    %shttp://%s:%s%s\n' "$B" "$ip" "$port" "$N"; done
     printf '    %shttp://%s.local:%s%s\n' "$D" "$(hostname)" "$port" "$N"
-    printf '  %sPlain HTTP. Add HTTPS in Settings → Network & HTTPS, or: sudo meshcore-home https%s\n' "$D" "$N"
+    printf '  %sPlain HTTP. Add HTTPS in Settings → Network & HTTPS, or: sudo %s https%s\n' "$D" "$CLI_NAME" "$N"
   fi
   if [[ -f $STATE_DIR/setup-token ]]; then
     printf '\n  First-run setup token (the wizard asks for it): %s%s%s\n' "$B$Y" "$(cat "$STATE_DIR/setup-token")" "$N"
   fi
-  printf '\n  Manage it with: %smeshcore-home status | logs | update | backup | https | uninstall%s\n\n' "$B" "$N"
+  printf '\n  Manage it with: %s%s status | logs | update | backup | https | uninstall%s\n\n' "$B" "$CLI_NAME" "$N"
 }
 
 uninstall() {
-  [[ $EUID -eq 0 ]] || die "Please run as root" "sudo meshcore-home uninstall"
+  [[ $EUID -eq 0 ]] || die "Please run as root" "sudo $CLI_NAME uninstall"
   TARGET_VERSION=$(installed_version || true)
   local nginx=0
-  [[ -f $NGINX_SITE || -L /etc/nginx/sites-enabled/meshcore-home ]] && nginx=1
+  [[ -f $NGINX_SITE || -L $NGINX_ENABLED ]] && nginx=1
   local -a titles=("Review what will be removed" "Stop and remove the services" "Remove the application files")
   ((nginx)) && titles+=("Remove the HTTPS site")
   local hat=0
@@ -1068,7 +1128,7 @@ uninstall() {
   step
   ((TUI_ON)) || printf '\n'
   note "${B}This will remove:${N}"
-  note "  • The $SERVICE services and the $CLI_LINK command"
+  note "  • The $SERVICE services and the $CLI_LINK command$([[ -f $AVAHI_SERVICE ]] && echo "; LAN discovery")"
   note "  • The application files in $PREFIX"
   ((nginx)) && note "  • The nginx HTTPS site for $(env_get HTTPS_HOST) (nginx itself stays installed)"
   ((hat)) && note "  • The radio HAT software (ZephCore) and its service$( ((PURGE)) && echo ", including the radio's identity" || echo "; the radio's identity in $HAT_DATA is kept")"
@@ -1088,8 +1148,10 @@ uninstall() {
   systemctl disable --now "$SERVICE-update.path" "$SERVICE-config.path" "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
   # ${VAR:?} guards: an empty variable must never turn a removal into a top-level path.
   systemctl disable --now "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true
-  rm -f "${UNIT_DIR:?}/${SERVICE:?}.service" "${CLI_LINK:?}"
-  local u; for u in "${HELPER_UNITS[@]}" "${ACME_UNITS[@]}"; do rm -f "${UNIT_DIR:?}/${u:?}"; done
+  rm -f "${UNIT_DIR:?}/${SERVICE:?}.service" "${CLI_LINK:?}" "$AVAHI_SERVICE"
+  # The old command name, kept working by `migrate`.
+  [[ $(readlink "/usr/local/bin/$OLD_SERVICE" 2>/dev/null) == "$PREFIX/"* ]] && rm -f "/usr/local/bin/$OLD_SERVICE"
+  local u; for u in "$SERVICE.service" "${HELPER_UNITS[@]}" "${ACME_UNITS[@]}"; do rm -rf "${UNIT_DIR:?}/${u:?}" "${UNIT_DIR:?}/${u:?}.d"; done
   systemctl daemon-reload
   ok "Services and the $CLI_LINK command removed"
 
@@ -1098,7 +1160,7 @@ uninstall() {
 
   if ((nginx)); then
     step
-    rm -f /etc/nginx/sites-enabled/meshcore-home "${NGINX_SITE:?}"
+    rm -f $NGINX_ENABLED "${NGINX_SITE:?}"
     run_bg "Reloading nginx" systemctl reload nginx || true
     ok "HTTPS site removed"
   fi
@@ -1120,17 +1182,12 @@ uninstall() {
   printf '\n  %s✓ %s has been removed.%s\n\n' "$G" "$APP_NAME" "$N"
 }
 
-# ---- network & HTTPS (shared by the terminal wizard, `meshcore-home https` and the web UI) ------
+# ---- network & HTTPS (shared by the terminal wizard, `meshhome https` and the web UI) ------
 # Configuration lives in the env file (non-secret) and, for the Cloudflare token, in a root-only
 # certbot credentials file. The web UI never gets root: it writes $CONFIG_REQUEST, which the
-# meshcore-home-config path unit hands to `install.sh --apply-config`.
-CONFIG_REQUEST="$STATE_DIR/config-request.json"
-CONFIG_STATUS="$STATE_DIR/config-status.json"
-NETWORK_SNAPSHOT="$STATE_DIR/network.json"
-CONF_BACKUP="$CONF_DIR/.previous"
+# meshhome-config path unit hands to `install.sh --apply-config`.
 DEFAULT_HTTPS_PORT=443
 DEFAULT_PROPAGATION=0  # 0: lego checks propagation itself; otherwise a fixed wait in seconds
-HELPER_UNITS=("$SERVICE-update.service" "$SERVICE-update.path" "$SERVICE-config.service" "$SERVICE-config.path")
 
 env_set() {  # env_set KEY VALUE — add or replace a line in the env file
   if grep -q "^$1=" "$ENV_FILE"; then
@@ -1232,9 +1289,9 @@ restore_network_config() {  # put the previous env file and nginx site back, and
   fi
   if [[ -f $CONF_BACKUP/nginx-site ]]; then
     cp -p "$CONF_BACKUP/nginx-site" "$NGINX_SITE"
-    ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+    ln -sfn "$NGINX_SITE" $NGINX_ENABLED
   else
-    rm -f "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+    rm -f "$NGINX_SITE" $NGINX_ENABLED
   fi
   systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
   systemctl restart "$SERVICE" >>"$LOG_FILE" 2>&1 || true
@@ -1248,11 +1305,6 @@ restore_network_config() {  # put the previous env file and nginx site back, and
 # root-only dotenv file; a twice-daily timer renews the certificate and reloads nginx.
 # Installs made before this used certbot with Cloudflare; they keep working until their HTTPS
 # settings are next saved, which moves them to lego with the same Cloudflare token.
-ACME_DIR=$CONF_DIR/acme
-ACME_CREDENTIALS=$ACME_DIR/credentials.env
-ACME_DATA=$ACME_DIR/data
-LEGO_DIR=/opt/meshcore-home-acme
-ACME_UNITS=("$SERVICE-acme-renew.service" "$SERVICE-acme-renew.timer")
 
 acme_src() {  # the release directory with the HTTPS support files (lego.lock, dns-providers.json)
   local d
@@ -1374,7 +1426,7 @@ lego_install() {  # download and verify the pinned lego release (once per versio
     x86_64) asset=$LEGO_AMD64_ASSET sha=$LEGO_AMD64_SHA256 ;;
     *) warn "No lego build for $(uname -m)"; return 1 ;;
   esac
-  base=$(override MESHCORE_HOME_LEGO_BASE); base=${base:-$LEGO_BASE_URL}
+  base=$(override MESHHOME_LEGO_BASE); base=${base:-$LEGO_BASE_URL}
   tmp=$(mktemp -d)
   if ! run_quiet "Downloading lego $LEGO_VERSION (certificate client)" curl -fsSL --retry 3 -o "$tmp/lego.tar.gz" "$base/$asset"; then
     rm -rf "$tmp"; return 1
@@ -1398,12 +1450,12 @@ acme_lego_args() {  # acme_lego_args HOST EMAIL STAGING PROPAGATION — fills LE
   local host=$1 email=$2 staging=$3 prop=$4 provider lego_code server dns envfile
   provider=$(env_get ACME_PROVIDER); provider=${NEW_PROVIDER:-${provider:-cloudflare}}
   lego_code=$(acme_py get "$provider" lego) || return 1
-  server=$(override MESHCORE_HOME_ACME_SERVER)
+  server=$(override MESHHOME_ACME_SERVER)
   [[ -n $server ]] || { if [[ $staging == 1 ]]; then server=letsencrypt-staging; else server=letsencrypt; fi; }
   dns=$lego_code envfile=$ACME_CREDENTIALS
   # Testing only: a different DNS-01 provider (e.g. "exec") and its env file.
-  if [[ -n $(override MESHCORE_HOME_ACME_DNS_OVERRIDE) ]]; then
-    dns=$(override MESHCORE_HOME_ACME_DNS_OVERRIDE) envfile=$(override MESHCORE_HOME_ACME_TEST_ENV_FILE)
+  if [[ -n $(override MESHHOME_ACME_DNS_OVERRIDE) ]]; then
+    dns=$(override MESHHOME_ACME_DNS_OVERRIDE) envfile=$(override MESHHOME_ACME_TEST_ENV_FILE)
   fi
   LEGO_ARGS=(run --accept-tos --server "$server" -d "$host" --cert.name "$host" --dns "$dns"
     --env-file "$envfile" --path "$ACME_DATA" --log.format text --no-random-sleep
@@ -1414,13 +1466,13 @@ acme_lego_args() {  # acme_lego_args HOST EMAIL STAGING PROPAGATION — fills LE
 }
 
 acme_env() {  # environment for lego (a private test CA when testing)
-  local ca; ca=$(override MESHCORE_HOME_ACME_CA)
+  local ca; ca=$(override MESHHOME_ACME_CA)
   if [[ -n $ca ]]; then printf 'LEGO_CA_CERTIFICATES=%s' "$ca"; else printf 'LEGO_LOG_LEVEL=info'; fi
 }
 
 acme_units_install() {  # the renewal timer (from the active release)
   local src="$PREFIX/current/deploy/native/systemd" u
-  for u in "${ACME_UNITS[@]}"; do [[ -f $src/$u ]] && install -m 644 "$src/$u" "$UNIT_DIR/$u"; done
+  for u in "${ACME_UNITS[@]}"; do put_unit "$src" "$u" || true; done
   systemctl daemon-reload
   systemctl enable --now "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true
 }
@@ -1460,7 +1512,7 @@ acme_renew() {  # --acme-renew: run by the renewal timer; renews when due and re
 
 obtain_certificate() {  # obtain_certificate HOST EMAIL STAGING(0/1) PROPAGATION FORCE(0/1)
   local host=$1 email=$2 staging=$3 prop=$4 force=$5
-  if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+  if [[ -n $(override MESHHOME_TLS_SELF_SIGNED) ]]; then
     # Testing only: a self-signed certificate instead of Let's Encrypt (browsers will warn).
     warn "MESHCORE_HOME_TLS_SELF_SIGNED is set: using a self-signed TEST certificate"
     install -d -m 755 "$CONF_DIR/tls-test"
@@ -1599,7 +1651,7 @@ PY
 )
       [[ -n $NEW_CREDENTIALS ]] && log "reusing the Cloudflare token saved for certbot"
     fi
-    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+    if [[ -z $(override MESHHOME_TLS_SELF_SIGNED) ]]; then
       if [[ -n ${NEW_CREDENTIALS:-} || $saved != "$NEW_PROVIDER" ]]; then
         local err creds_in=${NEW_CREDENTIALS:-}
         [[ -n $creds_in ]] || creds_in='{}'
@@ -1614,7 +1666,7 @@ PY
     local force=0
     [[ -f $TLS_CERT_PATH && ${old_staging:-0} != "$NEW_STAGING" ]] && force=1
     ((new_creds)) && [[ -f $TLS_CERT_PATH ]] && force=1
-    if [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} || ! -f $TLS_CERT_PATH || $force == 1 || $old_client != lego ]]; then
+    if [[ -n $(override MESHHOME_TLS_SELF_SIGNED) || ! -f $TLS_CERT_PATH || $force == 1 || $old_client != lego ]]; then
       status certificate "Requesting a certificate for $NEW_HOST"
       obtain_certificate "$NEW_HOST" "$NEW_EMAIL" "$NEW_STAGING" "$NEW_PROPAGATION" "$force" ||
         { restore_network_config; return 1; }
@@ -1622,7 +1674,7 @@ PY
       ok "Using the existing certificate for $NEW_HOST"
     fi
     write_nginx_site "$NEW_HOST" "$NEW_HTTPS_PORT" "$NEW_REDIRECT" "$NEW_PORT" "$TLS_CERT_PATH" "$TLS_KEY_PATH"
-    ln -sfn "$NGINX_SITE" /etc/nginx/sites-enabled/meshcore-home
+    ln -sfn "$NGINX_SITE" $NGINX_ENABLED
     if ! nginx -t >>"$LOG_FILE" 2>&1; then
       warn "nginx rejected the configuration (see $LOG_FILE)"; restore_network_config; return 1
     fi
@@ -1632,7 +1684,7 @@ PY
     env_set HTTPS_ENABLED 1
     env_set HTTPS_HOST "$NEW_HOST"
     env_set TLS_CERT "$TLS_CERT_PATH"
-    if [[ -z ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]]; then
+    if [[ -z $(override MESHHOME_TLS_SELF_SIGNED) ]]; then
       env_set ACME_CLIENT lego
       env_set ACME_PROVIDER "$NEW_PROVIDER"
       acme_units_install
@@ -1640,7 +1692,7 @@ PY
       [[ $old_client != lego && -n $old_https_host ]] && retire_certbot_site "$old_https_host"
     fi
   else
-    rm -f /etc/nginx/sites-enabled/meshcore-home "$NGINX_SITE"
+    rm -f $NGINX_ENABLED "$NGINX_SITE"
     command -v nginx >/dev/null && { systemctl reload nginx >>"$LOG_FILE" 2>&1 || true; }
     env_set HOST 0.0.0.0
     env_set HTTPS_ENABLED 0
@@ -1666,7 +1718,7 @@ PY
   if [[ $NEW_HTTPS == 1 ]]; then
     bash "$PREFIX/current/deploy/native/tls-hook" >>"$LOG_FILE" 2>&1 || true
     local -a k=()
-    [[ -n ${MESHCORE_HOME_TLS_SELF_SIGNED:-} ]] && k=(-k)
+    [[ -n $(override MESHHOME_TLS_SELF_SIGNED) ]] && k=(-k)
     if curl -fsS "${k[@]}" --max-time 10 --resolve "$NEW_HOST:$NEW_HTTPS_PORT:127.0.0.1" \
       "https://$NEW_HOST:$NEW_HTTPS_PORT/health/ready" >/dev/null 2>&1; then
       ok "HTTPS is working: $(public_url)"
@@ -1711,11 +1763,11 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
   local fqdn_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' err=""
   HTTPS_HOST=${HTTPS_HOST:-$NEW_HOST}
   while true; do
-    [[ -n $HTTPS_HOST ]] || ask HTTPS_HOST "Hostname for the app (e.g. meshcore.example.com)?" "" "$err"
+    [[ -n $HTTPS_HOST ]] || ask HTTPS_HOST "Hostname for the app (e.g. meshhome.example.com)?" "" "$err"
     HTTPS_HOST=${HTTPS_HOST,,}
     [[ $HTTPS_HOST =~ $fqdn_re ]] && break
     if ((ASSUME_YES)) || [[ ! -r $TTY_IN ]]; then warn "Invalid or missing hostname for HTTPS"; return 1; fi
-    err="Enter a full hostname such as meshcore.example.com"; HTTPS_HOST=""
+    err="Enter a full hostname such as meshhome.example.com"; HTTPS_HOST=""
   done
   HTTPS_EMAIL=${HTTPS_EMAIL:-$NEW_EMAIL}
   [[ -n $HTTPS_EMAIL ]] || ask HTTPS_EMAIL "Email for Let's Encrypt expiry notices (optional)?" ""
@@ -1725,7 +1777,7 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
   local id name line="" i
   while IFS=$'\t' read -r id name; do ids+=("$id"); names+=("$name"); done < <(acme_py list)
   ((${#ids[@]})) || { warn "The DNS provider list is missing from this release"; return 1; }
-  local current=${MESHCORE_HOME_DNS_PROVIDER:-$(env_get ACME_PROVIDER)}; current=${current:-cloudflare}
+  local current=${MESHHOME_DNS_PROVIDER:-${MESHCORE_HOME_DNS_PROVIDER:-$(env_get ACME_PROVIDER)}}; current=${current:-cloudflare}
   local default=1
   ((TUI_ON)) || printf '\n'
   note "${B}Which DNS provider manages ${HTTPS_HOST#*.}?${N}"
@@ -1800,7 +1852,7 @@ https_setup() {  # interactive (terminal) HTTPS setup; returns 1 if not set up �
   NEW_HTTPS=1 NEW_HOST=$HTTPS_HOST NEW_EMAIL=$HTTPS_EMAIL NEW_PROVIDER=$pick NEW_TOKEN=""
   if ((keep)); then NEW_CREDENTIALS=""; else NEW_CREDENTIALS=$creds; fi
   if ! apply_network_config; then
-    warn "HTTPS was not set up; $APP_NAME is unchanged. Try again any time with: sudo meshcore-home https"
+    warn "HTTPS was not set up; $APP_NAME is unchanged. Try again any time with: sudo $CLI_NAME https"
     return 1
   fi
   step_note "$(public_url) · $pname"
@@ -1822,7 +1874,7 @@ https_restore_kept() {  # reinstall after a plain uninstall: HTTPS is configured
   load_current_network
   NEW_HTTPS=0
   if apply_network_config; then
-    warn "Set HTTPS up again with: sudo meshcore-home https"
+    warn "Set HTTPS up again with: sudo $CLI_NAME https"
   else
     warn "Could not switch to plain HTTP either; see $LOG_FILE"
   fi
@@ -1845,8 +1897,6 @@ https_disable() {
 # what only root can read: the network settings, the HTTPS certificate and key, the DNS provider
 # credentials (all in $ACME_DIR) and the radio HAT's data ($HAT_DATA). The archive is handed over in
 # $STATE_DIR, readable only by the app user, which encrypts it into the backup file at once.
-SYSTEM_EXPORT=$STATE_DIR/system-export.tar.gz
-SYSTEM_RESTORE=$STATE_DIR/system-restore.tar.gz
 NETWORK_KEYS=(HTTPS_ENABLED HTTPS_HOST PORT HTTPS_PORT HTTPS_REDIRECT CERTBOT_EMAIL CERTBOT_STAGING CF_PROPAGATION ACME_CLIENT ACME_PROVIDER)
 
 system_export() {
@@ -1989,7 +2039,7 @@ PY
   write_network_snapshot
 }
 
-apply_config_request() {  # --apply-config: run by meshcore-home-config.service for the web UI
+apply_config_request() {  # --apply-config: run by meshhome-config.service for the web UI
   [[ -f $CONFIG_REQUEST ]] || { log "no config request; nothing to do"; return 0; }
   local parsed
   # Parse and validate with Python, then delete the request at once (it may hold the token).
@@ -2102,14 +2152,11 @@ PY
   esac
 }
 
-sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartPre=+) on every start
+sync_units() {  # --sync-units: run as root by meshhome.service (ExecStartPre=+) on every start
   # Installs helper units that ship with the running release (so a web upgrade from an older
   # version gains new ones), then refreshes the snapshot the app shows. Never fails the start.
   local src="$PREFIX/current/deploy/native/systemd" u changed=0
-  for u in "${HELPER_UNITS[@]}"; do
-    [[ -f $src/$u ]] || continue
-    if ! cmp -s "$src/$u" "$UNIT_DIR/$u"; then install -m 644 "$src/$u" "$UNIT_DIR/$u"; changed=1; fi
-  done
+  for u in "${HELPER_UNITS[@]}"; do put_unit "$src" "$u" && changed=1; done
   ((changed)) && systemctl daemon-reload || true
   for u in "${HELPER_UNITS[@]}"; do
     [[ $u == *.path && -f $UNIT_DIR/$u ]] || continue
@@ -2117,6 +2164,7 @@ sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartP
     systemctl is-active --quiet "$u" 2>/dev/null || systemctl start --no-block "$u" 2>/dev/null || true
   done
   write_network_snapshot
+  lan_discovery_refresh
   return 0
 }
 
@@ -2125,19 +2173,15 @@ sync_units() {  # --sync-units: run as root by meshcore-home.service (ExecStartP
 # the HAT over SPI and serves the MeshCore companion protocol on TCP port 5000, where MeshHome
 # connects ("Radio HAT on this Pi"). It runs as its own unprivileged service that only this Pi can
 # reach. The radio's settings, contacts and channels are managed from MeshHome.
-HAT_DIR=/opt/meshcore-home-radio
-HAT_DATA=/var/lib/meshcore-home-radio
-HAT_USER=meshcore-radio
-HAT_SERVICE=meshcore-home-radio
-HAT_UNIT=$UNIT_DIR/$HAT_SERVICE.service
-HAT_UDEV_RULE=/etc/udev/rules.d/90-meshcore-home-radio.rules
-HAT_STATUS=$STATE_DIR/radio-hat.json
 HAT_SPIDEV=/dev/spidev0.0
 HAT_PROBLEM=""
 
-override() {  # override NAME — a test/mirror override from the environment or the root-owned env file
-  local v=${!1:-}
+override() {  # override MESHHOME_X — a test/mirror override from the environment or the root-owned
+  # env file; MESHCORE_HOME_X (the name before the rename) is read too.
+  local old="MESHCORE_HOME_${1#MESHHOME_}" v=${!1:-}
   [[ -n $v ]] || v=$(env_get "$1")
+  [[ -n $v ]] || v=${!old:-}
+  [[ -n $v ]] || v=$(env_get "$old")
   printf '%s' "$v"
 }
 
@@ -2156,7 +2200,7 @@ hat_lock() {  # load the pinned ZephCore release (ZEPHCORE_*) from the release b
 }
 
 pi_model() {
-  local m; m=$(override MESHCORE_HOME_PI_MODEL)
+  local m; m=$(override MESHHOME_PI_MODEL)
   [[ -n $m || ! -r /proc/device-tree/model ]] || m=$(tr -d '\0' </proc/device-tree/model)
   printf '%s' "$m"
 }
@@ -2179,7 +2223,7 @@ glibc_version() { getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}'; }
 version_ge() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]; }  # version_ge A B: A >= B
 
 boot_config() {
-  local f; f=$(override MESHCORE_HOME_BOOT_CONFIG)
+  local f; f=$(override MESHHOME_BOOT_CONFIG)
   if [[ -n $f ]]; then printf '%s' "$f"; return; fi
   for f in /boot/firmware/config.txt /boot/config.txt; do
     if [[ -f $f ]]; then printf '%s' "$f"; return; fi
@@ -2193,7 +2237,7 @@ meshtastic_present() {
   [[ $(systemctl list-unit-files meshtasticd.service --no-legend 2>/dev/null) == *meshtasticd* ]]
 }
 
-hat_test_mode() { [[ -n $(override MESHCORE_HOME_HAT_TEST) ]]; }  # containers: no SPI device or HAT EEPROM
+hat_test_mode() { [[ -n $(override MESHHOME_HAT_TEST) ]]; }  # containers: no SPI device or HAT EEPROM
 
 hat_installed_version() {
   local t; t=$(readlink -f "$HAT_DIR/zephcore" 2>/dev/null || true)
@@ -2248,7 +2292,7 @@ hat_download() {  # hat_download — fetch and verify the pinned ZephCore build 
   local board asset sha base tmp
   board=$(hat_board)
   if [[ $board == pi5 ]]; then asset=$ZEPHCORE_PI5_ASSET sha=$ZEPHCORE_PI5_SHA256; else asset=$ZEPHCORE_PI4_ASSET sha=$ZEPHCORE_PI4_SHA256; fi
-  base=$(override MESHCORE_HOME_ZEPHCORE_BASE); base=${base:-$ZEPHCORE_BASE_URL}
+  base=$(override MESHHOME_ZEPHCORE_BASE); base=${base:-$ZEPHCORE_BASE_URL}
   tmp=$(mktemp)
   if ! run_bg "Downloading ZephCore $ZEPHCORE_VERSION" curl -fsSL --retry 3 -o "$tmp" "$base/$asset"; then
     rm -f "$tmp"; HAT_PROBLEM="Could not download $base/$asset (check internet access)"; return 1
@@ -2269,7 +2313,7 @@ hat_activate_binary() {  # point $HAT_DIR/zephcore at version $1
 hat_install_files() {  # the start script and unit from the release (also refreshed on upgrades)
   local src; src=$(hat_src) || return 1
   install -m 755 "$src/radio-hat-run" "$HAT_DIR/run"
-  install -m 644 "$src/systemd/$HAT_SERVICE.service" "$HAT_UNIT"
+  put_unit "$src/systemd" "$HAT_SERVICE.service" || true
   if hat_test_mode; then
     # Testing in a container: no SPI device, so start without it (the radio itself stays absent).
     install -d -m 755 "$HAT_UNIT.d"
@@ -2305,7 +2349,7 @@ hat_install() {  # interactive or web-UI setup; returns 1 (without exiting) if t
   note "  • Install the service $HAT_SERVICE: starts at boot, restarts if it stops, and only this Pi can connect to it (port $ZEPHCORE_PORT)"
   note "  • Keep the radio's identity, contacts and channels in $HAT_DATA"
   note "${Y}ZephCore starts on 869.618 MHz, the EU/UK frequency.${N} Before using it, set your region's frequency in MeshHome → Settings → Node settings."
-  ask_yn "Set up the radio HAT?" y || { info "Skipped. Set it up later with: sudo meshcore-home radio-hat"; hat_status absent "Not set up"; return 1; }
+  ask_yn "Set up the radio HAT?" y || { info "Skipped. Set it up later with: sudo $CLI_NAME radio-hat"; hat_status absent "Not set up"; return 1; }
 
   hat_status installing "Downloading ZephCore $ZEPHCORE_VERSION"
   if ! hat_download; then warn "$HAT_PROBLEM"; hat_status failed "$HAT_PROBLEM"; return 1; fi
@@ -2358,8 +2402,8 @@ RULE
     return 0
   fi
   journalctl -u "$HAT_SERVICE" -n 30 --no-pager >>"$LOG_FILE" 2>&1 || true
-  warn "The radio service did not start; see: sudo meshcore-home radio-hat logs"
-  hat_status failed "The radio service did not start. Details: sudo meshcore-home radio-hat logs"
+  warn "The radio service did not start; see: sudo $CLI_NAME radio-hat logs"
+  hat_status failed "The radio service did not start. Details: sudo $CLI_NAME radio-hat logs"
   return 1
 }
 
@@ -2434,11 +2478,11 @@ security_updates_setup() {  # returns 1 if skipped; never cancels the installer
   if security_updates_enabled; then ok "Automatic security updates are already enabled"; step_note "Already on"; return 0; fi
   ((TUI_ON)) || printf '\n'
   note "Debian can install ${B}security updates${N} for the operating system automatically (unattended-upgrades), which is recommended for an always-on Pi. It only applies security fixes from your OS repositories; it never upgrades $APP_NAME itself (you choose when to do that)."
-  ask_yn "Enable automatic security updates?" y || { info "Skipped. Enable later with: sudo meshcore-home security-updates"; return 1; }
+  ask_yn "Enable automatic security updates?" y || { info "Skipped. Enable later with: sudo $CLI_NAME security-updates"; return 1; }
   local missing; mapfile -t missing < <(missing_packages unattended-upgrades)
   if ((${#missing[@]})); then
     apt_review_install "Install this package?" skip "${missing[@]}" ||
-      { info "Skipped. Enable later with: sudo meshcore-home security-updates"; return 1; }
+      { info "Skipped. Enable later with: sudo $CLI_NAME security-updates"; return 1; }
   fi
   # Debian's documented way to switch it on (writes /etc/apt/apt.conf.d/20auto-upgrades).
   echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections
@@ -2460,16 +2504,322 @@ read_request() {  # web-UI upgrade: take the version from the request file writt
   valid_version "$v" || { TARGET_VERSION=""; die "Ignoring invalid update request"; }
   WANT_VERSION=$v
   # One privileged change at a time (shared with web-UI network settings).
-  exec 9>/run/meshcore-home-admin.lock; flock -w 900 9 || true
+  exec 9>$ADMIN_LOCK; flock -w 900 9 || true
   # Mirror overrides live in the root-owned env file (never in the app-writable request).
-  API_URL=$(env_get MESHCORE_HOME_API); API_URL=${API_URL:-https://api.github.com}
-  DOWNLOAD_BASE=$(env_get MESHCORE_HOME_DOWNLOAD_BASE)
+  API_URL=$(override MESHHOME_API); API_URL=${API_URL:-https://api.github.com}
+  DOWNLOAD_BASE=$(override MESHHOME_DOWNLOAD_BASE)
   local repo; repo=$(env_get UPDATE_REPO); REPO=${repo:-$REPO}
   TARGET_VERSION=$v
   status queued "Preparing to upgrade to v$v"
 }
 
 # ---- main ----------------------------------------------------------------------------------
+# ---- LAN discovery (Bonjour / mDNS) ---------------------------------------------------------
+# avahi advertises "_meshhome._tcp" so the MeshHome app can list this server on the local network.
+# The TXT record "url" is the address to open (the HTTPS name when HTTPS is on). The file is
+# refreshed on every app start and after network changes; removing it turns discovery off.
+AVAHI_SERVICE=/etc/avahi/services/meshhome.service
+
+lan_discovery_url() {
+  if https_enabled; then public_url; else printf 'http://%s.local:%s' "$(hostname)" "$(env_get PORT)"; fi
+}
+
+lan_discovery_write() {  # write (or refresh) the advertisement; returns 0 if it changed
+  local url port tmp
+  url=$(lan_discovery_url)
+  port=$(sed -n 's#^[a-z]*://[^/:]*:\([0-9]*\).*#\1#p' <<<"$url")
+  [[ -n $port ]] || { [[ $url == https://* ]] && port=443 || port=80; }
+  tmp=$(mktemp)
+  cat >"$tmp" <<XML
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- MeshHome: lets the MeshHome app find this server. Managed by install.sh; remove with
+     "sudo $CLI_NAME lan-discovery --disable". -->
+<service-group>
+  <name replace-wildcards="yes">MeshHome on %h</name>
+  <service>
+    <type>_meshhome._tcp</type>
+    <port>$port</port>
+    <txt-record>url=$url</txt-record>
+    <txt-record>api=1</txt-record>
+  </service>
+</service-group>
+XML
+  if cmp -s "$tmp" "$AVAHI_SERVICE"; then rm -f "$tmp"; return 1; fi
+  install -m 644 "$tmp" "$AVAHI_SERVICE"; rm -f "$tmp"
+  log "LAN discovery: advertising $url"
+  return 0
+}
+
+lan_discovery_refresh() {  # keep an enabled advertisement in step with the current address
+  [[ -f $AVAHI_SERVICE ]] || return 0
+  lan_discovery_write || true
+}
+
+lan_discovery_setup() {  # returns 1 (without exiting) if it was not turned on
+  local -a missing
+  mapfile -t missing < <(missing_packages avahi-daemon)
+  ((TUI_ON)) || printf '\n'
+  note "${B}LAN discovery${N} lets the MeshHome app on phones and tablets find this server on your network, so"
+  note "nobody has to type its address. Only devices on the same network can see it."
+  note "${B}These changes will be made:${N}"
+  ((${#missing[@]})) && note "  • Install avahi-daemon (Debian's Bonjour/mDNS service)"
+  note "  • Advertise ${B}$(lan_discovery_url)${N} in $AVAHI_SERVICE"
+  ask_yn "Turn on LAN discovery?" y || { info "Skipped. Turn it on later with: sudo $CLI_NAME lan-discovery"; return 1; }
+  if ((${#missing[@]})); then
+    apt_review_install "Install this package?" skip "${missing[@]}" || return 1
+  fi
+  install -d -m 755 "$(dirname "$AVAHI_SERVICE")"
+  lan_discovery_write || true
+  systemctl enable --now avahi-daemon >>"$LOG_FILE" 2>&1 || warn "avahi-daemon did not start (see: journalctl -u avahi-daemon)"
+  ok "LAN discovery is on ($(lan_discovery_url))"
+  step_note "On"
+}
+
+lan_discovery_disable() {
+  if [[ ! -f $AVAHI_SERVICE ]]; then ok "LAN discovery is already off"; return 0; fi
+  note "${B}This will remove${N} $AVAHI_SERVICE, so the app no longer finds this server by itself. avahi-daemon stays installed."
+  confirm "Turn off LAN discovery?"
+  rm -f "$AVAHI_SERVICE"
+  ok "LAN discovery is off"
+}
+
+# ---- migrate: move an install from before the rename to the MeshHome names ------------------------
+# Renames, in one guided step: the database and its role (meshcore → meshhome), the system users
+# (meshcore, meshcore-radio → meshhome, meshhome-radio), the directories under /opt, /etc and
+# /var/lib, the env file, the systemd units, the udev rule, the nginx site and the command. Data is
+# moved, never copied. Every step records how to undo itself; any failure (or an app that does not
+# come back healthy) undoes them all, newest first, and restarts the install as it was.
+MIGRATING=0 UNDO=()
+undo_push() { local s; printf -v s '%q ' "$@"; UNDO+=("$s"); }  # undo_push CMD ARGS… (run on failure)
+migrate_undo() {
+  MIGRATING=0
+  ((${#UNDO[@]})) || return 0
+  warn "Undoing the migration"
+  local i
+  for ((i = ${#UNDO[@]} - 1; i >= 0; i--)); do
+    log "undo: ${UNDO[i]}"
+    eval "${UNDO[i]}" >>"$LOG_FILE" 2>&1 || log "undo step failed: ${UNDO[i]}"
+  done
+  UNDO=()
+  log "migration undone"
+}
+move_path() {  # move_path FROM TO — rename one file or directory (if present), with its undo
+  [[ -e $1 || -L $1 ]] || return 0
+  mv -T "$1" "$2"
+  undo_push mv -T "$2" "$1"
+}
+edit_file() {  # edit_file FILE SED-ARGS… — edit in place, with its undo (the original is kept)
+  [[ -f $1 ]] || return 0
+  local f=$1; shift
+  cp -p "$f" "$f.premigrate"
+  sed -i "$@" "$f"
+  undo_push mv -f "$f.premigrate" "$f"
+}
+MIGRATE_PATHS=(-e "s#/opt/meshcore-home#/opt/meshhome#g" -e "s#/etc/meshcore-home#/etc/meshhome#g"
+  -e "s#/var/lib/meshcore-home#/var/lib/meshhome#g" -e "s#/etc/letsencrypt/meshcore-home-#/etc/letsencrypt/meshhome-#g")
+
+migrate_layout() {
+  local log_file=$LOG_FILE
+  if [[ $LAYOUT == new ]]; then
+    [[ -d $NEW_PREFIX ]] || die "$APP_NAME is not installed"
+    printf '\n  %s✓ This install already uses the MeshHome names; nothing to migrate.%s\n\n' "$G" "$N"
+    return 0
+  fi
+  TARGET_VERSION=$(installed_version)
+  [[ -n $TARGET_VERSION ]] || die "$APP_NAME is not installed"
+  [[ -f $PREFIX/current/deploy/native/systemd/app.service ]] ||
+    die "v$TARGET_VERSION is too old to migrate" "Upgrade first: sudo $CLI_NAME update   (then run: sudo $CLI_NAME migrate)"
+  exec 9>"$ADMIN_LOCK"; flock -n 9 || die "Another change is in progress (an upgrade or a settings change)" "Try again in a few minutes."
+
+  tui_start "Migrate to the MeshHome names"
+  banner
+  STEP_WEIGHTS=(1 2 6 3 3 3 10)
+  plan "Review the changes" "Stop $APP_NAME" "Back up the database" "Rename the database and system users" \
+    "Move files and settings" "Install the renamed services" "Start and check"
+
+  step
+  local problem="" p
+  for p in "$NEW_CONF_DIR" "$NEW_STATE_DIR" /opt/meshhome-acme /opt/meshhome-radio /var/lib/meshhome-radio \
+    /etc/nginx/sites-available/meshhome "$UNIT_DIR/meshhome.service"; do
+    [[ -e $p ]] && problem="$p already exists"
+  done
+  for p in "$NEW_USER" meshhome-radio; do id "$p" >/dev/null 2>&1 && problem="The system user $p already exists"; done
+  [[ -n $(runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$NEW_USER'" 2>/dev/null) ]] &&
+    problem="The database role $NEW_USER already exists"
+  [[ -n $(runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='$NEW_USER'" 2>/dev/null) ]] &&
+    problem="The database $NEW_USER already exists"
+  [[ $(env_get DATABASE_URL) == "postgresql+asyncpg://$OLD_USER@/$OLD_USER?host="* ]] ||
+    problem="DATABASE_URL in $ENV_FILE is not the installer's default, so the database can't be renamed automatically"
+  [[ -n $problem ]] && die "Can't migrate: $problem" "Nothing was changed."
+
+  local hat=0 https=0 acme=0 certbot=0
+  [[ -f $HAT_UNIT ]] && hat=1
+  [[ -f $NGINX_SITE ]] && https=1
+  [[ -f $UNIT_DIR/$SERVICE-acme-renew.timer ]] && acme=1
+  [[ -f $CF_CREDENTIALS ]] && certbot=1
+  ((TUI_ON)) || printf '\n'
+  note "${B}v$TARGET_VERSION is installed under the names from before the rename to MeshHome.${N} This moves it to the new ones:"
+  note "  • Database and role ${B}$OLD_USER${N} → ${B}$NEW_USER${N}; system user ${B}$OLD_USER${N} → ${B}$NEW_USER${N}"
+  note "  • $OLD_PREFIX, $OLD_CONF_DIR, $OLD_STATE_DIR → ${B}$NEW_PREFIX, $NEW_CONF_DIR, $NEW_STATE_DIR${N}"
+  note "  • Services $OLD_SERVICE* → ${B}$NEW_SERVICE*${N}; command ${B}sudo $NEW_SERVICE${N} (sudo $OLD_SERVICE keeps working)"
+  ((https)) && note "  • The nginx HTTPS site and its certificate paths"
+  ((hat)) && note "  • The radio HAT: service, system user (meshhome-radio) and files (the radio's identity moves with it)"
+  note "Your messages, settings, sign-ins, API keys and HTTPS address stay as they are. $APP_NAME is offline"
+  note "for about a minute. A database backup is made first, and if anything fails, every step is undone."
+  confirm "Migrate now?"
+
+  step
+  local -a units=("$SERVICE.service" "${HELPER_UNITS[@]}") enabled=() u
+  ((acme)) && units+=("${ACME_UNITS[@]}")
+  ((hat)) && units+=("$HAT_SERVICE.service")
+  for u in "${units[@]}"; do systemctl is-enabled --quiet "$u" 2>/dev/null && enabled+=("$u"); done
+  log "enabled units: ${enabled[*]}"
+  MIGRATING=1
+  undo_push systemctl start "$SERVICE.service"
+  ((hat)) && undo_push systemctl start "$HAT_SERVICE.service"
+  ((acme)) && undo_push systemctl start "$SERVICE-acme-renew.timer"
+  undo_push systemctl start "$SERVICE-update.path" "$SERVICE-config.path"
+  run "Stopping $APP_NAME" systemctl stop "$SERVICE-update.path" "$SERVICE-config.path" "$SERVICE.service"
+  ((acme)) && { systemctl stop "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true; }
+  ((hat)) && run "Stopping the radio HAT" systemctl stop "$HAT_SERVICE.service"
+
+  step; backup_database
+
+  step
+  run "Renaming the database $OLD_USER to $NEW_USER" runuser -u postgres -- psql -v ON_ERROR_STOP=1 -qc \
+    "ALTER DATABASE \"$OLD_USER\" RENAME TO \"$NEW_USER\"; ALTER ROLE \"$OLD_USER\" RENAME TO \"$NEW_USER\""
+  undo_push runuser -u postgres -- psql -qc "ALTER DATABASE \"$NEW_USER\" RENAME TO \"$OLD_USER\"; ALTER ROLE \"$NEW_USER\" RENAME TO \"$OLD_USER\""
+  usermod -l "$NEW_USER" -d "$NEW_STATE_DIR" "$OLD_USER" >>"$LOG_FILE" 2>&1
+  undo_push usermod -l "$OLD_USER" -d "$OLD_STATE_DIR" "$NEW_USER"
+  groupmod -n "$NEW_USER" "$OLD_USER" >>"$LOG_FILE" 2>&1
+  undo_push groupmod -n "$OLD_USER" "$NEW_USER"
+  if id meshcore-radio >/dev/null 2>&1; then
+    usermod -l meshhome-radio -d /var/lib/meshhome-radio meshcore-radio >>"$LOG_FILE" 2>&1
+    undo_push usermod -l meshcore-radio -d /var/lib/meshcore-radio meshhome-radio
+    groupmod -n meshhome-radio meshcore-radio >>"$LOG_FILE" 2>&1
+    undo_push groupmod -n meshcore-radio meshhome-radio
+  fi
+  ok "Database, role and system users renamed"
+
+  step
+  local old_current; old_current=$(readlink "$PREFIX/current")
+  move_path "$OLD_PREFIX" "$NEW_PREFIX"
+  ln -sfn "$NEW_PREFIX/releases/$(basename "$old_current")" "$NEW_PREFIX/current"
+  undo_push ln -sfn "$old_current" "$NEW_PREFIX/current"
+  # Virtualenv scripts name their own path; the units use "python -m", but keep the scripts working.
+  local f
+  while IFS= read -r f; do edit_file "$f" -e "s#$OLD_PREFIX/#$NEW_PREFIX/#g"; done \
+    < <(grep -rlI --exclude='*.premigrate' "$OLD_PREFIX/" "$NEW_PREFIX"/releases/*/venv/bin "$NEW_PREFIX"/releases/*/venv/pyvenv.cfg 2>/dev/null || true)
+  move_path "$OLD_CONF_DIR/$OLD_SERVICE.env" "$OLD_CONF_DIR/$NEW_SERVICE.env"
+  move_path "$OLD_CONF_DIR" "$NEW_CONF_DIR"
+  move_path "$OLD_STATE_DIR" "$NEW_STATE_DIR"
+  move_path /opt/meshcore-home-acme /opt/meshhome-acme
+  move_path /opt/meshcore-home-radio /opt/meshhome-radio
+  move_path /var/lib/meshcore-home-radio /var/lib/meshhome-radio
+  move_path "/etc/letsencrypt/$OLD_SERVICE-cloudflare.ini" "/etc/letsencrypt/$NEW_SERVICE-cloudflare.ini"
+  edit_file "$NEW_CONF_DIR/$NEW_SERVICE.env" "${MIGRATE_PATHS[@]}" \
+    -e "s#^DATABASE_URL=postgresql+asyncpg://$OLD_USER@/$OLD_USER?#DATABASE_URL=postgresql+asyncpg://$NEW_USER@/$NEW_USER?#" \
+    -e 's#^MESHCORE_INSTALL_KIND=#MESHHOME_INSTALL_KIND=#' -e 's#^MESHCORE_STATE_DIR=#MESHHOME_STATE_DIR=#' \
+    -e 's#^MESHCORE_HOME_#MESHHOME_#' -e 's#^UPDATE_REPO=roach0816/MeshCoreHome$#UPDATE_REPO=roach0816/MeshHome#'
+  # Saved settings snapshots (for "undo" of a network change) hold the same paths.
+  for f in "$NEW_CONF_DIR/.previous/env" "$NEW_CONF_DIR/.previous/nginx-site"; do edit_file "$f" "${MIGRATE_PATHS[@]}"; done
+  if ((certbot)); then  # certbot (before v0.7.4) renews with its own copy of the paths
+    for f in /etc/letsencrypt/renewal/*.conf; do grep -qs "meshcore-home" "$f" && edit_file "$f" "${MIGRATE_PATHS[@]}"; done
+  fi
+  if ((https)); then
+    move_path "$NGINX_SITE" "/etc/nginx/sites-available/$NEW_SERVICE"
+    edit_file "/etc/nginx/sites-available/$NEW_SERVICE" "${MIGRATE_PATHS[@]}"
+    if [[ -L $NGINX_ENABLED ]]; then
+      rm -f "$NGINX_ENABLED"; undo_push ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
+      ln -sfn "/etc/nginx/sites-available/$NEW_SERVICE" "/etc/nginx/sites-enabled/$NEW_SERVICE"
+      undo_push rm -f "/etc/nginx/sites-enabled/$NEW_SERVICE"
+    fi
+  fi
+  move_path "$HAT_UDEV_RULE" "/etc/udev/rules.d/90-$NEW_SERVICE-radio.rules"
+  ok "Files moved to $NEW_PREFIX, $NEW_CONF_DIR and $NEW_STATE_DIR"
+
+  step
+  # Keep the old unit files aside (restored on undo), then install the new ones from the release.
+  local aside; aside=$(mktemp -d "$UNIT_DIR/.premigrate.XXXXXX")
+  undo_push systemctl daemon-reload
+  undo_push rm -rf "$aside"
+  for u in "${units[@]}"; do
+    # Drop-in overrides (e.g. meshcore-home.service.d/) keep applying under the new name.
+    move_path "$UNIT_DIR/$u.d" "$UNIT_DIR/${u/#$OLD_SERVICE/$NEW_SERVICE}.d"
+    [[ -e $UNIT_DIR/$u ]] || continue
+    systemctl disable "$u" >>"$LOG_FILE" 2>&1 || true
+    [[ " ${enabled[*]} " == *" $u "* ]] && undo_push systemctl enable "$u"  # runs after the move back
+    mv "$UNIT_DIR/$u" "$aside/"; undo_push mv "$aside/$u" "$UNIT_DIR/$u"
+  done
+  local -a old_enabled=("${enabled[@]}") new_units=() new_enabled=()
+  use_layout new
+  LOG_FILE=$log_file
+  local src="$PREFIX/current/deploy/native/systemd"
+  new_units=("$SERVICE.service" "${HELPER_UNITS[@]}")
+  ((acme)) && new_units+=("${ACME_UNITS[@]}")
+  ((hat)) && new_units+=("$HAT_SERVICE.service")
+  for u in "${new_units[@]}"; do
+    put_unit "$src" "$u" || true
+    undo_push rm -f "$UNIT_DIR/$u"
+  done
+  ((hat)) && [[ -f $HAT_DIR/run ]] && install -m 755 "$src/../radio-hat-run" "$HAT_DIR/run"
+  for u in "${old_enabled[@]}"; do new_enabled+=("${u/#$OLD_SERVICE/$NEW_SERVICE}"); done
+  systemctl daemon-reload
+  if ((${#new_enabled[@]})); then
+    systemctl enable "${new_enabled[@]}" >>"$LOG_FILE" 2>&1
+    undo_push systemctl disable "${new_enabled[@]}"
+  fi
+  command -v udevadm >/dev/null && udevadm control --reload-rules >>"$LOG_FILE" 2>&1 || true
+  if ((https)); then
+    run "Checking the nginx configuration" nginx -t
+    undo_push systemctl reload nginx
+    systemctl reload nginx >>"$LOG_FILE" 2>&1 || true
+  fi
+  ln -sfn "$PREFIX/current/deploy/native/meshhome" "$CLI_LINK"
+  undo_push rm -f "$CLI_LINK"
+  ln -sfn "$PREFIX/current/deploy/native/meshhome" "/usr/local/bin/$OLD_SERVICE"  # the old command keeps working
+  undo_push ln -sfn "$OLD_PREFIX/current/deploy/native/meshhome" "/usr/local/bin/$OLD_SERVICE"
+  ok "Services installed: ${new_units[*]}"
+
+  step
+  undo_push systemctl stop "${new_units[@]}"
+  local port; port=$(env_get PORT); port=${port:-$DEFAULT_PORT}
+  systemctl start "$SERVICE-update.path" "$SERVICE-config.path" >>"$LOG_FILE" 2>&1 || true
+  ((acme)) && { systemctl start "$SERVICE-acme-renew.timer" >>"$LOG_FILE" 2>&1 || true; }
+  ((hat)) && { systemctl start "$HAT_SERVICE.service" >>"$LOG_FILE" 2>&1 || true; }
+  if ! systemctl start "$SERVICE.service" >>"$LOG_FILE" 2>&1 ||
+    ! run_check "Started; waiting for $APP_NAME to become ready" wait_healthy "$port" "$TARGET_VERSION" 120; then
+    journalctl -u "$SERVICE" -n 30 --no-pager >>"$LOG_FILE" 2>&1 || true
+    systemctl reset-failed "$SERVICE.service" >>"$LOG_FILE" 2>&1 || true
+    die "$APP_NAME did not start under the new names" "Every step was undone and the install runs as before. Details: $LOG_FILE"
+  fi
+  if [[ -n $(override MESHHOME_TEST_MIGRATE_FAIL) ]]; then  # testing only: exercise the undo
+    die "Test failure requested (MESHHOME_TEST_MIGRATE_FAIL)" "Every step was undone."
+  fi
+  MIGRATING=0 UNDO=()
+
+  # Done: tidy up what undo would have needed, and releases from before the rename.
+  find "$NEW_PREFIX/releases" "$NEW_CONF_DIR" /etc/letsencrypt/renewal /etc/nginx/sites-available \
+    -name '*.premigrate' -delete 2>/dev/null || true
+  rm -rf "$aside"
+  local d
+  for d in "$PREFIX"/releases/*; do
+    [[ -d $d && $d != "$(readlink -f "$PREFIX/current")" ]] || continue
+    version_gt 0.10.0 "$(basename "$d")" && { rm -rf "$d"; log "pruned $d (from before the rename)"; }
+  done
+  lan_discovery_refresh
+  write_network_snapshot
+  step_note "Running"
+  steps_done
+  tui_end
+  mv -f "$log_file" "$LOG_FILE" 2>/dev/null || true
+  log "migrated to the MeshHome names"
+  printf '\n  %s%s✓ Migrated. %s v%s is running as %s.%s\n' "$G" "$B" "$APP_NAME" "$TARGET_VERSION" "$SERVICE" "$N"
+  printf '    Manage it with: %ssudo %s status | logs | update | …%s  (sudo %s still works)\n' "$B" "$CLI_NAME" "$N" "$OLD_SERVICE"
+  printf '    %sThe database backup from before the move is in %s%s\n\n' "$D" "$BACKUP_DIR" "$N"
+}
+
 main() {
   [[ $EUID -eq 0 ]] || { echo "Please run as root:  sudo bash $0" >&2; exit 1; }
   mkdir -p "$(dirname "$LOG_FILE")"; : >>"$LOG_FILE"; chmod 600 "$LOG_FILE"
@@ -2477,12 +2827,23 @@ main() {
 
   if [[ $MODE == uninstall ]]; then uninstall; return; fi
   if [[ $MODE == sync-units ]]; then sync_units; return 0; fi
+  if [[ $MODE == migrate ]]; then migrate_layout; return; fi
+  if [[ $MODE == lan-discovery || $MODE == lan-discovery-off ]]; then
+    [[ -n $(installed_version) ]] || die "$APP_NAME is not installed"
+    TARGET_VERSION=$(installed_version)
+    tui_start "LAN discovery"; plan "LAN discovery"; step
+    if [[ $MODE == lan-discovery-off ]]; then lan_discovery_disable
+    else lan_discovery_setup || { step_skip "Not turned on"; tui_end; exit 1; }; fi
+    steps_done; tui_end
+    return
+  fi
   if [[ $MODE == apply-config ]]; then
     [[ -n $(installed_version) ]] || exit 1
     TARGET_VERSION=$(installed_version)
     # One privileged change at a time (shared with web-UI upgrades).
-    exec 9>/run/meshcore-home-admin.lock; flock -w 900 9 || exit 1
+    exec 9>$ADMIN_LOCK; flock -w 900 9 || exit 1
     apply_config_request || exit 1
+    lan_discovery_refresh
     return 0
   fi
   if [[ $MODE == radio-hat-sync ]]; then hat_sync; return; fi
@@ -2572,7 +2933,7 @@ main() {
   STEP_WEIGHTS=(3 1 20 1 6 40 4 12)
   local offer_hat=0
   if [[ -n $(hat_board) ]]; then offer_hat=1; titles+=("Radio HAT (optional)"); STEP_WEIGHTS+=(8); fi
-  titles+=("HTTPS (optional)" "Automatic security updates (optional)"); STEP_WEIGHTS+=(7 6)
+  titles+=("HTTPS (optional)" "LAN discovery (optional)" "Automatic security updates (optional)"); STEP_WEIGHTS+=(7 2 6)
   plan "${titles[@]}"
   step; preflight
   step; choose_version
@@ -2591,7 +2952,7 @@ main() {
     elif ask_yn "Set up a RAK6421 radio HAT on this Pi? (no HAT was detected)" n; then
       hat_install || step_skip "Not set up"
     else
-      info "Skipped. Set it up later with: sudo meshcore-home radio-hat"
+      info "Skipped. Set it up later with: sudo $CLI_NAME radio-hat"
       step_skip "Skipped"
     fi
   fi
@@ -2605,9 +2966,10 @@ main() {
   elif [[ -n $HTTPS_HOST ]] || ask_yn "Set up HTTPS with a trusted certificate now? (needs a domain and a DNS provider API key)" n; then
     https_setup || step_skip "Not set up"
   else
-    info "Skipped. You can add it later with: sudo meshcore-home https"
+    info "Skipped. You can add it later with: sudo $CLI_NAME https"
     step_skip "Skipped"
   fi
+  step; lan_discovery_setup || step_skip "Skipped"
   step; security_updates_setup || step_skip "Skipped"
   finish
 }

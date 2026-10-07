@@ -26,6 +26,7 @@ final class MessagingUITests: XCTestCase {
         app.secureTextFields["Password"].tap()
         app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
 
         let publicRow = app.staticTexts["Public"]
         XCTAssertTrue(publicRow.waitForExistence(timeout: 15), "conversation list didn't load")
@@ -78,6 +79,7 @@ final class MessagingUITests: XCTestCase {
         user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
         app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
 
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
         app.buttons["Settings"].tap()
@@ -115,6 +117,7 @@ final class MessagingUITests: XCTestCase {
         user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
         app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
 
         XCTAssertTrue(app.buttons["Add channel"].waitForExistence(timeout: 15))
         app.buttons["Add channel"].tap()
@@ -162,7 +165,14 @@ final class MessagingUITests: XCTestCase {
         user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
         app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
+    }
+
+    /// iOS may offer to save the password after signing in; that sheet covers the screen.
+    private func dismissSavePassword(_ app: XCUIApplication) {
+        let notNow = app.buttons["Not Now"]
+        if notNow.waitForExistence(timeout: 3) { notNow.tap() }
     }
 
     private func any(_ app: XCUIApplication, containing text: String) -> XCUIElement {
@@ -403,10 +413,31 @@ final class MessagingUITests: XCTestCase {
         user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
         app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
         app.buttons["Settings"].tap()
         XCTAssertTrue(any(app, containing: "Connected").waitForExistence(timeout: 20), "live updates didn't connect")
         shot(app, "41-trusted")
+    }
+
+    /// LAN discovery: a server advertised as "_meshhome._tcp" (run `dns-sd -R` on the Mac; the
+    /// simulator shares its network) is listed on the sign-in screen and connects when tapped.
+    func testFindsServerOnNetwork() throws {
+        guard let name = env["MESHHOME_TEST_DISCOVERY_NAME"] else { throw XCTSkip("no advertised test server") }
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-reset"]
+        app.launch()
+        let found = any(app, containing: name)
+        XCTAssertTrue(found.waitForExistence(timeout: 20), "the advertised server wasn't listed")
+        shot(app, "45-discovered")
+        found.tap()
+        let user = app.textFields["Username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 15), "the discovered server didn't connect")
+        user.tap(); user.typeText(env["MESHHOME_TEST_USER"] ?? "owner")
+        app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
+        app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
     }
 
     /// Apple's accessibility audit on the main screens. Each issue is reported (and fails the test).
@@ -461,6 +492,7 @@ final class MessagingUITests: XCTestCase {
         user.tap(); user.typeText("owner")
         app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText(env["MESHHOME_TEST_PASSWORD"] ?? "")
         app.buttons["Sign in"].tap()
+        dismissSavePassword(app)
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
         shot(app, "50-xxl-list")
         app.staticTexts["Public"].tap()

@@ -83,7 +83,15 @@ export function Updates() {
                 <dt className="text-muted">Installed version</dt>
                 <dd className="font-medium">v{d.current_version}</dd>
                 <dt className="text-muted">Installed as</dt>
-                <dd>{d.install_kind === "native" ? "Native (Debian / Raspberry Pi)" : "Container (Docker / Kubernetes)"}</dd>
+                <dd>
+                  {d.install_kind === "native" ? "Native (Debian / Raspberry Pi)" : "Container (Docker / Kubernetes)"}
+                  {d.legacy_layout && (
+                    <span className="block text-xs text-muted">
+                      Still uses the names from before the rename to MeshHome. To move it to the new ones, run{" "}
+                      <code className="font-mono">sudo meshcore-home migrate</code> on the device.
+                    </span>
+                  )}
+                </dd>
                 <dt className="text-muted">Last checked</dt>
                 <dd>
                   {d.checked_at ? relativeSeconds(d.checked_at) : d.checks_enabled ? "Not yet" : "Update checks are disabled"}
@@ -97,6 +105,7 @@ export function Updates() {
             <Progress
               initial={startedHere ? null : d.status}
               target={install.variables ?? d.status?.version ?? d.latest?.version ?? ""}
+              command={d.command}
             />
           )}
 
@@ -122,7 +131,7 @@ export function Updates() {
               ) : d.install_kind === "native" ? (
                 <p className="rounded-lg bg-surface-2 px-3 py-2 text-sm text-muted">
                   This release doesn't have a Raspberry Pi / Debian package yet. Check again in a few minutes, or upgrade
-                  from a terminal: <code className="font-mono">sudo meshcore-home update</code>
+                  from a terminal: <code className="font-mono">sudo {d.command ?? "meshhome"} update</code>
                 </p>
               ) : (
                 <p className="rounded-lg bg-surface-2 px-3 py-2 text-sm text-muted">
@@ -166,7 +175,7 @@ export function Updates() {
 
           {d?.status && !watching && (d.status.state === "failed" || d.status.state === "rolled_back") && (
             <Section title="Last update attempt">
-              <StatusDetail st={d.status} />
+              <StatusDetail st={d.status} command={d.command} />
             </Section>
           )}
 
@@ -236,7 +245,7 @@ function ReleaseNotes({ text }: { text: string }) {
   );
 }
 
-function StatusDetail({ st }: { st: UpdateStatus }) {
+function StatusDetail({ st, command = "meshhome" }: { st: UpdateStatus; command?: string }) {
   const bad = st.state === "failed" || st.state === "rolled_back";
   return (
     <div className="space-y-2 text-sm">
@@ -258,8 +267,8 @@ function StatusDetail({ st }: { st: UpdateStatus }) {
       )}
       {bad && (
         <p className="text-xs text-muted">
-          Full details: <code className="font-mono">meshcore-home logs</code> and{" "}
-          <code className="font-mono">/var/log/meshcore-home-install.log</code> on the device.
+          Full details: <code className="font-mono">{command} logs</code> and{" "}
+          <code className="font-mono">/var/log/{command}-install.log</code> on the device.
         </p>
       )}
     </div>
@@ -267,7 +276,7 @@ function StatusDetail({ st }: { st: UpdateStatus }) {
 }
 
 /** Polls the updater's status file through the API, riding through the app's own restart. */
-function Progress({ initial, target }: { initial: UpdateStatus | null; target: string }) {
+function Progress({ initial, target, command }: { initial: UpdateStatus | null; target: string; command?: string }) {
   const qc = useQueryClient();
   const [offline, setOffline] = useState(false);
   const started = useRef(Date.now() / 1000);
@@ -331,7 +340,7 @@ function Progress({ initial, target }: { initial: UpdateStatus | null; target: s
           <CheckCircle2 className="size-4" aria-hidden /> Done. Reloading the new version…
         </p>
       ) : failed && st ? (
-        <StatusDetail st={st} />
+        <StatusDetail st={st} command={command} />
       ) : (
         <p className="text-sm text-muted" role="status" aria-live="polite">
           {offline ? "The app is restarting — reconnecting…" : st?.message ?? "Waiting for the updater to start…"}

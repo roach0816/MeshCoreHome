@@ -11,7 +11,7 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.7.0"
+    MARKETING_VERSION: "0.8.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   MeshHome:
@@ -29,7 +29,7 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: MeshHome connects to your MeshHome server on your home network.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: MeshHome finds and connects to your MeshHome server on your home network.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: MeshHome uses your location only when you ask it to place your radio or a node at this phone's position.
         INFOPLIST_KEY_NSCameraUsageDescription: MeshHome uses the camera to scan the pairing QR code your MeshHome server shows.
@@ -41,6 +41,8 @@ targets:
           # LAN or over a VPN, over HTTPS (possibly with a self-signed certificate the user trusts
           # explicitly, see CertificateTrust.swift) or plain HTTP. ATS can't know those addresses.
           NSAllowsArbitraryLoads: true
+        # LAN discovery: servers that advertise themselves (see ServerBrowser.swift).
+        NSBonjourServices: [_meshhome._tcp]
         CFBundleURLTypes:
           - CFBundleURLName: app.meshhome.pair
             CFBundleURLSchemes: [meshhome]

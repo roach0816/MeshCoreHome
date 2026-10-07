@@ -32,7 +32,7 @@ jobs:
       - name: Smoke-test the package installs its Python dependencies on arm64 (Raspberry Pi)
         run: |
           docker run --rm --platform linux/arm64 -v "$PWD/dist-release:/r:ro" python:3.11-slim-bookworm bash -c '
-            set -e; mkdir /t && tar -xzf /r/meshcore-home-*.tar.gz -C /t --strip-components=1
+            set -e; mkdir /t && tar -xzf /r/meshhome-*.tar.gz -C /t --strip-components=1
             python -m venv /t/venv && /t/venv/bin/pip install -q --only-binary=:all: -r /t/requirements.txt
             cd /t && /t/venv/bin/python -c "import app.main"'
       - name: Attach to the GitHub release

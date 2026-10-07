@@ -2,8 +2,11 @@
 # certbot deploy hook for MeshHome (also run once after HTTPS setup): reload nginx so a
 # renewed certificate is used, and record the certificate's expiry for the app to display.
 set -euo pipefail
-ENV_FILE=/etc/meshcore-home/meshcore-home.env
-STATE_DIR=/var/lib/meshcore-home
+if [[ -f /etc/meshhome/meshhome.env ]]; then
+  ENV_FILE=/etc/meshhome/meshhome.env STATE_DIR=/var/lib/meshhome
+else  # an install from before the rename to MeshHome
+  ENV_FILE=/etc/meshcore-home/meshcore-home.env STATE_DIR=/var/lib/meshcore-home
+fi
 cert=$(sed -n 's/^TLS_CERT=//p' "$ENV_FILE" 2>/dev/null | tail -n1)
 host=$(sed -n 's/^HTTPS_HOST=//p' "$ENV_FILE" 2>/dev/null | tail -n1)
 enabled=$(sed -n 's/^HTTPS_ENABLED=//p' "$ENV_FILE" 2>/dev/null | tail -n1)

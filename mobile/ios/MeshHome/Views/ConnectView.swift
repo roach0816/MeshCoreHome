@@ -11,6 +11,7 @@ struct ConnectView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var scanning = false
+    @State private var browser = ServerBrowser()
     /// A server whose certificate iOS doesn't trust: its fingerprint, for trust on first use.
     @State private var untrusted: (url: URL, fingerprint: String)?
     @FocusState private var focus: Field?
@@ -20,6 +21,25 @@ struct ConnectView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if meta == nil, !browser.servers.isEmpty {
+                    Section {
+                        ForEach(browser.servers) { found in
+                            Button {
+                                address = found.url
+                                Task { await check() }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(found.name).foregroundStyle(.primary)
+                                    Text(found.url).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(busy)
+                            .accessibilityHint("Connects to this server")
+                        }
+                    } header: {
+                        Text("On your network")
+                    }
+                }
                 Section {
                     TextField("meshhome.example.com or 192.168.1.20:8080", text: $address)
                         .keyboardType(.URL)
@@ -104,7 +124,8 @@ struct ConnectView: View {
                 }
             }
             .navigationTitle("MeshHome")
-            .onAppear { focus = .address; usePairing() }
+            .onAppear { focus = .address; usePairing(); browser.start() }
+            .onDisappear { browser.stop() }
             .onChange(of: model.pairingAddress) { _, _ in usePairing() }
             .sheet(isPresented: $scanning) {
                 QRScanner { code in

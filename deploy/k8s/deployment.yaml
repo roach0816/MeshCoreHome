@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: meshcore
-  labels: { app.kubernetes.io/name: meshcore, app.kubernetes.io/part-of: meshcore }
+  name: meshhome
+  labels: { app.kubernetes.io/name: meshhome, app.kubernetes.io/part-of: meshhome }
 spec:
   # One pod owns the radio connection. Recreate so two never overlap during a rollout.
   replicas: 1
   strategy: { type: Recreate }
   selector:
-    matchLabels: { app.kubernetes.io/name: meshcore }
+    matchLabels: { app.kubernetes.io/name: meshhome }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: meshcore, app.kubernetes.io/part-of: meshcore }
+      labels: { app.kubernetes.io/name: meshhome, app.kubernetes.io/part-of: meshhome }
     spec:
       terminationGracePeriodSeconds: 45
       securityContext:
@@ -26,10 +26,10 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_PASSWORD
-              valueFrom: { secretKeyRef: { name: meshcore-db, key: POSTGRES_PASSWORD } }
+              valueFrom: { secretKeyRef: { name: meshhome-db, key: POSTGRES_PASSWORD } }
             # $(POSTGRES_PASSWORD) is expanded by Kubernetes; use a URL-safe password.
             - name: DATABASE_URL
-              value: postgresql+asyncpg://meshcore:$(POSTGRES_PASSWORD)@meshcore-db:5432/meshcore
+              value: postgresql+asyncpg://meshhome:$(POSTGRES_PASSWORD)@meshhome-db:5432/meshhome
             - { name: RADIO_ENABLED, value: "true" }
             - { name: COOKIE_SECURE, value: "auto" }
           ports:

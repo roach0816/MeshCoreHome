@@ -363,6 +363,8 @@ export interface UpdateInfo {
   installed: { version: string; url: string; notes: string; published_at: string | null } | null;
   update_available: boolean;
   can_install: boolean;
+  command?: string;
+  legacy_layout?: boolean;
   status: UpdateStatus | null;
 }
 

@@ -1,4 +1,4 @@
-"""Health snapshot for `meshcore-home status` on native installs.
+"""Health snapshot for `meshhome status` on native installs.
 
 Every 30 seconds the app writes <state dir>/diagnostics.json with its own view of things that
 only it knows: the live radio connection and its last error, collection gaps, the database as

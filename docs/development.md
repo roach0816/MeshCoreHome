@@ -65,7 +65,7 @@ library. See [AGENTS.md](../AGENTS.md) for the project's working rules.
 
 ## Releases and forks
 
-- Pushing a `vX.Y.Z` tag runs `release-assets.yml`, which attaches `meshcore-home-X.Y.Z.tar.gz`,
+- Pushing a `vX.Y.Z` tag runs `release-assets.yml`, which attaches `meshhome-X.Y.Z.tar.gz` (and the same file under its old name, `meshcore-home-X.Y.Z.tar.gz`, for installers from before the rename),
   `install.sh` and `SHA256SUMS` to the GitHub release. Native installs update from those files.
 - Point the native installer at a fork with `MESHCORE_HOME_REPO=<owner>/<repo> sudo -E bash install.sh`.
 - Container images and Fleet from a fork: see

@@ -25,7 +25,7 @@ the passphrase somewhere safe: a lost passphrase means a lost backup.
 
 ## Where backups are kept
 
-- **Native installs** keep backups in `/var/lib/meshcore-home/user-backups` until you delete them, with
+- **Native installs** keep backups in `/var/lib/meshhome/user-backups` until you delete them, with
   Download and Delete buttons in Settings. Download copies and keep them off the Pi:
   `uninstall --purge` deletes that folder.
 - **Container installs** hand you the file to download straight away (the container has no persistent
@@ -54,18 +54,18 @@ native installs, the replaced certificate folder and HAT data are also kept as `
 
 These are separate from the encrypted backups above and are meant for repairs:
 
-- **Native:** `sudo meshcore-home backup` writes an unencrypted database dump to
-  `/var/lib/meshcore-home/backups`. Updates make one automatically before upgrading.
-- **Kubernetes:** the `meshcore-db-backup` CronJob runs daily at 03:17 UTC. It writes
-  `meshcore-<timestamp>.dump` and a `.sha256` file to the `meshcore-backups` volume, keeps 30 days,
+- **Native:** `sudo meshhome backup` writes an unencrypted database dump to
+  `/var/lib/meshhome/backups`. Updates make one automatically before upgrading.
+- **Kubernetes:** the `meshhome-db-backup` CronJob runs daily at 03:17 UTC. It writes
+  `meshhome-<timestamp>.dump` and a `.sha256` file to the `meshhome-backups` volume, keeps 30 days,
   and always keeps the newest three. To run one now:
-  `kubectl -n meshcore create job --from=cronjob/meshcore-db-backup backup-now`.
+  `kubectl -n meshhome create job --from=cronjob/meshhome-db-backup backup-now`.
 
 Restoring a dump in Kubernetes (fetch the dump from the backup volume, pause the radio in Settings
 first):
 
 ```bash
-kubectl -n meshcore exec -i deploy/meshcore-db -- \
-  pg_restore --clean --if-exists -U meshcore -d meshcore < meshcore-<timestamp>.dump
-kubectl -n meshcore rollout restart deploy/meshcore
+kubectl -n meshhome exec -i deploy/meshhome-db -- \
+  pg_restore --clean --if-exists -U meshhome -d meshhome < meshhome-<timestamp>.dump
+kubectl -n meshhome rollout restart deploy/meshcore
 ```

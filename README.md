@@ -67,9 +67,9 @@ with 64-bit Raspberry Pi OS, or any 64-bit Debian system.
 4. **Complete the setup wizard** in the browser (see [First-run setup](#first-run-setup)).
 5. **Optional:** turn on HTTPS in **Settings → Network & HTTPS** if you skipped it in the installer.
 
-Afterwards, `sudo meshcore-home status` checks the whole installation, and updates install from
+Afterwards, `sudo meshhome status` checks the whole installation, and updates install from
 **Settings → Software updates**. Details: [Raspberry Pi and Debian install](docs/install-native.md)
-(HTTPS, radio HAT, updates, the `meshcore-home` command).
+(HTTPS, radio HAT, updates, the `meshhome` command).
 
 ### Option 2: Container
 
@@ -93,7 +93,7 @@ Afterwards, `sudo meshcore-home status` checks the whole installation, and updat
 
 **Kubernetes** (K3s with Rancher Continuous Delivery):
 
-1. Create the `meshcore` namespace, the database Secret and the volumes from the
+1. Create the `meshhome` namespace, the database Secret and the volumes from the
    `deploy/k8s/*.example.yaml` templates.
 2. Add this repository to Rancher Continuous Delivery (Fleet) with the path `deploy/k8s`. Fleet deploys
    the app and its database, and rolls out each new build automatically.

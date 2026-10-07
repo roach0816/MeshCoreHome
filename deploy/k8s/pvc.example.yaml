@@ -8,8 +8,8 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: meshcore-db-data
-  namespace: meshcore
+  name: meshhome-db-data
+  namespace: meshhome
 spec:
   storageClassName: <YOUR_NFS_STORAGECLASS>
   accessModes: ["ReadWriteOnce"]
@@ -20,8 +20,8 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: meshcore-backups
-  namespace: meshcore
+  name: meshhome-backups
+  namespace: meshhome
 spec:
   storageClassName: <YOUR_NFS_STORAGECLASS>
   accessModes: ["ReadWriteOnce"]

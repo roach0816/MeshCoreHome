@@ -62,8 +62,8 @@ module), and MeshHome installs and runs the radio software for you. See
 
 ## Troubleshooting
 
-On a Raspberry Pi or Debian install, start with `sudo meshcore-home status`
-([details](install-native.md#diagnostics-meshcore-home-status)). It checks the radio connection and
+On a Raspberry Pi or Debian install, start with `sudo meshhome status`
+([details](install-native.md#diagnostics-meshhome-status)). It checks the radio connection and
 the rest of the installation, and suggests what to do next.
 
 | Symptom | Likely cause |

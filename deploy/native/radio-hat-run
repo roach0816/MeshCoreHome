@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Starts ZephCore for the MeshHome radio HAT (run by meshcore-home-radio.service).
+# Starts ZephCore for the MeshHome radio HAT (run by the meshhome-radio service).
 #
 # Finds the gpiochip that drives the Pi's 40-pin header at every start rather than storing it:
 # Raspberry Pi 5 kernels moved it from gpiochip4 to gpiochip0, and the radio's control pins
 # (RAK6421 IO slot 1) are on that chip. The radio's identity, contacts and channels are kept in
 # the service's data directory, independent of the hostname.
 set -euo pipefail
-DIR=/opt/meshcore-home-radio
-DATA=/var/lib/meshcore-home-radio
+if [[ -d /opt/meshhome-radio ]]; then DIR=/opt/meshhome-radio DATA=/var/lib/meshhome-radio
+else DIR=/opt/meshcore-home-radio DATA=/var/lib/meshcore-home-radio; fi  # before the rename
 SPIDEV=/dev/spidev0.0
 
-chip=${MESHCORE_HOME_HAT_GPIOCHIP:-}
+chip=${MESHHOME_HAT_GPIOCHIP:-${MESHCORE_HOME_HAT_GPIOCHIP:-}}
 if [[ -z $chip ]]; then
   chip=$(python3 - <<'PY' 2>/dev/null || true
 import fcntl, glob

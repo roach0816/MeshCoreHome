@@ -7,11 +7,11 @@ ConditionPathExists=/dev/spidev0.0
 
 [Service]
 Type=simple
-User=meshcore-radio
-Group=meshcore-radio
+User=@HAT_USER@
+Group=@HAT_USER@
 SupplementaryGroups=spi gpio
-WorkingDirectory=/var/lib/meshcore-home-radio
-ExecStart=/opt/meshcore-home-radio/run
+WorkingDirectory=@HAT_DATA@
+ExecStart=@HAT_DIR@/run
 Restart=always
 RestartSec=3
 # The companion port (5000) has no password, so only this Pi may connect to it.
@@ -22,7 +22,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/var/lib/meshcore-home-radio
+ReadWritePaths=@HAT_DATA@
 ProtectControlGroups=yes
 ProtectKernelModules=yes
 LockPersonality=yes

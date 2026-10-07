@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: meshcore
-  labels: { app.kubernetes.io/name: meshcore, app.kubernetes.io/part-of: meshcore }
+  name: meshhome
+  labels: { app.kubernetes.io/name: meshhome, app.kubernetes.io/part-of: meshhome }
 spec:
   type: ClusterIP
-  selector: { app.kubernetes.io/name: meshcore }
+  selector: { app.kubernetes.io/name: meshhome }
   ports:
     - name: http
       port: 80

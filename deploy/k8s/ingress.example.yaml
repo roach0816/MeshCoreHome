@@ -6,8 +6,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: meshcore
-  namespace: meshcore
+  name: meshhome
+  namespace: meshhome
   annotations:
     cert-manager.io/cluster-issuer: <YOUR_CLUSTER_ISSUER>
 spec:
@@ -20,9 +20,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: meshcore
+                name: meshhome
                 port:
                   number: 80
   tls:
     - hosts: ["<YOUR_HOSTNAME>"]
-      secretName: meshcore-tls
+      secretName: meshhome-tls

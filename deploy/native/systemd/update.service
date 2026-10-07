@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # Runs as root. Only installs an official, checksum-verified release from the repository in
-# /etc/meshcore-home/meshcore-home.env, backs up the database first, and rolls back if the new
+# @ENV_FILE@, backs up the database first, and rolls back if the new
 # version doesn't start. The request file only selects a version number.
-ExecStart=/opt/meshcore-home/current/deploy/native/install.sh --from-request
+ExecStart=@PREFIX@/current/deploy/native/install.sh --from-request
 TimeoutStartSec=30min

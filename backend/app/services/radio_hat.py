@@ -1,6 +1,6 @@
 """The optional radio HAT on a native Raspberry Pi install (RAK6421 + RAK13300, run by ZephCore).
 
-The root helper (`install.sh`) installs ZephCore as the `meshcore-home-radio` service and
+The root helper (`install.sh`) installs ZephCore as the `meshhome-radio` service and
 reports what it did in <state dir>/radio-hat.json. This module combines that file with what any
 user can read live: the Pi model, the HAT's EEPROM identity, the SPI device and the service
 state. The app itself never changes system configuration; setup, removal, restart and the Pi
@@ -23,7 +23,13 @@ from app.config import get_settings
 
 HOST = "127.0.0.1"
 PORT = 5000
-SERVICE = "meshcore-home-radio"
+# The radio service's name: meshhome-radio, or meshcore-home-radio on an install from before the
+# rename to MeshHome that hasn't been migrated yet (its state directory still has the old name).
+SERVICE = (
+    "meshcore-home-radio"
+    if get_settings().state_dir.rstrip("/").endswith("meshcore-home")
+    else "meshhome-radio"
+)
 STATUS_FILE = "radio-hat.json"
 SPIDEV = "/dev/spidev0.0"
 ACTIVE_STATES = {"checking", "installing", "rebooting"}
@@ -44,11 +50,15 @@ def _read(path: str) -> str | None:
 
 def _test_mode() -> bool:
     # Container tests only (same knob as install.sh): no SPI device or HAT EEPROM exists there.
-    return bool(os.environ.get("MESHCORE_HOME_HAT_TEST"))
+    return bool(os.environ.get("MESHHOME_HAT_TEST") or os.environ.get("MESHCORE_HOME_HAT_TEST"))
 
 
 def pi_model() -> str | None:
-    return os.environ.get("MESHCORE_HOME_PI_MODEL") or _read("/proc/device-tree/model")
+    return (
+        os.environ.get("MESHHOME_PI_MODEL")
+        or os.environ.get("MESHCORE_HOME_PI_MODEL")
+        or _read("/proc/device-tree/model")
+    )
 
 
 def board(model: str | None) -> str | None:

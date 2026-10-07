@@ -1,7 +1,7 @@
 """Release update checks (GitHub Releases) and, on native installs, in-place upgrade requests.
 
 The web app never upgrades itself. On a native install it writes an *update request* file into
-the state directory; a root-owned systemd unit (meshcore-home-update.path/.service, installed by
+the state directory; a root-owned systemd unit (meshhome-update.path/.service, installed by
 deploy/native/install.sh) notices it, re-validates the version against the official releases,
 verifies the download checksum, backs up the database, installs, and restarts the app — rolling
 back if the new version doesn't come up. Progress is reported through a status file this module
@@ -83,7 +83,10 @@ class UpdateChecker:
             url=str(data.get("html_url") or ""),
             notes=str(data.get("body") or "")[:20000],
             published_at=data.get("published_at"),
-            has_native_package=f"meshcore-home-{version}.tar.gz" in assets and "SHA256SUMS" in assets,
+            has_native_package=bool(
+                {f"meshhome-{version}.tar.gz", f"meshcore-home-{version}.tar.gz"} & assets
+            )
+            and "SHA256SUMS" in assets,
         )
 
     async def check(self, force: bool = False) -> None:
@@ -143,6 +146,10 @@ class UpdateChecker:
                 "published_at": self._installed.published_at,
             },
             "update_available": available,
+            # The native command (`sudo meshhome …`); installs from before the rename keep the old name
+            # until `sudo meshcore-home migrate`.
+            "command": "meshcore-home" if legacy_layout() else "meshhome",
+            "legacy_layout": legacy_layout(),
             "can_install": available
             and s.install_kind == "native"
             and bool(s.state_dir)
@@ -151,6 +158,12 @@ class UpdateChecker:
 
 
 checker = UpdateChecker()
+
+
+def legacy_layout() -> bool:
+    """A native install still using the names from before the rename (/var/lib/meshcore-home, …)."""
+    s = get_settings()
+    return s.install_kind == "native" and s.state_dir.rstrip("/").endswith("meshcore-home")
 
 
 # ---- native upgrade request / status files ------------------------------------------------

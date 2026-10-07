@@ -7,18 +7,18 @@ Requires=postgresql.service
 
 [Service]
 Type=exec
-User=meshcore
-Group=meshcore
-EnvironmentFile=/etc/meshcore-home/meshcore-home.env
+User=@APP_USER@
+Group=@APP_USER@
+EnvironmentFile=@ENV_FILE@
 Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WorkingDirectory=/opt/meshcore-home/current
+WorkingDirectory=@PREFIX@/current
 # As root ("+"): install any helper units shipped with this release (so upgrades from older
 # versions gain them) and refresh the non-secret network snapshot. Never fails the start.
-ExecStartPre=+/opt/meshcore-home/current/deploy/native/install.sh --sync-units
+ExecStartPre=+@PREFIX@/current/deploy/native/install.sh --sync-units
 # Apply database migrations (serialised by an advisory lock) before starting.
-ExecStartPre=/opt/meshcore-home/current/venv/bin/python -m alembic upgrade head
+ExecStartPre=@PREFIX@/current/venv/bin/python -m alembic upgrade head
 # One worker: exactly one process may own the radio connection.
-ExecStart=/opt/meshcore-home/current/venv/bin/python -m uvicorn app.main:app --host ${HOST} --port ${PORT} --workers 1 --proxy-headers --no-server-header
+ExecStart=@PREFIX@/current/venv/bin/python -m uvicorn app.main:app --host ${HOST} --port ${PORT} --workers 1 --proxy-headers --no-server-header
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45
@@ -26,7 +26,7 @@ TimeoutStopSec=45
 # Hardening: the app only needs to write its state directory.
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/meshcore-home
+ReadWritePaths=@STATE_DIR@
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

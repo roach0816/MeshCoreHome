@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""`meshcore-home status`: a diagnostic report for a native MeshHome install.
+"""`meshhome status` (or `meshcore-home status` before migrating): a diagnostic report for a native MeshHome install.
 
-Run as root (the meshcore-home command takes care of that). It combines the app's own health
+Run as root (the meshhome command takes care of that). It combines the app's own health
 snapshot (<state dir>/diagnostics.json, written every 30 s) with system checks: the service, web
 health, radio, database, HTTPS, updates, disk, memory, clock and recent log problems. Each line
 is marked ✓ (fine), • (information), ! (warning) or ✗ (problem), and problems come with a
@@ -27,12 +27,16 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-PREFIX = "/opt/meshcore-home"
-ENV_FILE = "/etc/meshcore-home/meshcore-home.env"
-STATE_DIR = "/var/lib/meshcore-home"
-SERVICE = "meshcore-home"
-DB_NAME = "meshcore"
-NGINX_SITE = "/etc/nginx/sites-available/meshcore-home"
+# Installs from before the rename to MeshHome keep the old names until `migrate`.
+LEGACY = os.path.isdir("/opt/meshcore-home") and not os.path.isdir("/opt/meshhome")
+SERVICE = "meshcore-home" if LEGACY else "meshhome"
+PREFIX = f"/opt/{SERVICE}"
+ENV_FILE = f"/etc/{SERVICE}/{SERVICE}.env"
+STATE_DIR = f"/var/lib/{SERVICE}"
+CLI = SERVICE
+DB_NAME = "meshcore" if LEGACY else "meshhome"
+AVAHI_SERVICE = "/etc/avahi/services/meshhome.service"
+NGINX_SITE = f"/etc/nginx/sites-available/{SERVICE}"
 SNAPSHOT_STALE = 120  # seconds; the app writes every 30
 
 COLOR = (
@@ -267,8 +271,8 @@ def check_app(r: Report, env: dict[str, str], snap: dict | None) -> dict[str, st
             BAD,
             "Service",
             f"not running: {state}",
-            "Start it with: sudo systemctl restart meshcore-home — if it stops again, the errors are "
-            'listed under "Recent log problems" below (full log: sudo meshcore-home logs).',
+            f"Start it with: sudo systemctl restart {SERVICE} — if it stops again, the errors are "
+            f'listed under "Recent log problems" below (full log: sudo {CLI} logs).',
         )
 
     port = env.get("PORT", "8080")
@@ -289,7 +293,7 @@ def check_app(r: Report, env: dict[str, str], snap: dict | None) -> dict[str, st
             BAD,
             "Web interface",
             f"not answering on port {port} ({err or f'HTTP {code}'})",
-            "The service runs but does not answer: sudo systemctl restart meshcore-home",
+            f"The service runs but does not answer: sudo systemctl restart {SERVICE}",
         )
     else:
         r.row(BAD, "Web interface", f"not answering on port {port}")
@@ -310,7 +314,7 @@ def check_app(r: Report, env: dict[str, str], snap: dict | None) -> dict[str, st
                 BAD,
                 "Health snapshot",
                 f"last written {duration(age)} ago — the app may be stuck",
-                "Restart it: sudo systemctl restart meshcore-home",
+                f"Restart it: sudo systemctl restart {SERVICE}",
             )
         elif not active:
             r.row(
@@ -325,7 +329,7 @@ def check_app(r: Report, env: dict[str, str], snap: dict | None) -> dict[str, st
                 WARN,
                 "First-run setup",
                 "not completed yet",
-                "Open the web interface and enter the setup token: sudo meshcore-home setup-token",
+                f"Open the web interface and enter the setup token: sudo {CLI} setup-token",
             )
     return svc
 
@@ -483,8 +487,8 @@ def check_radio(r: Report, snap: dict | None) -> None:
         )
 
 
-HAT_SERVICE = "meshcore-home-radio"
-HAT_DIR = "/opt/meshcore-home-radio"
+HAT_SERVICE = f"{SERVICE}-radio"
+HAT_DIR = f"/opt/{SERVICE}-radio"
 
 
 def check_radio_hat(r: Report, snap: dict | None) -> None:
@@ -532,7 +536,7 @@ def check_radio_hat(r: Report, snap: dict | None) -> None:
             BAD,
             "Software",
             "the radio HAT is selected but its software is not set up",
-            "Set it up: sudo meshcore-home radio-hat (or Settings → Radio connection).",
+            f"Set it up: sudo {CLI} radio-hat (or Settings → Radio connection).",
         )
         return
 
@@ -546,7 +550,7 @@ def check_radio_hat(r: Report, snap: dict | None) -> None:
     pinned = st.get("pinned_version")
     text = f"ZephCore {current or '?'}"
     if pinned and current and pinned != current:
-        text += f" (this release pins {pinned}: sudo meshcore-home update)"
+        text += f" (this release pins {pinned}: sudo {CLI} update)"
     r.row(OK if current else BAD, "Software", text)
 
     spi = os.path.exists("/dev/spidev0.0")
@@ -579,7 +583,7 @@ def check_radio_hat(r: Report, snap: dict | None) -> None:
             BAD,
             "Service",
             f"restarting repeatedly ({restarts} restarts)",
-            "The radio software keeps stopping; its errors are listed below. Logs: sudo meshcore-home radio-hat logs",
+            f"The radio software keeps stopping; its errors are listed below. Logs: sudo {CLI} radio-hat logs",
         )
     elif active:
         r.row(
@@ -590,7 +594,7 @@ def check_radio_hat(r: Report, snap: dict | None) -> None:
             BAD,
             "Service",
             f"not running: {unit.get('ActiveState', '?')} ({unit.get('SubState', '?')})",
-            "Restart it: sudo meshcore-home radio-hat restart — logs: sudo meshcore-home radio-hat logs",
+            f"Restart it: sudo {CLI} radio-hat restart — logs: sudo {CLI} radio-hat logs",
         )
 
     _, listen = run("ss", "-Hltn", "sport = :5000")
@@ -607,7 +611,7 @@ def check_radio_hat(r: Report, snap: dict | None) -> None:
                 else "listening on 5000, open to the network",
                 None
                 if limited
-                else "Other devices could connect to the radio: reinstall it with sudo meshcore-home radio-hat",
+                else f"Other devices could connect to the radio: reinstall it with sudo {CLI} radio-hat",
             )
         else:
             r.row(
@@ -684,7 +688,7 @@ def check_database(r: Report, snap: dict | None) -> None:
                 BAD,
                 "App → database",
                 db.get("error", "the app cannot query its database"),
-                "Check PostgreSQL above, then restart the app: sudo systemctl restart meshcore-home",
+                f"Check PostgreSQL above, then restart the app: sudo systemctl restart {SERVICE}",
             )
 
 
@@ -703,7 +707,7 @@ def check_https(r: Report, env: dict[str, str]) -> None:
             INFO,
             "Address",
             f"{urls} (plain HTTP)",
-            "Add HTTPS in Settings → Network & HTTPS, or: sudo meshcore-home https",
+            f"Add HTTPS in Settings → Network & HTTPS, or: sudo {CLI} https",
         )
         return
     hport = env.get("HTTPS_PORT", "443") or "443"
@@ -776,23 +780,23 @@ def check_https(r: Report, env: dict[str, str]) -> None:
         except (OSError, ValueError, KeyError):
             pass
         r.row(INFO, "DNS validation", f"{provider} (lego)")
-        timer = systemd("meshcore-home-acme-renew.timer", "ActiveState")
+        timer = systemd(f"{SERVICE}-acme-renew.timer", "ActiveState")
         last = systemd(
-            "meshcore-home-acme-renew.service", "Result", "ExecMainExitTimestamp"
+            f"{SERVICE}-acme-renew.service", "Result", "ExecMainExitTimestamp"
         )
         if timer.get("ActiveState") != "active":
             r.row(
                 WARN,
                 "Renewal",
                 "the renewal timer is not active, so the certificate will not renew automatically",
-                "Re-apply the HTTPS settings in Settings → Network & HTTPS, or: sudo meshcore-home https",
+                f"Re-apply the HTTPS settings in Settings → Network & HTTPS, or: sudo {CLI} https",
             )
         elif last.get("Result") not in (None, "", "success"):
             r.row(
                 WARN,
                 "Renewal",
                 f"the last renewal check failed ({last.get('ExecMainExitTimestamp') or 'recently'})",
-                "Check the DNS provider credentials. Details: sudo journalctl -u meshcore-home-acme-renew",
+                f"Check the DNS provider credentials. Details: sudo journalctl -u {SERVICE}-acme-renew",
             )
         else:
             r.row(
@@ -800,7 +804,7 @@ def check_https(r: Report, env: dict[str, str]) -> None:
                 "Renewal",
                 "checked twice a day by lego; renews about 30 days before expiry",
             )
-        if not os.path.exists("/opt/meshcore-home-acme/lego"):
+        if not os.path.exists(f"/opt/{SERVICE}-acme/lego"):
             r.row(
                 INFO,
                 "Renewal client",
@@ -823,6 +827,29 @@ def check_https(r: Report, env: dict[str, str]) -> None:
         )
 
 
+def check_lan_discovery(r: Report) -> None:
+    """Rows under "Network & HTTPS": is the server advertised for the app to find?"""
+    if not os.path.exists(AVAHI_SERVICE):
+        r.row(
+            INFO,
+            "LAN discovery",
+            "off",
+            f"To let the MeshHome app find this server: sudo {CLI} lan-discovery",
+        )
+        return
+    m = re.search(r"<txt-record>url=([^<]*)</txt-record>", read_text(AVAHI_SERVICE))
+    rc, _ = run("systemctl", "is-active", "--quiet", "avahi-daemon")
+    if rc != 0:
+        r.row(
+            WARN,
+            "LAN discovery",
+            "avahi-daemon is not running, so the app can't find this server",
+            "Start it: sudo systemctl enable --now avahi-daemon",
+        )
+    else:
+        r.row(OK, "LAN discovery", f"advertised as {m.group(1) if m else 'MeshHome'}")
+
+
 def check_updates(r: Report, snap: dict | None) -> None:
     r.section("Updates")
     u = (snap or {}).get("updates") or {}
@@ -843,7 +870,7 @@ def check_updates(r: Report, snap: dict | None) -> None:
             INFO,
             "Release",
             f"v{current} · v{u.get('latest_version')} is available",
-            "Install it from Settings → Software updates, or: sudo meshcore-home update",
+            f"Install it from Settings → Software updates, or: sudo {CLI} update",
         )
     else:
         r.row(
@@ -871,7 +898,7 @@ def check_updates(r: Report, snap: dict | None) -> None:
             level,
             "Last update",
             f"{msg} ({when(st.get('updated_at'))})",
-            "Details: sudo cat /var/log/meshcore-home-install.log"
+            f"Details: sudo cat /var/log/{SERVICE}-install.log"
             if level == WARN
             else None,
         )
@@ -883,7 +910,7 @@ def check_updates(r: Report, snap: dict | None) -> None:
         "installed automatically (unattended-upgrades)" if on else "manual",
         None
         if on
-        else "Turn on automatic security updates: sudo meshcore-home security-updates",
+        else f"Turn on automatic security updates: sudo {CLI} security-updates",
     )
 
 
@@ -1027,7 +1054,7 @@ def check_logs(r: Report) -> None:
         times = f" (×{count})" if count > 1 else ""
         text = f"{stamp}  {msg}{times}"
         r.text("      " + (text if len(text) <= WIDTH - 6 else text[: WIDTH - 7] + "…"))
-    r.text(f"      {paint('2', 'Full log: sudo meshcore-home logs')}")
+    r.text(f"      {paint('2', f'Full log: sudo {CLI} logs')}")
 
 
 def main() -> int:
@@ -1035,7 +1062,7 @@ def main() -> int:
         print(__doc__.strip())
         return 0
     if os.geteuid() != 0:
-        print("Run as root: sudo meshcore-home status", file=sys.stderr)
+        print(f"Run as root: sudo {CLI} status", file=sys.stderr)
         return 2
     env = read_env()
     snap = read_json(f"{STATE_DIR}/diagnostics.json")
@@ -1049,7 +1076,15 @@ def main() -> int:
     check_radio_hat(r, snap)
     check_database(r, snap)
     check_https(r, env)
+    check_lan_discovery(r)
     check_updates(r, snap)
+    if LEGACY:
+        r.row(
+            INFO,
+            "Install names",
+            "from before the rename to MeshHome (meshcore-home); they keep working",
+            "To move to the new names: sudo meshcore-home migrate",
+        )
     check_system(r)
     check_logs(r)
     r.text("")

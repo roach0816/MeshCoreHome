@@ -1,7 +1,7 @@
 """Native installs: network/HTTPS settings applied by a root-owned helper.
 
 The app never changes system configuration itself. It writes a request file into the state
-directory; the meshcore-home-config path unit runs `install.sh --apply-config` as root, which
+directory; the meshhome-config path unit runs `install.sh --apply-config` as root, which
 re-validates everything, applies it (nginx, certbot, the app's port), restores the previous
 configuration on failure, and reports progress in a status file. The current configuration is
 published as a non-secret snapshot (network.json) — secrets such as the Cloudflare token are

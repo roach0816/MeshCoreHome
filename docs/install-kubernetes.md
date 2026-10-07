@@ -60,11 +60,11 @@ kubectl get clusterissuer    # the cert-manager issuer for the certificate
 ### 2. Create the namespace and database Secret
 
 Create the namespace in Rancher (**Cluster → Projects/Namespaces → Create Namespace**, name
-`meshcore`), or apply `deploy/k8s/namespace.example.yaml`. Then:
+`meshhome`), or apply `deploy/k8s/namespace.example.yaml`. Then:
 
 ```bash
 PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-kubectl -n meshcore create secret generic meshcore-db --from-literal=POSTGRES_PASSWORD="$PW"
+kubectl -n meshhome create secret generic meshhome-db --from-literal=POSTGRES_PASSWORD="$PW"
 echo "$PW"   # keep this in a password manager
 ```
 
@@ -75,7 +75,7 @@ is URL-safe.
 
 Copy `deploy/k8s/pvc.example.yaml`, replace `<YOUR_NFS_STORAGECLASS>` with your StorageClass, and apply
 it. Use Rancher's **Import YAML** button (top right), or **Storage → PersistentVolumeClaims → Create →
-Edit as YAML**. This creates `meshcore-db-data` and `meshcore-backups`, 10 GiB each; adjust the sizes
+Edit as YAML**. This creates `meshhome-db-data` and `meshhome-backups`, 10 GiB each; adjust the sizes
 as needed.
 
 If the database volume is on NFS:
@@ -84,8 +84,8 @@ If the database volume is on NFS:
   official image). After the claim binds, find its directory on the NFS server and run
   `chown -R 999:999 <dir>`. With root-squash enabled, the pod cannot fix ownership itself.
 - **Mount and export:** the mount must be `hard` (check with `mount | grep nfs` on a node), and the
-  export must honour synchronous writes. If your NFS server can't meet that, put `meshcore-db-data` on
-  local or block storage and use NFS only for `meshcore-backups`.
+  export must honour synchronous writes. If your NFS server can't meet that, put `meshhome-db-data` on
+  local or block storage and use NFS only for `meshhome-backups`.
 
 ### 4. Add the Git repo to Continuous Delivery
 
@@ -95,7 +95,7 @@ cluster. Then **Add Repository**:
 
 | Field | Value |
 | --- | --- |
-| Name | `meshcore-home` |
+| Name | `meshhome` |
 | Repository URL | `https://github.com/roach0816/MeshHome.git` (or your fork) |
 | Branch | `main` |
 | Paths | `deploy/k8s` |
@@ -110,7 +110,7 @@ The same thing as YAML (for **Edit as YAML**):
 apiVersion: fleet.cattle.io/v1alpha1
 kind: GitRepo
 metadata:
-  name: meshcore-home
+  name: meshhome
   namespace: fleet-default          # or fleet-local
 spec:
   repo: https://github.com/roach0816/MeshHome.git
@@ -123,21 +123,21 @@ spec:
 Check the rollout:
 
 ```bash
-kubectl -n meshcore get pods                       # meshcore and meshcore-db Running 1/1
-kubectl -n meshcore get deploy meshcore -o jsonpath='{..image}{"\n"}'
+kubectl -n meshhome get pods                       # meshhome and meshhome-db Running 1/1
+kubectl -n meshhome get deploy meshhome -o jsonpath='{..image}{"\n"}'
 ```
 
 ### 5. Run the setup wizard
 
-Get the one-time setup token: open **Workloads → Deployments → meshcore → ⋮ → View Logs** in
+Get the one-time setup token: open **Workloads → Deployments → meshhome → ⋮ → View Logs** in
 Rancher, or run:
 
 ```bash
-kubectl -n meshcore logs deploy/meshcore | grep -A3 "setup token"
+kubectl -n meshhome logs deploy/meshhome | grep -A3 "setup token"
 ```
 
 You can finish setup before the Ingress exists. Run
-`kubectl -n meshcore port-forward svc/meshcore 8080:80`, then open <http://localhost:8080>. In the
+`kubectl -n meshhome port-forward svc/meshhome 8080:80`, then open <http://localhost:8080>. In the
 wizard, choose **MeshCore TCP** if the gateway is already on the network, or **Restore a backup
 instead** to bring over another installation. Otherwise choose **Simulated** or **Decide later**, and
 connect the radio afterwards (see [Radios](radios.md#connecting-a-tcp-gateway)).
@@ -151,7 +151,7 @@ and in your DNS.
 points at your **ingress controller**, not at the app pod:
 
 ```bash
-HOST=meshcore.example.com     # the fully qualified name you want to use
+HOST=meshhome.example.com     # the fully qualified name you want to use
 kubectl get svc -A | grep -iE 'traefik|ingress'
 ```
 
@@ -189,8 +189,8 @@ step 1). Then either:
 private IP, the ClusterIssuer must use a **DNS-01** solver; HTTP-01 can't reach a private app.
 
 ```bash
-kubectl -n meshcore get ingress meshcore -o yaml   # cert-manager annotation and tls: block present
-kubectl -n meshcore get certificate -w             # wait for READY=True
+kubectl -n meshhome get ingress meshhome -o yaml   # cert-manager annotation and tls: block present
+kubectl -n meshhome get certificate -w             # wait for READY=True
 ```
 
 ### 7. Verify
@@ -208,7 +208,7 @@ Open `https://<YOUR_HOSTNAME>` and sign in. Then check:
   keeps messages it receives in that window queued (its buffer is finite). The app shows when a new
   release exists, but a container is updated by redeploying, not from the UI.
 - **Backups:** use **Settings → Backup & restore** for an encrypted backup of everything the app holds
-  (see [Backup and restore](backup-restore.md)). The `meshcore-db-backup` CronJob additionally dumps
+  (see [Backup and restore](backup-restore.md)). The `meshhome-db-backup` CronJob additionally dumps
   the database daily (see that page for restoring a dump).
 - **Demo or restore environments:** set `RADIO_ENABLED=false` on the app container so it never
   connects to a radio.
@@ -217,6 +217,45 @@ Open `https://<YOUR_HOSTNAME>` and sign in. Then check:
 - **Uninstalling:** delete the Git repo in Continuous Delivery. Because of `keepResources: true`,
   workloads stay in place; delete them, then the namespace, when you're sure you no longer need the
   data.
+
+## Moving from the `meshcore` namespace (MeshCore Home 0.9 and earlier)
+
+Since 0.10 the manifests use the MeshHome names: namespace `meshhome`, Deployments `meshhome` and
+`meshhome-db`, Secret `meshhome-db`, volumes `meshhome-db-data` and `meshhome-backups`, database and
+user `meshhome`. When Fleet picks up 0.10, it removes the old workloads from the `meshcore` namespace
+and starts the new ones in `meshhome` with an empty database. The old volumes, Secret and Ingress are
+not part of the bundle, so they stay. Move the data like this:
+
+1. **Before updating**, dump the database and keep the file somewhere safe:
+
+   ```bash
+   kubectl -n meshcore exec deploy/meshcore-db -- pg_dump -Fc -U meshcore meshcore > meshhome-move.dump
+   ```
+
+2. Create the new namespace, a Secret and the volumes (steps 2 and 3 above, with the `meshhome`
+   names). You can reuse the old password:
+
+   ```bash
+   kubectl create namespace meshhome
+   PW=$(kubectl -n meshcore get secret meshcore-db -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)
+   kubectl -n meshhome create secret generic meshhome-db --from-literal=POSTGRES_PASSWORD="$PW"
+   ```
+
+3. Let Fleet deploy 0.10 and wait until `meshhome-db` is running. Then load the dump while the app
+   is stopped:
+
+   ```bash
+   kubectl -n meshhome scale deploy/meshhome --replicas=0
+   kubectl -n meshhome exec -i deploy/meshhome-db -- \
+     pg_restore --clean --if-exists --no-owner --role=meshhome -U meshhome -d meshhome < meshhome-move.dump
+   kubectl -n meshhome scale deploy/meshhome --replicas=1
+   ```
+
+4. Recreate the Ingress in the `meshhome` namespace (step 6, same hostname, backend service
+   `meshhome`), and delete the old one: `kubectl -n meshcore delete ingress meshcore`.
+
+5. Sign in and check your messages. Then delete the old namespace and its volumes:
+   `kubectl delete namespace meshcore`. Keep `meshhome-move.dump` until you're sure.
 
 ## Deploying from your own fork
 
@@ -238,9 +277,9 @@ To deploy from a fork:
 - **Make the image pullable:** make the GHCR package public (**GitHub → Packages → your package →
   Package settings → Change visibility**), or give the cluster a pull secret:
   ```bash
-  kubectl -n meshcore create secret docker-registry ghcr-pull \
+  kubectl -n meshhome create secret docker-registry ghcr-pull \
     --docker-server=ghcr.io --docker-username=<GITHUB_USER> --docker-password=<READ_PACKAGES_TOKEN>
-  kubectl -n meshcore patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+  kubectl -n meshhome patch serviceaccount default -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
   ```
   With a pull secret, set the repository variable `ALLOW_PRIVATE_IMAGE` to `true` (**Settings →
   Secrets and variables → Actions → Variables**), so CI pins private images.
