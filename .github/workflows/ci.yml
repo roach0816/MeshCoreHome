@@ -152,6 +152,9 @@ jobs:
     needs: [image]
     permissions:
       contents: write
+    env:
+      DEPLOY_NOTIFY_TOKEN: ${{ secrets.DEPLOY_NOTIFY_TOKEN }}
+      DEPLOY_NOTIFY_REPO: ${{ secrets.DEPLOY_NOTIFY_REPO }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -175,6 +178,7 @@ jobs:
           fi
           echo "ghcr.io/$name:$GITHUB_SHA is publicly pullable"
       - name: Pin deployment to this commit's image
+        id: pin
         run: |
           set -euo pipefail
           git fetch origin main
@@ -194,4 +198,16 @@ jobs:
           git commit -am "deploy: pin image to ${GITHUB_SHA::7} [skip ci]"
           if ! git push origin main; then
             echo "Push raced with a newer commit; that commit's build will pin itself."
+            exit 0
           fi
+          echo "pinned=true" >> "$GITHUB_OUTPUT"
+      - name: Tell other deployments about the new image
+        # Optional: a repository_dispatch "meshhome-deployed" (with this commit) to another
+        # repository that follows this image, e.g. a demo server. Set the secrets
+        # DEPLOY_NOTIFY_REPO (owner/name) and DEPLOY_NOTIFY_TOKEN (a token that may dispatch there).
+        if: steps.pin.outputs.pinned == 'true' && env.DEPLOY_NOTIFY_TOKEN != ''
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $DEPLOY_NOTIFY_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$DEPLOY_NOTIFY_REPO/dispatches" \
+            -d "{\"event_type\":\"meshhome-deployed\",\"client_payload\":{\"sha\":\"$GITHUB_SHA\"}}"
+          echo "Notified the follower repository"
