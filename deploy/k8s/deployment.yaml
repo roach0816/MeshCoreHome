@@ -22,7 +22,7 @@ spec:
       containers:
         - name: app
           # Pinned to a commit SHA by CI on every build of main. Never use :latest here.
-          image: ghcr.io/roach0816/meshhome:60fdb86a7662dca0de0624448bccd67145dc0662
+          image: ghcr.io/roach0816/meshhome:719cdb33bd0e2d0ecfb6e71fdce024d28cc90429
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_PASSWORD
