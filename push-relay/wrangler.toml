@@ -3,12 +3,11 @@ name = "meshhome-push-relay"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+# MeshHome's default relay address (the domain's DNS is on Cloudflare):
+routes = [{ pattern = "push.meshhome.app", custom_domain = true }]
 
 [vars]
 BUNDLE_ID = "app.meshhome"
-
-# A custom domain, once its DNS is on Cloudflare (MeshHome's default relay address):
-# routes = [{ pattern = "push.meshhome.app", custom_domain = true }]
 
 # Abuse limits (Cloudflare's rate limiting binding; counted per Cloudflare location).
 [[ratelimits]]
