@@ -9,7 +9,7 @@ tablet or computer on your network.
 
 <!-- SCREENSHOT: save a screenshot of the inbox as docs/images/inbox.png, then replace the line below with:
      ![MeshHome inbox](docs/images/inbox.png) -->
-> 📸 *Screenshot coming soon: the inbox on desktop and phone.*
+> ![MeshHome inbox](docs/images/inbox.png)
 
 ## What it does
 
