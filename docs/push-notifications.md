@@ -45,9 +45,8 @@ MeshHome server ──(encrypted)──▶ relay ──▶ Apple (APNs) ──�
 ## The relay's address
 
 The relay only works with the push key of the Apple team that publishes the app, so the app needs
-the published relay, `https://push.meshhome.app`. Leave Settings → Push notifications → **Relay
-address** as it is. The relay's code is public so anyone can check what it does
-([push-relay/](../push-relay/)).
+the published relay, `https://push.meshhome.app`, which MeshHome uses automatically. The relay's
+code is public so anyone can check what it does ([push-relay/](../push-relay/)).
 
 ## Troubleshooting
 

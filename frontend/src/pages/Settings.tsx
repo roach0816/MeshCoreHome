@@ -534,17 +534,12 @@ type PushSettings = { enabled: boolean; relay_url: string; devices: number };
 function PushSection() {
   const qc = useQueryClient();
   const cfg = useQuery({ queryKey: ["push-settings"], queryFn: () => api<PushSettings>("/api/settings/push") });
-  const [relay, setRelay] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: (next: { enabled: boolean; relay_url: string }) =>
       api<PushSettings>("/api/settings/push", { method: "PUT", json: next }),
-    onSuccess: (v) => {
-      qc.setQueryData(["push-settings"], v);
-      setRelay(null);
-    },
+    onSuccess: (v) => qc.setQueryData(["push-settings"], v),
   });
   const c = cfg.data;
-  const relayValue = relay ?? c?.relay_url ?? "";
   return (
     <Section
       title="Push notifications"
@@ -559,7 +554,7 @@ function PushSection() {
               type="checkbox"
               checked={c.enabled}
               disabled={save.isPending}
-              onChange={(e) => save.mutate({ enabled: e.target.checked, relay_url: relayValue })}
+              onChange={(e) => save.mutate({ enabled: e.target.checked, relay_url: c.relay_url })}
               className="mt-0.5 size-5 shrink-0 accent-[var(--accent)]"
             />
             <span>
@@ -576,28 +571,7 @@ function PushSection() {
             message is encrypted for the phone before it leaves this server: the relay and Apple see only the phone's
             push address, an unreadable blob and the time. The relay stores nothing.
           </p>
-          <Field
-            label="Relay address"
-            htmlFor="push-relay"
-            hint="Leave this as it is: the MeshHome app only works with the published relay."
-            error={save.error instanceof Error ? save.error.message : null}
-          >
-            <div className="flex gap-2">
-              <Input
-                id="push-relay"
-                value={relayValue}
-                onChange={(e) => setRelay(e.target.value)}
-                spellCheck={false}
-                autoCapitalize="off"
-              />
-              <Button
-                disabled={relay === null || relay === c.relay_url || save.isPending}
-                onClick={() => save.mutate({ enabled: c.enabled, relay_url: relayValue.trim() })}
-              >
-                Save
-              </Button>
-            </div>
-          </Field>
+          <ErrorText error={save.error} />
         </>
       )}
     </Section>
