@@ -63,6 +63,18 @@ for the published app (`https://push.meshhome.app`). These are the steps its mai
 3. Keep the `.p8` file somewhere safe and out of this repository. Changing `TICKET_SECRET`
    invalidates every phone's ticket; phones sign up again the next time the app opens.
 
+## Turning it off
+
+To stop all push notifications at once (for example if the relay is being abused), set a
+variable on the Worker: Cloudflare dashboard → **Workers & Pages** → `meshhome-push-relay` →
+**Settings** → **Variables and Secrets** → **Add** → type *Text*, name `PAUSED`, value `1` →
+**Deploy**. It takes effect within seconds: the relay answers every push and sign-up with
+"push notifications are paused", which MeshHome servers show as the last error. Nothing else
+in MeshHome is affected. To turn it back on, delete the variable (or set it to `0`).
+
+From a terminal instead: `printf 1 | npx wrangler secret put PAUSED` to pause and
+`echo y | npx wrangler secret delete PAUSED` to resume. `GET /health` shows `"paused": true` while it's off.
+
 ## Testing
 
 ```bash

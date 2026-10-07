@@ -167,11 +167,17 @@ async function push(request, env) {
   return json({ error: `Apple answered ${res.status}${reason ? ` (${reason})` : ""}` }, 502);
 }
 
+function paused(env) {
+  return ["1", "true", "yes"].includes(String(env.PAUSED || "").trim().toLowerCase());
+}
+
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
     try {
-      if (request.method === "GET" && pathname === "/health") return json({ ok: true });
+      if (request.method === "GET" && pathname === "/health") return json({ ok: true, paused: paused(env) });
+      // The owner's switch (Cloudflare dashboard → this Worker → Settings → Variables: PAUSED = 1).
+      if (paused(env) && pathname.startsWith("/v1/")) return json({ error: "push notifications are paused" }, 503);
       if (request.method === "POST" && pathname === "/v1/register") return await register(request, env);
       if (request.method === "POST" && pathname === "/v1/push") return await push(request, env);
       return json({ error: "not found" }, 404);

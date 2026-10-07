@@ -127,3 +127,15 @@ test("an unconfigured relay says so", async () => {
   delete env.TICKET_SECRET;
   assert.equal((await call("/v1/register", { platform: "ios", environment: "production", token: TOKEN })).status, 503);
 });
+
+test("PAUSED stops pushes and sign-ups, not health", async () => {
+  const t = await ticket();
+  env.PAUSED = "1";
+  assert.equal((await call("/v1/push", { platform: "ios", environment: "development", token: TOKEN, ticket: t, payload })).status, 503);
+  assert.equal((await call("/v1/register", { platform: "ios", environment: "development", token: TOKEN })).status, 503);
+  const h = await call("/health", undefined, "GET");
+  assert.deepEqual(await h.json(), { ok: true, paused: true });
+  assert.equal(sent.length, 0);
+  env.PAUSED = "0";
+  assert.equal((await call("/v1/push", { platform: "ios", environment: "development", token: TOKEN, ticket: t, payload })).status, 200);
+});

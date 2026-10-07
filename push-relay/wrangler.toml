@@ -3,6 +3,8 @@ name = "meshhome-push-relay"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+# Keep variables set in the dashboard (such as PAUSED, the off switch) when deploying.
+keep_vars = true
 # MeshHome's default relay address (the domain's DNS is on Cloudflare):
 routes = [{ pattern = "push.meshhome.app", custom_domain = true }]
 
